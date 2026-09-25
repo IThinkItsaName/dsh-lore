@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "description": "Long-term project work-log system for AI agents (software, research, writing, design, operations): process journal + index ledger + lessons, with a stdlib-only Python toolbox. Ships as an Agent Skill and as a DeepSeek Harness plugin bundle.",
   "license": "MIT",
+  "type": "module",
   "keywords": [
     "dsh-plugin",
     "pi-package",
@@ -18,6 +19,10 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "meta": {
+    "title": "worklog",
+    "description": "项目长期工作记录体系：过程记录 journal/ + 索引台账 + 经验手册（技能名 project-work-log）。"
   },
   "pi": {
     "skills": [

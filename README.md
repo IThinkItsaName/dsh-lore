@@ -60,11 +60,20 @@ dsh plugin --profile desktop install /绝对/路径/worklog
 
 | 配置项 | 默认 | 作用 |
 |---|---|---|
-| `skillDir` | `skills/project-work-log` | 技能 bundle 目录（相对本包或绝对路径） |
+| `skillDir` | `skills/project-work-log` | 技能 bundle 目录（相对本包根目录或绝对路径） |
 | `skillFile` | `SKILL.md` | bundle 内的指令文件名 |
 | `modelInvocable` | `true` | 是否允许模型侧目录 / `skill` 工具加载 |
 | `userInvocable` | `true` | 是否允许人侧入口加载 |
 | `verbose` | `false` | 挂载时打一行日志 |
+
+> ⚠ **本插件故意不导出 `Config`**，所以上面的字段**没有 schema 校验**：值由插件自己做类型兜底
+> （类型不对就用默认值），认不出的键会在日志里 warn 一行。
+>
+> 原因是硬约束：插件装进 profile 后，`import` 是按**它自己的真实路径**解析的，而
+> `@deepseek-ai/schemastery` 只存在于应用的 `app.asar` 里 —— 树外插件**根本 import 不到它**。
+> 一在模块顶层 import 它，整个模块就加载失败（实测：`ERR_MODULE_NOT_FOUND`，DSH 报 `failed to import`）。
+> 与其带一份自己的 schemastery（版本要跟宿主对齐，很容易漂），不如不要这个可选能力，
+> 换来**零依赖、放哪都能加载**。
 
 ### pi
 
@@ -145,7 +154,9 @@ python <skill>/scripts/journal.py check --strict && python <skill>/scripts/journ
 ```
 
 > `lib/index.js` 在挂载时读取 `skills/project-work-log/SKILL.md` 的 YAML frontmatter，
-> 再用 `ctx.skills.register(...)` 注册；技能正文每次加载都重读文件，所以**改 Markdown 不需要重建**。
+> 再用 `ctx.skills.register(...)` 注册。它**只 import `node:` 内置模块**，没有任何第三方依赖 ——
+> 这是硬要求：插件装进 profile 后按自己的真实路径解析 import，而宿主包都在 `app.asar` 里，
+> 树外插件解析不到（详见下方配置表的说明）。
 > 技能本身仍是一份标准 Agent Skill 目录 bundle，`.pi/skills/` 之类的安装方式照旧可用。
 
 ## 命令一览

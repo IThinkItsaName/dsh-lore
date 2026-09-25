@@ -44,19 +44,46 @@ dsh plugin --profile desktop install /绝对/路径/worklog
 # 或直接用 agent 的 plugin_manager 工具装（spec 支持绝对路径 / file: / 包名 / git / tarball）
 ```
 
-本包的 `cordis.patch.yml` **只插一行**（它自己）。技能注册表 `skill` 本来就在 host 层活动着
-（`dsh-base` 声明、`dsh-web-app` 保留），本插件把技能注册进它的 global 层，所以每个 agent 作用域都看得到。
+本包的 `cordis.patch.yml` 做两件事：
 
-**故意没有碰** `skill-filesystem` 和 `tool-skill`：`dsh-web-app` 明确把这两行关掉，理由是
-「local discovery 归 preset 所有」——由 preset 把这两行挂进**该 preset 的层**，基础 host 行保持关闭。
-从 bundle 层重新打开它们，等于给**每个 agent** 在 host 层装上本地技能发现和第二个 `skill` 工具，
-这是全局构图改动，不该由一个技能包来做。本包也不需要它们：技能内容自带、`resourceBase` 自带，
-不需要从磁盘发现任何东西。
+1. **打开 `skill-filesystem`**（按 id override 已有行，不新增）。这一行 `dsh-base` 声明、`dsh-web-app` 关掉，
+   而**插件管理页不把它当可添加插件列出来** —— 用户在 UI 里根本找不到这个开关。
+   实测结论（写在这里免得后人再踩）：这一行关着的时候，**技能注册表虽然活着，但技能到不了 `skill` 工具** ——
+   放多少份技能文件进 `~/.dsh/skills`、`.dsh/skills` 都不会被发现，插件自己注册的技能也查不到。
+   所以一个自带技能的包必须自己把这一行打开。
+2. **插入本插件自己的行**，把技能注册进 `skill` 注册表。
+
+**`tool-skill` 依然不碰**：它决定「技能能不能被模型加载」，属于消费端，由你所在的 preset 提供
+（本机 `standard` preset 是挂着的 —— 否则 `skill` 工具本身不会存在）。
 
 | 依赖 | 谁提供 | 说明 |
 |---|---|---|
 | `skill` 注册表 | `dsh-base`（活动） | 本插件 `inject: ['skills']`，注册进它的 global 层 |
+| `skill-filesystem` | **本包打开** | 本地技能发现；关着则整条技能通道失效 |
 | 技能渲染 / `skill` 工具 | 你所在 preset 挂的 `tool-skill` | **本插件不提供**。若构图里没有任何技能消费端，注册了也没有渲染路径 |
+
+### 排查：技能查不到怎么办
+
+插件内置了一个**默认关闭**的诊断开关，用来回答"宿主到底有没有调我"。
+注册表会把提供者的异常吞成一条宿主日志（树外插件读不到），所以这个开关是必要的：
+
+```bash
+# 方式一：环境变量指向一个日志文件
+DSH_WORKLOG_TRACE=/tmp/worklog-trace.log
+
+# 方式二：把目标路径写进 <包>/lib/.trace
+echo /tmp/worklog-trace.log > <包>/lib/.trace
+```
+
+它会记录 `apply`（含 `ctx.skills` 是否可用）、每次 `list()`（含注册表传来的 **scope 与 cwd**，
+这是识别调用者的关键）、每次 `get()`。典型判读：
+
+| 日志 | 含义 |
+|---|---|
+| 完全没有 `apply` | 行没挂载 → 查 bundle 补丁是否生效 |
+| 有 `apply` 没 `list` | 挂了但没人问目录 → 检查 `skill-filesystem` 是否被关掉 |
+| 有 `list` 没 `get` | 目录里有、但查名字失败 → 层/作用域问题 |
+| `list error=...` | 直接拿到异常原文 |
 
 | 配置项 | 默认 | 作用 |
 |---|---|---|
@@ -136,7 +163,7 @@ python <skill>/scripts/journal.py check --strict && python <skill>/scripts/journ
 ├── LICENSE
 ├── CHANGELOG.md
 ├── package.json                 # pi 包声明 + dsh.bundle（DSH 插件包声明）
-├── cordis.patch.yml             # DSH 插件补丁：插入 dsh-worklog 与 skill-filesystem 两行
+├── cordis.patch.yml             # DSH 插件补丁：打开 skill-filesystem + 插入 dsh-worklog
 ├── lib/
 │   └── index.js                 # DSH 插件入口：把自带技能注册进 ctx.skills
 └── skills/

@@ -24,6 +24,17 @@
 #
 # Requires: dsh >= 0.1.7 (the version whose dsh-base declares the `skill` row).
 
+# The local skill provider this bundle's file layout expects.
+#
+# `dsh-base` declares `skill-filesystem`; `dsh-web-app` then disables it. The
+# Plugin Manager page does not surface that row (it is not an optional bundle),
+# so a user cannot switch it on from the UI. A bundle that ships a skill on disk
+# therefore has to enable the provider itself — targeting the existing row by id
+# (an override) rather than inserting a second one.
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  disabled: false
+
 - insert:
     - id: dsh-worklog
       name: 'dsh-worklog'

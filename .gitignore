@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .DS_Store
 Thumbs.db
+# Local trace marker for the plugin's opt-in diagnostic (see README "排查").
+lib/.trace

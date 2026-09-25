@@ -13,13 +13,35 @@
 本版把它变成**一个包、两种装法**：既是原来的 Agent Skill，也是一个 **DeepSeek Harness 插件包**。
 同时修掉一轮实测出来的数据安全与幂等缺陷。
 
+> **实装踩坑记录（供参考）**：0.2.0 的插件部分是**真装进 dsh profile 才调通的**，
+> 期间暴露了 4 个只有实装才会发现的问题，都已修复：
+> 1. **模块顶层 import `@deepseek-ai/schemastery` 导致加载失败**。插件按自己的真实路径解析 import，
+>    而宿主包都在应用的 `app.asar` 里，树外插件**根本解析不到**。改为不导出 `Config`，
+>    自己兜底读配置 —— 现在只 import `node:` 内置模块。
+> 2. **`skillDir` 相对路径基准错**：`import.meta.url` 指向 `<包>/lib/`，当基准会去找
+>    `<包>/lib/skills/...`。改为从包根解析。
+> 3. **`ctx.skills.register()` 缺 `content`**：注册表会把注册对象**原样当作已加载的定义**交回，
+>    再校验 `content` 必须是字符串 —— 注册成功、列表里有名字、**加载时才炸**。
+>    且 `register` 会在挂载时快照正文，改 Markdown 要重启。改用 `registerProvider`：
+>    `list()`/`get()` 每次重读文件，正文始终是活的。
+> 4. **`skill-filesystem` 被关着导致整条技能通道失效**（最隐蔽的一条）。这一行 `dsh-base` 声明、
+>    `dsh-web-app` 关掉，且**插件管理页不把它列为可添加插件**，用户在 UI 里找不到这个开关。
+>    它关着的时候：注册表活着、插件正常挂载、`list()` 被正常调用并返回候选，
+>    但技能**到不了 `skill` 工具**；往 `~/.dsh/skills`、`.dsh/skills` 放多少份文件也不被发现。
+>    现在本包的补丁自行按 id override 打开这一行。
+
 ### 新增
 
 - **DSH 插件包**：`package.json` 增加 `dsh.bundle.patch`，新增 `cordis.patch.yml` 与 `lib/index.js`。
   装进某个 dsh profile 后，插件会读取自带的 `skills/project-work-log/SKILL.md` frontmatter，
-  用 `ctx.skills.register(...)` 把技能注册进会话目录——**不用复制文件，也不用配技能搜索路径**。
-  技能正文每次加载都重读文件，改 Markdown 不需要重建。
+  用 `ctx.skills.registerProvider(...)` 注册一个技能提供者——**不用复制文件，也不用配技能搜索路径**。
+  `list()`/`get()` 每次重读文件，所以改 Markdown 立刻生效，不需要重启或重建。
   - `resourceBase` 指向真实 bundle 目录，`references/*.md` 与 `scripts/journal.py` 的提示词路径因此可用。
+  - 补丁同时按 id override **打开 `skill-filesystem`** —— 这一行默认关闭且 UI 不可见，
+    关着则技能无法到达 `skill` 工具（详见上方踩坑记录第 4 条）。
+  - 内置**默认关闭的诊断开关**（`DSH_WORKLOG_TRACE` 或 `<包>/lib/.trace`）：记录 `apply`/`list`/`get`，
+    以及注册表传来的 **scope 与 cwd**。提供者的异常会被注册表吞成宿主日志，树外插件读不到，
+    所以排障必须有这样一个开关（README「排查」一节有判读表）。
   - 可配置：`skillDir` / `skillFile` / `modelInvocable` / `userInvocable` / `verbose`。
   - 仓库名沿用 `worklog`；npm 包名改为 **`dsh-worklog`**（旧名 `pi-project-work-log` 从未发布到 npm）。
 - `skills/project-work-log/SKILL.md` 的「环境边界」补全：明确真实 Python 下限、UTF-8 要求、

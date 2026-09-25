@@ -1,6 +1,9 @@
 # worklog
 
 > 给长期项目用的**工作记录体系**（Agent Skill，技能名 `project-work-log`）：过程记录 + 索引台账 + 经验手册，外加一套 20 个子命令的管理 / 分析 / 清理工具箱。
+>
+> 另附一份 **`reliability-guidelines`**（八条可靠性工作准则，中英双语）—— 随本包装载，
+> 在**装了本插件的项目**里作为默认强约束生效，与你显式要求冲突时可被推翻（须记录理由）。
 
 **不限编程**：软件、研究、写作、设计、运营、教学……任何跳会话或跨周持续投入的项目都能用。
 术语可换（迭代字段接受 `迭代 / 变更集 / 批次 / 阶段 / 版本 / 里程碑`），验证口径也放宽到“命令 / 数据 / 引用 / 样本”。
@@ -87,12 +90,28 @@ echo /tmp/worklog-trace.log > <包>/lib/.trace
 
 | 配置项 | 默认 | 作用 |
 |---|---|---|
-| `skillDir` | `skills/project-work-log` | 技能 bundle 目录（相对本包根目录或绝对路径） |
+| `skillDir` | `skills/project-work-log` | 工作记录技能 bundle 目录（相对本包根目录或绝对路径） |
 | `skillFile` | `SKILL.md` | bundle 内的指令文件名 |
 | `modelInvocable` | `true` | 是否允许模型侧目录 / `skill` 工具加载 |
 | `userInvocable` | `true` | 是否允许人侧入口加载 |
-| `verbose` | `false` | 挂载时打一行日志 |
+| `verbose` | `false` | 挂载时每个技能打一行日志 |
+| `guidelinesEnabled` | `true` | 是否同时提供 `reliability-guidelines` |
+| `guidelinesDir` | `skills/reliability-guidelines` | 准则 bundle 目录 |
+| `guidelinesLanguage` | `'zh'` | `'zh'` 或 `'en'`（取不到就回落中文） |
 
+> **改语言/关掉准则**：这三个字段写在 `<profile>/cordis.patch.yml` 里按 id 覆盖即可
+> （profile 补丁在所有 bundle 层之后应用，所以能盖住包内默认值）：
+>
+> ```yaml
+> - id: dsh-worklog
+>   name: dsh-worklog
+>   config:
+>     guidelinesLanguage: 'en'
+> ```
+>
+> 没有做成界面开关，是因为**树外插件导出不了 `Config`**（见下一段），
+> 而没有 schema 就没有可渲染的设置表单。
+>
 > ⚠ **本插件故意不导出 `Config`**，所以上面的字段**没有 schema 校验**：值由插件自己做类型兜底
 > （类型不对就用默认值），认不出的键会在日志里 warn 一行。
 >
@@ -167,23 +186,31 @@ python <skill>/scripts/journal.py check --strict && python <skill>/scripts/journ
 ├── lib/
 │   └── index.js                 # DSH 插件入口：把自带技能注册进 ctx.skills
 └── skills/
-    └── project-work-log/
-        ├── SKILL.md             # 技能入口：三层模型、铁律、工作流、反模式
-        ├── references/
-        │   ├── conventions.md   # 目录 / 编号 / 生命周期 / 台账 / 经验层的硬约定
-        │   ├── templates.md     # 记录、台账、归档、经验分册、复盘 全套模板
-        │   ├── commands.md      # 20 个子命令的完整说明与组合套路
-        │   └── analysis.md      # 设计依据：对一套真实记录的实测分析与改进对照
-        └── scripts/
-            ├── journal.py       # 工具箱（唯一入口，纯标准库）
-            ├── _selftest.py     # 自测：临时工程跑通全部命令 + CRLF 保真
-            └── _measure.py      # 对现成记录目录做一次性测量（analysis.md 的数字可复现）
+    ├── project-work-log/
+    │   ├── SKILL.md             # 技能入口：三层模型、铁律、工作流、反模式
+    │   ├── references/
+    │   │   ├── conventions.md   # 目录 / 编号 / 生命周期 / 台账 / 经验层的硬约定
+    │   │   ├── templates.md     # 记录、台账、归档、经验分册、复盘 全套模板
+    │   │   ├── commands.md      # 20 个子命令的完整说明与组合套路
+    │   │   └── analysis.md      # 设计依据：对一套真实记录的实测分析与改进对照
+    │   └── scripts/
+    │       ├── journal.py       # 工具箱（唯一入口，纯标准库）
+    │       ├── _selftest.py     # 自测：临时工程跑通全部命令 + CRLF 保真
+    │       └── _measure.py      # 对现成记录目录做一次性测量（analysis.md 的数字可复现）
+    └── reliability-guidelines/
+        ├── SKILL.md             # 八条准则（中文，默认提供这一份）
+        └── en/SKILL.md          # 同一份准则的英文版（放在子目录，避开单层扫描）
 ```
 
-> `lib/index.js` 在挂载时读取 `skills/project-work-log/SKILL.md` 的 YAML frontmatter，
-> 然后用 `ctx.skills.registerProvider(...)` 注册一个**技能提供者**：`list()` 报目录、`get()` 每次
+> **为什么英文版放在 `en/` 子目录**：`skill-filesystem` 只扫描根目录的
+> `<name>/SKILL.md`（**一层**，不递归），所以 `en/SKILL.md` 不会被它当成第二个技能列出来；
+> 插件要服务英文时明确读这个路径。这样一份 bundle 携带两种语言，目录里只出现一个技能。
+
+> `lib/index.js` 在挂载时读取各 `SKILL.md` 的 YAML frontmatter，
+> 然后用 `ctx.skills.registerProvider(...)` 注册**技能提供者**：`list()` 报目录、`get()` 每次
 > **重新读文件**给正文——所以改 Markdown 不需要重启，也不需要重建。
 > （对比：`ctx.skills.register()` 在挂载时就把正文快照下来，改文件要重启才生效。）
+> 两个技能各有一个提供者（`worklog-bundle` / `worklog-guidelines`），名字必须不同。
 >
 > 它**只 import `node:` 内置模块**，没有任何第三方依赖 ——
 > 这是硬要求：插件装进 profile 后按自己的真实路径解析 import，而宿主包都在 `app.asar` 里，
@@ -200,6 +227,31 @@ python <skill>/scripts/journal.py check --strict && python <skill>/scripts/journ
 | 分析生成 | `stats`（语料统计）、`topics`（同主题簇建议）、`digest`（交接摘要）、`retro`（复盘骨架）、`export`（JSON/CSV） |
 
 完整参数与套路见 [`skills/project-work-log/references/commands.md`](skills/project-work-log/references/commands.md)。
+
+## 附带的可靠性准则（`reliability-guidelines`）
+
+除了工作记录体系，本包还带一份**八条可靠性工作准则**：事实优先 · 不清楚就问 · 假设要确认 ·
+能复用别新建 · 按既有约定 · 承认不知道 · 改动要验证 · 小步可回退。
+
+它和工作记录是互补的：准则管"怎么做事"，worklog 管"把做过的事留下来"。
+两者的验证口径是**同一套** —— 准则第 7 条说的"证据"就是记录里的验证小节，门禁就是
+`journal.py check --strict` / `lint --strict`。
+
+### 与原始文档相比改了什么
+
+这份准则的初稿是一份放在桌面、**从未接入 DSH** 的英文文档。整理时做了四处实质性修改：
+
+| 改动 | 原因 |
+|---|---|
+| 前言从"**违反规则就拒绝用户**"改为"**默认强约束，可被用户显式推翻**" | 原稿说"用户确认不能豁免这些规则"，与它自己的原则 3（用户确认才算数）**直接冲突**；而且"拒绝用户"这个授权方向太重 |
+| 明确"推翻时要说清放弃了哪条、什么风险，并在 `journal/` 留一句为什么" | 把"硬约束"落到可执行、可追溯的动作上，而不是靠模型自觉 |
+| 验证口径与 worklog 打通（含"默认档位只报 WARN，门禁要 `--strict`"） | 原稿和技能各写一套测试标准，迟早互相打架 |
+| 中英两份，中文为默认 | 原稿纯英文，而 worklog 体系是中文默认、中英双解 |
+
+> 说明：本包**没有**把它做成"每轮都注入的系统提示词段落"。
+> `ctx.systemPrompt.section()` 确实能做到，但那样它对**所有**请求生效 ——
+> 而这份准则是随本项目走的，按需加载更符合"只在装了插件的项目里生效"这个定位。
+> 如果你要的是"每轮强制注入"，说一声，那需要另写一个插件行。
 
 ## 领域适配（不限于编程）
 

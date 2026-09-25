@@ -32,6 +32,21 @@
 
 ### 新增
 
+- **`reliability-guidelines` 技能（八条可靠性工作准则，中英双语）**：随本包装载，在装了本插件的
+  项目里作为**默认强约束**生效。经用户显式要求可以推翻，但要求先说明"放弃了哪条 + 什么风险"
+  并在 `journal/` 留一句理由 —— 即"不许悄悄违反"，而不是"不许推翻"。
+  - 中文版在 bundle 根（`skills/reliability-guidelines/SKILL.md`），英文版在其 `en/` 子目录。
+    放子目录是因为 `skill-filesystem` 只扫描一层，这样一份 bundle 携带两种语言而目录里只出现一个技能。
+  - 与 worklog 打通验证口径：准则第 7 条的证据＝记录里的验证小节，门禁＝`check --strict` / `lint --strict`。
+  - 新增配置 `guidelinesEnabled`（默认 `true`）、`guidelinesDir`、`guidelinesLanguage`（`'zh'` 默认 / `'en'`）。
+  - **与原始文档相比的实质修改**：原稿前言写"用户请求违反规则就礼貌拒绝、用户确认不能豁免"，
+    与它自己的原则 3（用户确认才算数）**直接冲突**，且把"拒绝用户"写成了授权。已改写为
+    "默认强约束 + 用户可显式推翻 + 推翻须记录"。原稿纯英文，现以中文为准并补英文版。
+  - 本包**没有**把它做成"每轮注入的系统提示词段落"：`ctx.systemPrompt.section()` 能做到，
+    但那样它对所有请求生效，与"只在装了插件的项目里生效"的定位不符。
+- **插件现在提供两个技能**（两个 provider：`worklog-bundle` / `worklog-guidelines`）。
+  注册表要求 provider 名唯一，且候选与定义的 `provider` 字段都必须与之一致。
+
 - **DSH 插件包**：`package.json` 增加 `dsh.bundle.patch`，新增 `cordis.patch.yml` 与 `lib/index.js`。
   装进某个 dsh profile 后，插件会读取自带的 `skills/project-work-log/SKILL.md` frontmatter，
   用 `ctx.skills.registerProvider(...)` 注册一个技能提供者——**不用复制文件，也不用配技能搜索路径**。

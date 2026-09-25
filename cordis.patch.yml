@@ -1,36 +1,32 @@
-# worklog bundle patch — inserts this package's host row.
+# worklog bundle patch — enables the skill provider this bundle needs, and
+# inserts this package's host row.
 #
-# One row is enough. The `skill` REGISTRY is already active at the host plane
-# (dsh-base declares it, dsh-web-app keeps it), and this plugin registers the
-# bundled skill into that registry's global layer, so the skill is visible to
-# every agent scope.
+# Two skills ship with this bundle:
+#   - `project-work-log`       — the work-record system (journal + ledger + lessons).
+#   - `reliability-guidelines` — eight working principles, applied in the projects
+#                                that install this plugin. Disable with
+#                                `guidelinesEnabled: false`; pick the language with
+#                                `guidelinesLanguage: 'zh' | 'en'`.
 #
-# Deliberately NOT touched here:
+# ── Why the override below is required ─────────────────────────────────────────
+# `dsh-base` declares `skill-filesystem`; `dsh-web-app` then disables it. The
+# Plugin Manager page does NOT surface that row (it is not an optional bundle),
+# so a user cannot turn it on from the UI. Measured on a real profile: with that
+# row off, the registry is alive and this plugin mounts and answers `list()`
+# correctly, yet NO skill reaches the `skill` tool — and skill files dropped into
+# `~/.dsh/skills` or `.dsh/skills` are never discovered either. A bundle that
+# ships a skill therefore has to enable this row itself, by targeting the
+# existing row id (an override) rather than inserting a second one.
 #
-#   `skill-filesystem` and `tool-skill` — dsh-web-app disables both on purpose,
-#   because "presets own local discovery": a preset mounts its own
-#   `skill-filesystem` and `tool-skill` into that preset's layer, and the base
-#   host rows stay off. Re-enabling them from a bundle layer would mount local
-#   skill discovery AND a second `skill` tool at the host layer for every agent,
-#   which is a composition-wide change this plugin has no business making.
-#   This bundle does not need either row: it carries its own skill content and
-#   its own `resourceBase`, so nothing has to be discovered from disk.
-#
-# What this bundle cannot do for you: if your composition mounts neither
-# `tool-skill` nor any other skill consumer, the registered skill has no
-# rendering path. That is a property of the preset you are running, not of this
-# bundle — check `list_plugins` for `tool-skill` before expecting the skill to
+# ── Deliberately NOT touched ───────────────────────────────────────────────────
+# `tool-skill` (the model-facing catalog and `skill` tool) stays wherever the
+# composition put it: it is the consumer, and a preset owns it. If your
+# composition mounts no skill consumer at all, this bundle cannot render
+# anything — check `list_plugins` for `tool-skill` before expecting the skills to
 # appear in a session.
 #
-# Requires: dsh >= 0.1.7 (the version whose dsh-base declares the `skill` row).
+# Requires: dsh >= 0.1.7 (the version whose dsh-base declares these rows).
 
-# The local skill provider this bundle's file layout expects.
-#
-# `dsh-base` declares `skill-filesystem`; `dsh-web-app` then disables it. The
-# Plugin Manager page does not surface that row (it is not an optional bundle),
-# so a user cannot switch it on from the UI. A bundle that ships a skill on disk
-# therefore has to enable the provider itself — targeting the existing row by id
-# (an override) rather than inserting a second one.
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
   disabled: false
@@ -43,3 +39,8 @@
         modelInvocable: true
         userInvocable: true
         verbose: false
+        guidelinesEnabled: true
+        guidelinesDir: 'skills/reliability-guidelines'
+        # 'zh' (default) or 'en'. A profile's own patch layer is applied after
+        # every bundle layer, so it can override this per profile.
+        guidelinesLanguage: 'zh'

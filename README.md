@@ -44,17 +44,19 @@ dsh plugin --profile desktop install /绝对/路径/worklog
 # 或直接用 agent 的 plugin_manager 工具装（spec 支持绝对路径 / file: / 包名 / git / tarball）
 ```
 
-本包的 `cordis.patch.yml` 会**打开技能子系统**：`dsh-base` 已经声明了 `skill`、`skill-filesystem`、
-`tool-skill` 三行，但出厂是关着的，而这三行缺一不可——
+本包的 `cordis.patch.yml` **只插一行**（它自己）。技能注册表 `skill` 本来就在 host 层活动着
+（`dsh-base` 声明、`dsh-web-app` 保留），本插件把技能注册进它的 global 层，所以每个 agent 作用域都看得到。
 
-| 行 | 作用 |
-|---|---|
-| `skill` | 技能注册表，本插件通过 `ctx.skills.register(...)` 注册进去 |
-| `skill-filesystem` | 本地技能发现（本包把 `SKILL.md` 以目录 bundle 形式带在 `skills/` 里） |
-| `tool-skill` | 让模型看到并加载技能；没有它，注册了也不会出现在会话目录里 |
+**故意没有碰** `skill-filesystem` 和 `tool-skill`：`dsh-web-app` 明确把这两行关掉，理由是
+「local discovery 归 preset 所有」——由 preset 把这两行挂进**该 preset 的层**，基础 host 行保持关闭。
+从 bundle 层重新打开它们，等于给**每个 agent** 在 host 层装上本地技能发现和第二个 `skill` 工具，
+这是全局构图改动，不该由一个技能包来做。本包也不需要它们：技能内容自带、`resourceBase` 自带，
+不需要从磁盘发现任何东西。
 
-补丁用 **override**（按 id 覆盖）而不是 `insert`：`insert` 会追加一行**重复**的行，
-反而让配置指向哪个都不确定。你自己的 profile `cordis.patch.yml` 仍可在最后覆盖或关掉这几行。
+| 依赖 | 谁提供 | 说明 |
+|---|---|---|
+| `skill` 注册表 | `dsh-base`（活动） | 本插件 `inject: ['skills']`，注册进它的 global 层 |
+| 技能渲染 / `skill` 工具 | 你所在 preset 挂的 `tool-skill` | **本插件不提供**。若构图里没有任何技能消费端，注册了也没有渲染路径 |
 
 | 配置项 | 默认 | 作用 |
 |---|---|---|

@@ -1,41 +1,28 @@
-# worklog bundle patch — turns on the skill subsystem this bundle needs, and
-# inserts this package's own host row.
+# worklog bundle patch — inserts this package's host row.
 #
-# `dsh-base` already declares `skill`, `skill-filesystem`, and `tool-skill`, but
-# ships them switched off. A patch that targets an existing row by id overrides
-# it (last write wins); `insert` would append a *duplicate* row instead, so the
-# first three entries below are overrides, not inserts.
+# One row is enough. The `skill` REGISTRY is already active at the host plane
+# (dsh-base declares it, dsh-web-app keeps it), and this plugin registers the
+# bundled skill into that registry's global layer, so the skill is visible to
+# every agent scope.
 #
-# Rows:
-#   1. `skill`            — the skill registry this plugin registers on.
-#   2. `skill-filesystem` — the local skill provider. This bundle keeps its
-#                           Markdown on disk (a directory bundle under
-#                           `skills/project-work-log/`), and this provider is
-#                           what makes such a bundle discoverable when DSH runs
-#                           with that directory as its project root.
-#   3. `tool-skill`       — the consumer that renders the catalog and the
-#                           `skill` tool. Without it a registered skill never
-#                           reaches a session.
-#   4. `dsh-worklog`      — this package: registers the bundled skill with
-#                           `ctx.skills`, so the skill works regardless of which
-#                           directory the profile runs in.
+# Deliberately NOT touched here:
 #
-# A profile's own `cordis.patch.yml` is applied after every bundle layer, so any
-# of these rows can still be overridden or disabled there.
+#   `skill-filesystem` and `tool-skill` — dsh-web-app disables both on purpose,
+#   because "presets own local discovery": a preset mounts its own
+#   `skill-filesystem` and `tool-skill` into that preset's layer, and the base
+#   host rows stay off. Re-enabling them from a bundle layer would mount local
+#   skill discovery AND a second `skill` tool at the host layer for every agent,
+#   which is a composition-wide change this plugin has no business making.
+#   This bundle does not need either row: it carries its own skill content and
+#   its own `resourceBase`, so nothing has to be discovered from disk.
 #
-# Requires: dsh >= 0.1.7 (the version whose dsh-base declares these rows).
-
-- id: skill
-  name: '@deepseek-ai/dsh-skill'
-  disabled: false
-
-- id: skill-filesystem
-  name: '@deepseek-ai/dsh-skill-filesystem'
-  disabled: false
-
-- id: tool-skill
-  name: '@deepseek-ai/dsh-tool-skill'
-  disabled: false
+# What this bundle cannot do for you: if your composition mounts neither
+# `tool-skill` nor any other skill consumer, the registered skill has no
+# rendering path. That is a property of the preset you are running, not of this
+# bundle — check `list_plugins` for `tool-skill` before expecting the skill to
+# appear in a session.
+#
+# Requires: dsh >= 0.1.7 (the version whose dsh-base declares the `skill` row).
 
 - insert:
     - id: dsh-worklog

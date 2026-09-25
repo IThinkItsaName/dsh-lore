@@ -2,11 +2,19 @@
 """_selftest.py — journal.py 的自测（内部工具，不参与日常使用）。
 
 在临时目录里搭一个最小项目，跑通全部子命令并断言行为，最后删除临时目录。
-    python scripts/_selftest.py        # 全过退出码 0
+    python scripts/_selftest.py                 # 全过退出码 0
+    python scripts/_selftest.py --root DIR      # 在指定的**已存在**目录下建夹具
+    python scripts/_selftest.py --keep          # 跑完保留夹具目录，便于排查
+
+`--root` 是为写入受限的环境准备的：某些沙箱只允许进程写它自己创建过的目录，
+这时用系统临时目录会在 `os.makedirs` 上直接 `PermissionError`。
+指定 `--root` 时夹具建在 `DIR/journal-selftest-<pid>/` 下（DIR 必须已存在且可写）。
 """
 from __future__ import annotations
 
+import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -123,6 +131,32 @@ CLEAN_INDEX = """# P2
 ## 当前状态（2026-09-14）
 
 - 阶段 / 版本：v1
+"""
+
+
+# 只含规范字段的台账：用来验证 status --set 的短名解析（阶段/核对/交付物）
+CANON_INDEX = """# Canon
+
+## 文件索引
+
+### A. 起步
+
+| 文件 | 方面 |
+|---|---|
+
+## 待办（滚动清单）
+
+- [ ] keep me
+
+## 当前状态（2026-09-13）
+
+- 阶段 / 版本：v1
+- 迭代：-
+- 产出：
+- 核对 / 验证：
+- 交付物与指纹：
+- 环境：
+- 阻塞 / 等待：
 """
 
 
@@ -264,9 +298,192 @@ def cleanup_phase(parent: str) -> None:
     r = run(tmp, "check", "--strict", "--quiet")
     ok(r.returncode == 0, "check --strict clean after cleanup ops", r.stdout + r.stderr)
 
+    # E) compact 幂等：折叠出来的目录行不能再被折一次 ------------------------
+    jidx = os.path.join(tmp, "journal", "README.md")
+    run(tmp, "index", "compact")
+    once = read(jidx)
+    r = run(tmp, "index", "compact")
+    ok(read(jidx) == once, "index compact is idempotent", read(jidx))
+    ok("折叠 0 个小节" in r.stdout, "second compact folds nothing", r.stdout)
+
+
+def safety_phase(tmp: str) -> None:
+    """数据安全：不能静默毁掉非 UTF-8 文件，也不能把 LF 掺进 CRLF 台账。"""
+    # 1) 非 UTF-8 目标必须**拒绝写入**，而不是写成 U+FFFD ------------------
+    enc = os.path.join(tmp, "encfix")
+    os.makedirs(os.path.join(enc, "journal"))
+    raw = ("# 0001 · A\n\n日期：2026-09-13\n迭代：1\n结论：ok\n\n## 验证\n\n- 方式：x\n- 结果：1\n")
+    gbk = os.path.join(enc, "journal", "0001-a.md")
+    with open(gbk, "wb") as fh:
+        fh.write(raw.encode("gbk"))
+    before = read_bytes(gbk)
+    r = run(enc, "append", "1", "--section", "更正", "--text", "changed")
+    ok(r.returncode != 0, "writing a non-UTF-8 file is refused", r.stdout)
+    ok("UTF-8" in r.stdout, "the refusal names the encoding", r.stdout)
+    ok("Traceback" not in r.stderr, "the refusal is not a traceback", r.stderr[:200])
+    ok(read_bytes(gbk) == before, "the non-UTF-8 file is left byte-identical")
+
+    # 2) status --roll 在 CRLF 台账上不能掺进 LF --------------------------
+    crlf = os.path.join(tmp, "crlffix")
+    os.makedirs(os.path.join(crlf, "journal"))
+    idx = ("# P\n\n## 文件索引\n\n### A. St\n\n| 文件 | 方面 |\n|---|---|\n"
+           "| [0001-a.md](0001-a.md) | x |\n\n## 待办（滚动清单）\n\n- [ ] x\n\n"
+           "## 当前状态（2026-09-13）\n\n- 阶段 / 版本：v1\n- 迭代：1\n")
+    ipath = os.path.join(crlf, "journal", "README.md")
+    with open(ipath, "wb") as fh:
+        fh.write(idx.replace("\n", "\r\n").encode("utf-8"))
+    with open(os.path.join(crlf, "journal", "0001-a.md"), "wb") as fh:
+        fh.write(entry("0001", "A", "2026-09-13", "1").replace("\n", "\r\n").encode("utf-8"))
+    r = run(crlf, "status", "--roll")
+    ok(r.returncode == 0, "status --roll exits 0", r.stderr)
+    data = read_bytes(ipath)
+    ok(data.replace(b"\r\n", b"").count(b"\n") == 0, "status --roll injects no lone LF into a CRLF ledger")
+
+    # 3) 半角括号的状态标题不能被叠加日期 --------------------------------
+    en = os.path.join(tmp, "enfix")
+    os.makedirs(os.path.join(en, "journal"))
+    en_idx = ("# English\n\n## Index\n\n### A\n\n| File | Note |\n|---|---|\n"
+              "| [0001-a.md](0001-a.md) | a |\n\n## TODO\n\n- [ ] x\n\n"
+              "## Status (2026-01-01)\n\n- Stage: v1\n")
+    eip = os.path.join(en, "journal", "README.md")
+    write(eip, en_idx)
+    r = run(en, "status", "--date", "2026-10-01")
+    ok(r.returncode == 0, "status --date on a half-width heading exits 0", r.stderr)
+    txt = read(eip)
+    ok("2026-01-01" not in txt, "the old date is replaced, not nested", txt)
+    ok("2026-10-01" in txt, "the new date landed", txt)
+
+    # 4) 归档后，被移动记录自己的出站链接必须仍然有效 --------------------
+    arch = os.path.join(tmp, "archfix")
+    os.makedirs(os.path.join(arch, "journal"))
+    os.makedirs(os.path.join(arch, "docs"))
+    j = os.path.join(arch, "journal")
+    write(os.path.join(j, "README.md"),
+          "# P\n\n## 文件索引\n\n### A. St\n\n| 文件 | 方面 |\n|---|---|\n"
+          "| [0001-a.md](0001-a.md) | x |\n| [0002-b.md](0002-b.md) | y |\n\n"
+          "## 待办（滚动清单）\n\n- [ ] x\n\n## 当前状态（2026-09-13）\n\n- 阶段 / 版本：v1\n")
+    write(os.path.join(j, "0001-a.md"),
+          "# 0001 · A\n\n日期：2026-09-13\n迭代：1\n结论：ok\n\n"
+          "见 [b](0002-b.md)、[idx](README.md)、[设计](../docs/design.md)。\n\n"
+          "## 验证\n\n- 方式：`true`\n- 结果：1 passed\n")
+    write(os.path.join(j, "0002-b.md"), entry("0002", "B", "2026-09-14", "2"))
+    write(os.path.join(arch, "docs", "design.md"), "# design\n")
+    r = run(arch, "archive", "--stage", "S", "--from", "1", "--to", "1")
+    ok(r.returncode == 0, "archive with outbound links reports no dead link", r.stdout + r.stderr)
+    moved = os.path.join(j, "archive", "S", "0001-a.md")
+    ok(os.path.exists(moved), "the record was archived")
+    targets = re.findall(r"\]\(([^)\s]+)\)", read(moved))
+    bad = [t for t in targets
+           if not t.startswith(("http", "#", "mailto"))
+           and not os.path.exists(os.path.normpath(os.path.join(os.path.dirname(moved), t)))]
+    ok(not bad, "every rewritten link from the moved record resolves", f"targets={targets} bad={bad}")
+
+    # 5) lesson add 必须保留 --source，即使正文里提到了别的 wl/ ----------
+    lsn = os.path.join(tmp, "lsnfix")
+    os.makedirs(os.path.join(lsn, "journal"))
+    os.makedirs(os.path.join(lsn, "lessons"))
+    write(os.path.join(lsn, "journal", "README.md"),
+          "# L\n\n## 文件索引\n\n### A. St\n\n| 文件 | 方面 |\n|---|---|\n"
+          "| [0001-a.md](0001-a.md) | x |\n\n## 待办（滚动清单）\n\n- [ ] x\n\n"
+          "## 当前状态（2026-09-13）\n\n- 阶段 / 版本：v1\n")
+    write(os.path.join(lsn, "journal", "0001-a.md"), entry("0001", "A", "2026-09-13", "1"))
+    write(os.path.join(lsn, "lessons", "README.md"), LESSONS_INDEX)
+    write(os.path.join(lsn, "lessons", "01-topic.md"), "# 01\n\n来源：x。\n\n## 子主题\n\n- a\n")
+    r = run(lsn, "lesson", "add", "--volume", "01-topic.md", "--source", "1",
+            "--text", "沿用 wl/9999 的写法")
+    ok(r.returncode == 0, "lesson add exits 0", r.stderr)
+    vol = read(os.path.join(lsn, "lessons", "01-topic.md"))
+    ok("wl/0001" in vol, "lesson add keeps the --source citation", vol)
+
+
+def doc_phase(tmp: str) -> None:
+    """文档与代码一致性：模板落盘后必须能被自己的门禁接受。
+
+    `references/templates.md` 里的台账模板是给人复制的，一旦里面的示例行被
+    `check` 判成死链，照文档初始化出来的项目第一次 `check` 就是红的——而
+    SKILL.md 承诺"0 篇记录也应通过"。这条用例把那个承诺钉住。
+    """
+    templates = os.path.join(os.path.dirname(HERE), "references", "templates.md")
+    if not os.path.isfile(templates):
+        # 只装了 scripts/ 的部署（例如从发布包单独取脚本）没有文档可校验。
+        return
+    text = read(templates)
+    blocks = re.findall(r"```markdown\n(.*?)```", text, re.S)
+    ledger = next((b for b in blocks if "## 文件索引" in b), None)
+    ok(ledger is not None, "templates.md still publishes a ledger template")
+    if ledger is None:
+        return
+
+    # 模板里的示例索引行指向不存在的文件；照文档说明删掉它。
+    sample = re.search(r"^\|\s*\[[^\]]+\]\([^)]+\.md\)\s*\|.*$", ledger, re.M)
+    ok(sample is not None, "ledger template still shows an index-row example")
+    cleaned = ledger if sample is None else ledger.replace(sample.group(0), "")
+    date = re.search(r"当前状态（([^）]+)）", cleaned)
+    cleaned = cleaned.replace("<项目>", "Demo").replace("<阶段名>", "A. Stage")
+    if date:
+        cleaned = cleaned.replace(date.group(1), "2026-09-13")
+    cleaned = re.sub(r"<[^>\n]+>", "x", cleaned)
+    cleaned = re.sub(r"^- \[x\].*$", "", cleaned, flags=re.M)
+
+    root = os.path.join(tmp, "docfix")
+    os.makedirs(os.path.join(root, "journal"), exist_ok=True)
+    os.makedirs(os.path.join(root, "lessons"), exist_ok=True)
+    write(os.path.join(root, "journal", "README.md"), cleaned.rstrip("\n") + "\n")
+    # 工作流 A 要求同时落 lessons/README.md；台账模板会链接到它。
+    write(os.path.join(root, "lessons", "README.md"), LESSONS_INDEX)
+    # 分册里不写 `wl/NNNN` 引用：此夹具一篇记录都没有，--strict 会判来源悬空。
+    # 但要带一句「来源」说明，否则 --strict 判它连来源口径都没有。
+    write(os.path.join(root, "lessons", "01-topic.md"),
+          "# 01 · 起步约定\n\n来源：本册在项目初始化时建立，等第一篇记录收口后再回填 `wl/NNNN`。\n"
+          "\n## 子主题\n\n- **尚未提炼**：暂无条目。\n")
+
+    r = run(root, "check", "--quiet")
+    ok(r.returncode == 0, "a ledger built from templates.md passes a plain check",
+       r.stdout + r.stderr)
+    r = run(root, "check", "--strict", "--quiet")
+    ok(r.returncode == 0, "and also passes check --strict", r.stdout + r.stderr)
+
+    # 骨架里日期还是 `YYYY-MM-DD` 占位符时，也必须过得了 --strict
+    fresh = os.path.join(tmp, "docfresh")
+    os.makedirs(os.path.join(fresh, "journal"), exist_ok=True)
+    os.makedirs(os.path.join(fresh, "lessons"), exist_ok=True)
+    write(os.path.join(fresh, "journal", "README.md"),
+          cleaned.replace("2026-09-13", "YYYY-MM-DD").rstrip("\n") + "\n")
+    write(os.path.join(fresh, "lessons", "README.md"), LESSONS_INDEX)
+    write(os.path.join(fresh, "lessons", "01-topic.md"),
+          "# 01 · 起步约定\n\n来源：初始化时建立，等第一篇记录收口后回填。\n\n## 子主题\n\n- 暂无条目。\n")
+    r = run(fresh, "check", "--strict", "--quiet")
+    ok(r.returncode == 0, "a brand-new skeleton with the YYYY-MM-DD placeholder passes --strict",
+       r.stdout + r.stderr)
+
 
 def main() -> int:
-    tmp = tempfile.mkdtemp(prefix="journal-selftest-")
+    ap = argparse.ArgumentParser(description="journal.py 自测")
+    ap.add_argument("--root", default=None,
+                    help="夹具父目录（必须已存在且可写）；默认用系统临时目录")
+    ap.add_argument("--keep", action="store_true", help="跑完保留夹具目录")
+    args = ap.parse_args()
+
+    if args.root:
+        base = os.path.abspath(args.root)
+        if not os.path.isdir(base):
+            print(f"ERROR: --root 不是一个已存在的目录：{base}")
+            return 2
+        tmp = os.path.join(base, f"journal-selftest-{os.getpid()}")
+        if os.path.isdir(tmp):
+            shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp)
+        # 受限沙箱下，进程可能连自己刚建的父目录都写不进去；早失败、给准话。
+        probe = os.path.join(tmp, ".write-probe")
+        try:
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write("ok")
+            os.remove(probe)
+        except OSError as exc:
+            print(f"ERROR: --root 目录不可写：{tmp}（{exc}）")
+            return 2
+    else:
+        tmp = tempfile.mkdtemp(prefix="journal-selftest-")
     try:
         os.makedirs(os.path.join(tmp, "journal", "archive"))
         os.makedirs(os.path.join(tmp, "lessons"))
@@ -301,6 +518,29 @@ def main() -> int:
         r = run(tmp, "search", "rate limit")
         ok(r.returncode == 0 and "0002" in r.stdout, "search finds entry", r.stdout)
 
+        # 纯中文标题：文件名退化为 `<篇号>.md`，而且仍能被识别与索引 --------
+        cjk = os.path.join(tmp, "cjkfix")
+        os.makedirs(os.path.join(cjk, "journal"))
+        write(os.path.join(cjk, "journal", "README.md"),
+              "# C\n\n## 文件索引\n\n### A. 起步\n\n| 文件 | 方面 |\n|---|---|\n\n"
+              "## 待办（滚动清单）\n\n- [ ] x\n\n## 当前状态（2026-09-15）\n\n- 阶段 / 版本：v1\n")
+        r = run(cjk, "new", "--title", "第三轮用户访谈结论", "--iter", "3",
+                "--date", "2026-09-15", "--insert", "--stage", "A. 起步")
+        ok(r.returncode == 0, "new accepts a pure-CJK title", r.stdout + r.stderr)
+        bare = os.path.join(cjk, "journal", "0001.md")
+        ok(os.path.exists(bare), "a pure-CJK title yields <num>.md, not <num>-entry.md", r.stdout)
+        r = run(cjk, "outline")
+        ok("0001" in r.stdout and "第三轮用户访谈结论" in r.stdout,
+           "a bare-numbered entry is recognised", r.stdout)
+        r = run(cjk, "check", "--strict", "--quiet")
+        ok(r.returncode == 0, "the bare-numbered entry passes check --strict", r.stdout + r.stderr)
+        r = run(tmp, "search", "[", "--regex")
+        ok(r.returncode == 2 and "ERROR" in r.stdout, "search rejects an invalid regex cleanly",
+           r.stdout + r.stderr[:200])
+        ok("Traceback" not in r.stderr, "invalid regex does not traceback", r.stderr[:200])
+        r = run(tmp, "brief", "--width", "0")
+        ok(r.returncode == 0 and "BRIEF" in r.stdout, "brief survives --width 0", r.stdout[:120])
+
         # status -----------------------------------------------------------
         r = run(tmp, "status", "--set", "分支 / HEAD=main @ abc123", "--set", "测试=312 PASS", "--date", "2026-09-14")
         ok(r.returncode == 0, "status --set exits 0", r.stderr)
@@ -309,7 +549,35 @@ def main() -> int:
         ok("## 当前状态（2026-09-14）" in idx, "status date updated")
         ok(idx.count("## 当前状态") == 1, "still exactly one status block")
         r = run(tmp, "status")
-        ok("main @ abc123" in r.stdout, "status --show prints block")
+        ok("main @ abc123" in r.stdout, "status prints block")
+
+        # status --set：短名要落到规范字段上，而不是新增一个平行字段 --------------
+        # 用一个只含规范字段的独立夹具，避免依赖上面那个迷你项目的字段集。
+        sdir = os.path.join(tmp, "statusfix")
+        os.makedirs(os.path.join(sdir, "journal"))
+        write(os.path.join(sdir, "journal", "README.md"), CANON_INDEX)
+        r = run(sdir, "status", "--set", "核对=抽样 30 条全部通过",
+                "--set", "交付物=app.zip", "--set", "阶段=v2")
+        ok(r.returncode == 0, "status --set accepts short field names", r.stderr)
+        sidx = read(os.path.join(sdir, "journal", "README.md"))
+        ok("- 核对 / 验证：抽样 30 条全部通过" in sidx, "short name 核对 lands on 核对 / 验证", sidx)
+        ok("- 交付物与指纹：app.zip" in sidx, "short name 交付物 lands on 交付物与指纹", sidx)
+        ok("- 阶段 / 版本：v2" in sidx, "short name 阶段 lands on 阶段 / 版本", sidx)
+        sfields = [l for l in sidx.splitlines() if l.startswith("- ") and "：" in l]
+        ok(len(sfields) == 7, "canonical status block keeps exactly 7 fields", f"{sfields}")
+        ok("(新增)" not in r.stdout, "short names appended no field", r.stdout)
+        r = run(sdir, "status", "--set", "对不上的字段=x")
+        ok("(新增)" in r.stdout and "- 对不上的字段：x" in read(os.path.join(sdir, "journal", "README.md")),
+           "an unknown field name is still appended", r.stdout)
+
+        # 台账末行没有换行时，--set 不能把新字段拼到上一行 ---------------
+        idx_path = os.path.join(sdir, "journal", "README.md")
+        write(idx_path, read(idx_path).rstrip("\r\n"))
+        r = run(sdir, "status", "--set", "环境=py3.14")
+        ok(r.returncode == 0, "status --set works on a ledger without a trailing newline", r.stderr)
+        sidx = read(idx_path)
+        ok("- 环境：py3.14" in sidx.splitlines(), "new field starts on its own line", sidx)
+        ok("：py3.14" not in sidx.replace("- 环境：py3.14", ""), "new field did not glue onto the previous line", sidx)
 
         # todo -------------------------------------------------------------
         run(tmp, "todo", "--add", "ship the thing")
@@ -371,6 +639,12 @@ def main() -> int:
         # 跨语言解析：英文标签（P1）-----------------------------------------
         english_phase(tmp)
 
+        # 文档一致性：模板落盘后要能被自己的门禁接受 ------------------------
+        doc_phase(tmp)
+
+        # 数据安全与幂等 ----------------------------------------------------
+        safety_phase(tmp)
+
         # CRLF fidelity ----------------------------------------------------
         index_path = os.path.join(tmp, "journal", "README.md")
         before = read(index_path).replace("\n", "\r\n")
@@ -385,7 +659,10 @@ def main() -> int:
         ok(len(changed) == 1 and b"999 PASS" in after.split(b"\r\n")[changed[0]],
            "only the target line changed", f"changed lines={changed}")
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        if args.keep:
+            print(f"夹具保留在：{tmp}")
+        else:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     failed = [label for good, label in results if not good]
     print(f"\n{len(results) - len(failed)}/{len(results)} passed")

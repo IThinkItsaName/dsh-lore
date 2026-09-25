@@ -8,6 +8,79 @@
 
 ## [未发布]
 
+## [0.2.0] - 2026-09-25
+
+本版把它变成**一个包、两种装法**：既是原来的 Agent Skill，也是一个 **DeepSeek Harness 插件包**。
+同时修掉一轮实测出来的数据安全与幂等缺陷。
+
+### 新增
+
+- **DSH 插件包**：`package.json` 增加 `dsh.bundle.patch`，新增 `cordis.patch.yml` 与 `lib/index.js`。
+  装进某个 dsh profile 后，插件会读取自带的 `skills/project-work-log/SKILL.md` frontmatter，
+  用 `ctx.skills.register(...)` 把技能注册进会话目录——**不用复制文件，也不用配技能搜索路径**。
+  技能正文每次加载都重读文件，改 Markdown 不需要重建。
+  - `resourceBase` 指向真实 bundle 目录，`references/*.md` 与 `scripts/journal.py` 的提示词路径因此可用。
+  - 可配置：`skillDir` / `skillFile` / `modelInvocable` / `userInvocable` / `verbose`。
+  - 仓库名沿用 `worklog`；npm 包名改为 **`dsh-worklog`**（旧名 `pi-project-work-log` 从未发布到 npm）。
+- `skills/project-work-log/SKILL.md` 的「环境边界」补全：明确真实 Python 下限、UTF-8 要求、
+  以及中英双语标签的**完整**别名表（此前正文只举了 7 个词，漏了 `实测`/`审查` 等实际支持的别名）。
+- `scripts/_measure.py` 增加 `status block chars`、`status blocks in index`、`history blocks in index`、
+  `SUMMARY.md size chars`、`titles carrying an iteration number`——`references/analysis.md` 引用的数字
+  现在**逐条**都能复现（此前 `_measure.py` 对其中几项只打印 True/False）。
+- `scripts/_selftest.py` 新增 `--root DIR`（写入受限的沙箱里指定夹具父目录）与 `--keep`（保留夹具排查）。
+
+### 修复
+
+- **数据安全（严重）**：非 UTF-8 的台账会被静默毁掉。读取用 `errors="replace"`，写回时把替换出来的
+  `U+FFFD` 固化成文件内容——一个 GBK 老仓库第一次 `status --set` 就会丢掉全部中文。
+  现在写回前先严格解一遍，不是 UTF-8 就**拒绝写入**并说明原因（退出码 2），文件保持字节不变。
+- **`status --roll` 把 LF 掺进 CRLF 台账**（违反"保留 CRLF"的承诺）。新骨架先按台账原本的换行风格改写。
+- **`archive` / `split` 会弄死被移动记录自己的出站链接**：`rewrite_links` 在移动**之后**才改写，
+  却按新目录解释链接，于是 `[b](0002-b.md)` 原样留着变成死链。现在先按**原目录**还原链接目标，
+  再反算新相对路径；跨目录链接（如 `../docs/design.md`）也一并处理。
+  `moves` 的键从"文件名"改为"旧绝对路径"，避免同名文件撞车。
+- **`index compact` 不幂等**：第二次运行把已折叠的目录行当成数据行，`0005–0006（2 篇，已归档）`
+  被改写成 `1 篇，已归档`。现在目标为目录的行直接跳过。折叠标签同时补齐 4 位零（与 `commands.md` 一致）。
+- **`index sync` 会往无关表格里写行**：缺 `## 文件索引` 时回退到整篇搜索，记录行可能被插进
+  `### 结算` 之类的表。现在缺小节就报错返回，`cmd_index` 也随之返回非零。
+- **`lesson add` 静默吞掉 `--source`**：正文里只要出现任何 `wl/` 就不补引用，于是
+  `--source 1` + 正文提到 `wl/9999` 会写成只引用 9999。现在只在**本篇来源**已出现时才跳过。
+- **死链门禁漏掉带锚点的链接**：`x.md#part` 因为先判 `.endswith(".md")` 而被整条跳过。现在先剥锚点。
+- **`lint` 把"正文是小节标题"误判成空小节**：`## 一、背景` 下接 `### 1.1 细节`（有内容）会报空小节。
+- **`check` 与 `lint` 对验证小节的标题级别不一致**：`check` 只认 h2–h3，`lint` 认 h2–h4。
+  现在统一为 h2–h4。
+- **`STATUS_HEAD_RE` 过度匹配**：英文索引里出现 `## Status of lessons` 之类标题会被判成"两个状态块" ERROR。
+  现在锚定整行标题（允许后面跟日期括号）。
+- **半角括号的状态标题被叠加日期**：`## Status (2026-01-01)` 上跑 `--date` 会变成
+  `## Status (2026-01-01)（2026-10-01）`。现在全角/半角括号都认。
+- **`prune --zip` 输出目录不存在时崩栈**：现在先建目录。
+- **`search --regex` 遇到非法正则崩栈**：现在给出干净报错并返回退出码 2。
+- **`new --iter` 只接受整数**：`--iter -`（模板里的默认写法）与 `--iter v2` / `批次B` 都进不来，
+  与"迭代字段接受任意标签"的约定矛盾。现在按字符串收。
+- **`brief` 提示了不存在的参数**：输出里的 `status --show` / `todo --list` 两个子命令都不存在
+  （照做会得到 `unrecognized arguments`）。现在提示 `status` / `todo`。
+- **`brief --width 0` 会吃掉最后一个字符**并加省略号。小宽度直接原样输出。
+- **`meta_of` 统计不准**：行数对每个以换行结尾的文件都多算一行；字节数因为 `read()` 归一了换行而低估 CRLF 文件。
+  现在分别用 `splitlines()` 与磁盘上的真实字节数。
+- `CITE_RE` 只认 1–4 位篇号（`wl/(\d{1,4})`），5 位篇号会被截断成前 4 位。现在接受任意位数。
+
+### 变更
+
+- 自测 **57 → 95** 项：新增短字段名解析、台账末行无换行、`index compact` 幂等、
+  文档模板可被自身门禁接受、非 UTF-8 拒写、CRLF 不被掺 LF、归档后链接仍有效、
+  纯中文标题的文件名等断言。
+- `references/templates.md` 的台账模板：示例索引行不再指向一个不存在的文件（照抄会导致首次 `check`
+  直接 ERROR 死链，与"初始化后 0 error"的承诺矛盾）。
+- `references/conventions.md`：修正入口行写法——`迭代 / 变更集 / 批次 / 阶段：N` 这类**多标签并排**
+  是解析不出来的，必须只写一个标签；补齐 `日期：`/验证小节在默认档位是 **WARN**、`--strict` 才是 ERROR。
+- `references/analysis.md`：修正"日期/验证由 check 直接判 ERROR"、"验证必须有命令与输出"、
+  入口行字段列表、"20 个子命令"与自身表格（21/23）等与实际行为不符的表述；自测数改为 90。
+- `SKILL.md`：工作流 C 的校验步骤改为 `check --strict`，并说明默认档位只报 WARN；
+  状态字段给出 7 个规范名并说明短名会被解析；工作流 A 补一句"先删模板里的示例索引行"。
+- `README.md`：新增 dsh 安装章节（含需要一并打开的三个 profile 行）、DSH 配置表、插件布局说明；
+  支持矩阵的 Python 下限改为 **3.9**（代码用了 PEP 585 注解与海象运算符），并说明非 UTF-8 文件的行为。
+- `PUBLISHING.md`：补 dsh 侧的安装与自检步骤，自测数改为 90。
+
 ## [0.1.1] - 2026-09-14
 
 > 说明：本次按 **patch** 号发布，但包含向后兼容的**新能力**（英文别名解析）；
@@ -56,6 +129,7 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/worklog/compare/v0.1.1...HEAD
+[未发布]: https://github.com/IThinkItsaName/worklog/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/IThinkItsaName/worklog/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/IThinkItsaName/worklog/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/IThinkItsaName/worklog/tree/v0.1.0

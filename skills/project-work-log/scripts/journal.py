@@ -78,20 +78,51 @@ K_TODO = L_TODO[0]
 K_ITER_ALIASES = L_ITER
 VERIFY_WORDS = L_VERIFY
 
-ENTRY_RE = re.compile(r"^(\d+)-.*\.md$")
+ENTRY_RE = re.compile(r"^(\d+)(?:-.*)?\.md$")
 HEADING_RE = re.compile(r"^#\s*(\d+)\s*[·.、:：]")
 H1_RE = re.compile(r"^#\s+(.+)$", re.M)
 DATE_LINE_RE = re.compile(rf"^(?:{_any(L_DATE)})\s*[：:]\s*(\S+)", re.M)
 CONCLUSION_RE = re.compile(rf"^(?:{_any(L_CONCLUSION)})\s*[：:]\s*(.*)$", re.M)
 TRIGGER_RE = re.compile(rf"^(?:{_any(L_TRIGGER)})\s*[：:]\s*(.+)$", re.M)
 SCOPE_RE = re.compile(rf"^(?:{_any(L_SCOPE)})\s*[：:]\s*(.+)$", re.M)
-STATUS_HEAD_RE = re.compile(rf"^#{{2,3}}\s*.*(?:{_any(L_STATUS)}).*$", re.M)
+STATUS_HEAD_RE = re.compile(
+    rf"^#{{2,3}}[ \t]*(?:{_any(L_STATUS)})[ \t]*(?:[（(][^）)\r\n]*[）)])?[ \t]*$", re.M)
 ISO_DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
-VERIFY_HEAD_RE = re.compile(rf"^#{{2,3}}\s*.*(?:{_any(L_VERIFY)})", re.M)
+VERIFY_HEAD_RE = re.compile(rf"^#{{2,4}}\s*.*(?:{_any(L_VERIFY)})", re.M)
 LINK_RE = re.compile(r"\]\(([^)\s]+)\)")
-CITE_RE = re.compile(r"wl/(\d{1,4})")
+CITE_RE = re.compile(r"wl/(\d+)")
+# 状态块标题后面的日期括号：全角 `（…）` 与半角 `(…)` 都要认（英文台账用半角）。
+DATE_PAREN_RE = re.compile(r"[（(][^）)\r\n]*[）)]")
+# 模板里的日期占位符：识别它是为了"刚初始化"和"真的没写日期"能分开。
+STATUS_DATE_PLACEHOLDER = re.compile(r"YYYY-MM-DD")
 
 STATUS_KEYS = ["阶段 / 版本", "迭代", "产出", "核对 / 验证", "交付物与指纹", "环境", "阻塞 / 等待"]
+
+
+def _status_key_parts(key: str) -> list[str]:
+    """把字段名切成可比较的片段：先按 `/`，再按 `与`（`交付物与指纹` 的两种写法）。"""
+    parts: list[str] = []
+    for chunk in key.split("/"):
+        parts.extend(p for p in chunk.split("与") if p)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def resolve_status_key(key: str) -> str:
+    """把用户写的字段名解析成 `## 当前状态` 里的规范字段名，认不出就原样返回。
+
+    约定里字段名固定（见 STATUS_KEYS），但写法有长有短：`核对` 对应 `核对 / 验证`，
+    `交付物` 对应 `交付物与指纹`。只做**唯一**匹配——`阶段` 同时命中 `阶段 / 版本` 的
+    片段，而 `版本` 单独出现时只命中它自己，所以两者都能用；歧义时保守不改。
+    """
+    want = _status_key_parts(key)
+    if not want:
+        return key
+    exact = [k for k in STATUS_KEYS if k == key.strip()]
+    if exact:
+        return exact[0]
+    hits = [k for k in STATUS_KEYS if set(want) & set(_status_key_parts(k))]
+    return hits[0] if len(hits) == 1 else key
+
 
 PLACEHOLDERS = ["<命令 / 数据 / 引用 / 样本>", "<验证命令>", "<一句话", "<标题", "<对象>", "<项目>", "TODO", "TBD", "XXX", "待填", "待补充"]
 VAGUE = ["应该没问题", "应该可以", "大概", "可能没问题", "似乎", "估计", "应该是"]
@@ -160,13 +191,47 @@ def read_raw(path: str) -> str:
         return ""
 
 
+def utf8_problem(path: str) -> str | None:
+    """目标文件不是合法 UTF-8 时返回原因，否则 None（文件不存在也算 None）。
+
+    读的时候用 `errors="replace"` 是为了"读不崩"，但**写**回去会把那些被替换成
+    `U+FFFD` 的字节永久固化——一个 GBK 老仓库会在第一次 `status --set` 时丢掉所有中文。
+    这里在写之前先严格解一遍：解不开就拒绝写，宁可报错也不静默毁数据。
+    """
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "rb") as fh:
+            if fh.read() == b"":
+                return None
+        with open(path, encoding="utf-8", newline="") as fh:
+            fh.read()
+    except UnicodeDecodeError as exc:
+        return (f"目标文件不是 UTF-8（第 {exc.start} 字节起）：{exc.reason}")
+    except OSError as exc:
+        return f"目标文件读不出来：{exc}"
+    return None
+
+
 def write_raw(path: str, text: str) -> None:
+    """外科式写回。非 UTF-8 目标会抛 `ValueError`，绝不把坏字节写成 `U+FFFD`。"""
+    problem = utf8_problem(path)
+    if problem is not None:
+        raise ValueError(problem)
     with open(path, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
 
 
 def rel(root: str, path: str) -> str:
     return os.path.relpath(path, root).replace(os.sep, "/")
+
+
+def _file_size(path: str) -> int:
+    """磁盘上的真实字节数（读不出来就算 0，别让统计炸掉）。"""
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
 
 
 def nl_of(text: str) -> str:
@@ -217,14 +282,22 @@ def _under(path: str, parent: str) -> bool:
 
 def rewrite_links(base_dirs: list[str], moves: dict[str, str], dry_run: bool = False
                   ) -> list[tuple[str, str, str]]:
-    """把指向旧文件名的相对链接改指到新位置，返回 [(文件, 旧链接, 新链接)]。
+    """把指向被移动文件的相对链接改指到新位置，返回 [(文件, 旧链接, 新链接)]。
 
-    `moves` = {旧文件名: 新绝对路径}。只改 .md 里的 markdown 链接；
+    `moves` = {**旧绝对路径**: 新绝对路径}。只改 .md 里的 markdown 链接；
     `wl/NNNN` 这类纯编号引用不受目录变化影响，故意不动。
+
+    关键点：链接是**相对于写它的那个文件**的，脚本在移动**之后**才改写，所以
+    被移动文件自己的正文必须按**它原来的目录**来解析（否则 `[b](0002-b.md)`
+    会被当成"相对新目录"，算出 `0002-b.md` 这种原地不动的错链）。
     """
     changed: list[tuple[str, str, str]] = []
+    # 规范化后的 旧路径 → 新绝对路径。再用它反查 新路径 → 旧路径，
+    # 这样"这个文件原来在哪儿"和"这个链接目标搬没搬"都能回答。
+    lookup = {os.path.normcase(os.path.abspath(old)): new for old, new in moves.items()}
+    was_at = {os.path.normcase(os.path.abspath(new)): old for old, new in moves.items()}
 
-    def fixer(path: str, base: str):
+    def fixer(path: str, base: str, frame_dir: str):
         def sub(m: re.Match) -> str:
             target = m.group(1)
             if target.startswith(("http://", "https://", "mailto:", "#")):
@@ -233,8 +306,19 @@ def rewrite_links(base_dirs: list[str], moves: dict[str, str], dry_run: bool = F
             if "#" in target:
                 target, anchor = target.split("#", 1)
                 anchor = "#" + anchor
-            new_path = moves.get(os.path.basename(target))
-            if new_path is None:
+            if not target:
+                return m.group(0)
+            # 在"书写者坐标系"里还原链接指向的真实文件。
+            real = os.path.normpath(os.path.join(frame_dir, target.replace("/", os.sep)))
+            new_path = lookup.get(os.path.normcase(real))
+            if new_path is None and os.path.normcase(frame_dir) != os.path.normcase(os.path.dirname(path)):
+                # 书写者被移动了、目标没搬：按老坐标反算新的相对路径，
+                # 否则 `[b](0002-b.md)` 从 `archive/S/` 看过去就断了。
+                if not os.path.exists(real):
+                    return m.group(0)
+                new_path = real
+            elif new_path is None:
+                # 书写者就在原地、目标也没搬：链接本来就对，一个字都别动。
                 return m.group(0)
             new_target = os.path.relpath(new_path, os.path.dirname(path)).replace(os.sep, "/") + anchor
             if new_target != m.group(1):
@@ -251,8 +335,10 @@ def rewrite_links(base_dirs: list[str], moves: dict[str, str], dry_run: bool = F
                 if not f.endswith(".md"):
                     continue
                 path = os.path.join(dp, f)
+                # 被移动过的文件：正文按它**原来**的目录解析；没移动过的：就地解析。
+                frame_dir = os.path.dirname(was_at.get(os.path.normcase(path), path))
                 text = read_raw(path)
-                new_text = LINK_RE.sub(fixer(path, base), text)
+                new_text = LINK_RE.sub(fixer(path, base, frame_dir), text)
                 if new_text != text and not dry_run:
                     write_raw(path, new_text)
     return changed
@@ -275,8 +361,14 @@ def today() -> str:
 
 
 def slugify(title: str) -> str:
+    """把标题压成文件名后缀；**纯中文标题**返回空串。
+
+    返回空串而不是 "entry"：中文项目的每篇都会叫 `entry`，`0027-entry.md` 这种名字
+    既没有信息量又容易撞。空后缀会生成 `0027.md`——篇号本来就是地址（`wl/NNNN`），
+    文件名里只留编号是完全可以接受的，想要 ASCII slug 就用 `--slug` 自己指定。
+    """
     s = re.sub(r"[^0-9a-zA-Z]+", "-", title).strip("-").lower()
-    return re.sub(r"-{2,}", "-", s)[:48] or "entry"
+    return re.sub(r"-{2,}", "-", s)[:48]
 
 
 def parse_iter(text: str) -> str:
@@ -303,8 +395,11 @@ def meta_of(path: str) -> dict:
         "iter": iv,
         "conclusion": (cm.group(1).strip() if cm else ""),
         "sections": [s[1] for s in sections],
-        "lines": text.count("\n") + 1,
-        "bytes": len(text.encode("utf-8")),
+        # 用 splitlines 而不是 count("\n")+1：后者对每个以换行结尾的文件都多算一行。
+        "lines": len(text.splitlines()),
+        # 磁盘上的真实字节数；不能用 len(text.encode())，因为 read() 会归一换行，
+        # CRLF 文件会因此少算一半换行。
+        "bytes": _file_size(path),
         "has_date": bool(dm),
         "has_verify": bool(VERIFY_HEAD_RE.search(text)),
     }
@@ -411,10 +506,12 @@ def _check_links(root: str, path: str, rep: Report) -> None:
     where = rel(root, path)
     seen = set()
     for target in LINK_RE.findall(read(path)):
-        if target.startswith(("http://", "https://", "mailto:", "#")) or not target.endswith(".md"):
+        if target.startswith(("http://", "https://", "mailto:", "#")):
             continue
+        # 先去掉 `#锚点` 再判断是不是 .md —— 否则 `x.md#part` 会被整条跳过，
+        # 死链检查漏掉所有带锚点的链接。
         clean = target.split("#", 1)[0].strip()
-        if not clean or clean in seen:
+        if not clean.endswith(".md") or clean in seen:
             continue
         seen.add(clean)
         if not os.path.exists(os.path.normpath(os.path.join(base, clean))):
@@ -497,7 +594,11 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
                 if d and (newest is None or d > newest):
                     newest = d
             if not sd:
-                rep.add("WARN", jname, f"「{K_STATUS}」块没有日期（标题写 `## {K_STATUS}（YYYY-MM-DD）`）")
+                if STATUS_DATE_PLACEHOLDER.search(block):
+                    # 刚按模板建好的骨架：日期还是 `YYYY-MM-DD`，填上就好，不算漂移。
+                    rep.add("INFO", jname, f"「{K_STATUS}」日期还是模板占位符（`YYYY-MM-DD`），填上真实日期")
+                else:
+                    rep.add("WARN", jname, f"「{K_STATUS}」块没有日期（标题写 `## {K_STATUS}（YYYY-MM-DD）`）")
             elif newest and sd < newest:
                 rep.add("WARN", jname, f"「{K_STATUS}」({sd}) 早于最新记录 ({newest})，台账可能过期")
         if not any(f"## {a}" in idx_text for a in L_TODO):
@@ -604,7 +705,10 @@ def todo_items(journal: str) -> tuple[list[str], list[str]]:
 
 def _clip(text: str, width: int) -> str:
     text = text.rstrip()
-    return text if len(text) <= width else text[: width - 1] + "…"
+    if len(text) <= width or width <= 1:
+        # width <= 1 时再截就只剩 "…" 甚至倒扣一个字符，不如原样返回。
+        return text
+    return text[: width - 1] + "…"
 
 
 def cmd_brief(args: argparse.Namespace) -> int:
@@ -625,7 +729,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
         print("")
         print("\n".join(_clip(l, args.width) for l in lines[:cap]))
         if len(lines) > cap:
-            print(f"… (+{len(lines) - cap} lines, use `status --show`)")
+            print(f"… (+{len(lines) - cap} lines, use `status`)")
     else:
         print(f"\n(!) 索引里没有状态块")
     open_items, _ = todo_items(journal)
@@ -633,7 +737,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
     for it in open_items[: args.max_todo]:
         print(_clip(it, args.width))
     if len(open_items) > args.max_todo:
-        print(f"… (+{len(open_items) - args.max_todo} more, use `todo --list`)")
+        print(f"… (+{len(open_items) - args.max_todo} more, use `todo`)")
     print(f"\n## 近期记录（{args.entries}）")
     for n in sorted(nums, reverse=True)[: args.entries]:
         m = meta_of(entries[n][0])
@@ -696,7 +800,11 @@ def cmd_search(args: argparse.Namespace) -> int:
         targets.append(journal)
     if args.in_ in ("lessons", "all") and lessons:
         targets.append(lessons)
-    pat = re.compile(args.pattern, re.I) if args.regex else None
+    try:
+        pat = re.compile(args.pattern, re.I) if args.regex else None
+    except re.error as exc:
+        print(f"ERROR: --regex 不是合法的正则：{exc}")
+        return 2
     needle = args.pattern.lower()
     hits = 0
     for base in targets:
@@ -745,8 +853,12 @@ def index_sync(journal: str, only: list[int] | None = None, stage: str | None = 
         return [], "索引已覆盖全部根目录记录"
 
     idx_span = find_labeled_section(lines, 2, L_INDEX)
-    search_from = idx_span[1] if idx_span else 0
-    search_to = idx_span[2] if idx_span else len(lines)
+    if not idx_span:
+        # 没有 `## 文件索引` 就别猜：回退到整篇会把记录行写进任何一张表里
+        # （例如 `### 结算`），静默污染无关小节。
+        return [], "索引里没有 `## 文件索引` 小节，先把台账结构补齐"
+    search_from = idx_span[1]
+    search_to = idx_span[2]
     subs = [(i, heading_level(lines[i])[1]) for i in range(search_from, search_to) if heading_level(lines[i]) and heading_level(lines[i])[0] == 3]
     if stage:
         chosen = next((s for s in subs if stage in s[1]), None)
@@ -785,7 +897,7 @@ def cmd_new(args: argparse.Namespace) -> int:
     num = (max(entries) + 1) if entries else 1
     date = args.date or today()
     slug = args.slug or slugify(args.title)
-    fname = f"{num:04d}-{slug}.md"
+    fname = f"{num:04d}-{slug}.md" if slug else f"{num:04d}.md"
     path = os.path.join(journal, fname)
     body = ENTRY_TEMPLATE.format(num=num, title=args.title, date=date,
                                  iter=args.iter if args.iter is not None else "-",
@@ -805,8 +917,9 @@ def cmd_new(args: argparse.Namespace) -> int:
     else:
         print("索引建议行：")
         print(f"| [{fname}]({fname}) | {args.title} |")
-    if slug == "entry":
-        print("提示：标题没有可用的 ASCII slug，建议用 --slug 指定。")
+    if not slug:
+        print("提示：纯中文标题没有可用的 ASCII slug，已生成 `<篇号>.md`；"
+              "想要带描述的文件名就加 `--slug <ascii-slug>`。")
     return 0
 
 
@@ -857,6 +970,10 @@ def cmd_index_compact(args: argparse.Namespace) -> int:
             continue
         targets = [LINK_RE.search(lines[k]).group(1).split("#")[0] for k in rows]
         resolved = [os.path.normpath(os.path.join(journal, t)) for t in targets]
+        if any(os.path.isdir(p) for p in resolved):
+            # 已经折叠过的行：目标是个目录。再折一次会把 `5–6（2 篇）` 变成 `1 篇`，
+            # 所以这里必须跳过，保证 `index compact` 幂等。
+            continue
         if not all(_under(p, archive_root) for p in resolved):
             skipped.append((title, "含活跃记录"))
             continue
@@ -870,7 +987,7 @@ def cmd_index_compact(args: argparse.Namespace) -> int:
         nums = [int(m.group(1)) for t in targets
                 if (m := ENTRY_RE.match(os.path.basename(t)))]
         common = dirs.pop()
-        label = (f"{min(nums)}–{max(nums)}（{len(rows)} 篇，已归档）" if nums
+        label = (f"{min(nums):04d}–{max(nums):04d}（{len(rows)} 篇，已归档）" if nums
                  else f"{len(rows)} 篇，已归档")
         new_row = f"| [{common}/]({common}/) | {label} |{nl}"
         old_block = "".join(lines[rows[0]:rows[-1] + 1])
@@ -903,7 +1020,8 @@ def cmd_index(args: argparse.Namespace) -> int:
     print(msg)
     for n in missing:
         print(f"  #{n:04d}")
-    return 0
+    # 索引小节缺失 / 找不到可写入的表格时 index_sync 会空手而归，别报成功。
+    return 0 if missing or msg.startswith("索引已覆盖") else 1
 
 
 # --------------------------------------------------------------------------- #
@@ -946,10 +1064,11 @@ def cmd_status(args: argparse.Namespace) -> int:
             insert_at += 1
         hl[insert_at:insert_at] = [nl_of(htext), block + nl_of(htext), nl_of(htext)]
         write_raw(hist, "".join(hl))
-        head = re.sub(r"（[^）]*）", "", head_line)
-        head = head.rsplit("（", 1)[0] if "（" in head else head
+        head = re.sub(DATE_PAREN_RE, "", head_line).strip()
         new_block = STATUS_SKELETON.format(head=head.lstrip("# ").strip(), date=args.date or today(),
                                            fields="\n".join(f"- {k}：" for k in STATUS_KEYS))
+        # 新骨架是 LF 字面量，必须按台账原本的换行风格改写，否则 CRLF 台账被掺进 LF。
+        new_block = new_block.replace("\n", nl_of(text))
         lines[span[0]:span[2]] = new_block.splitlines(keepends=True) + [nl_of(text)]
         write_raw(os.path.join(journal, "README.md"), "".join(lines))
         print(f"已归档旧状态块 → {rel(root, hist)}，并写入新骨架")
@@ -958,8 +1077,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     if args.set or args.date:
         head_line = lines[span[0]]
         if args.date:
-            if re.search(r"（[^）]*）", head_line):
-                head_line = re.sub(r"（[^）]*）", f"（{args.date}）", head_line)
+            if DATE_PAREN_RE.search(head_line):
+                head_line = DATE_PAREN_RE.sub(f"（{args.date}）", head_line, count=1)
             else:
                 head_line = head_line.rstrip("\r\n") + f"（{args.date}）" + (nl_of(text))
             lines[span[0]] = head_line
@@ -973,13 +1092,22 @@ def cmd_status(args: argparse.Namespace) -> int:
             found = False
             for i in range(span[1], span[2]):
                 m = re.match(r"^(\s*-\s*)([^：:\r\n]+)[：:][ \t]*(.*?)(\r?\n?)$", lines[i])
-                if m and m.group(2).strip() == key:
-                    lines[i] = f"{m.group(1)}{key}：{val}{m.group(4)}"
-                    found = True
-                    changed.append(key)
-                    break
+                if not m:
+                    continue
+                existing = m.group(2).strip()
+                if existing != key and resolve_status_key(key) != existing:
+                    continue
+                # 命中已有字段时**沿用台账上的写法**，避免把 `核对 / 验证` 改写成 `核对`。
+                lines[i] = f"{m.group(1)}{existing}：{val}{m.group(4)}"
+                found = True
+                changed.append(existing)
+                break
             if not found:
                 end = last_content_line(lines, span[1], span[2]) + 1
+                # 行尾可能没有换行符（手写台账常见）；补一个，否则新字段会粘到上一行末尾。
+                if end > 0 and not lines[end - 1].endswith(("\n", "\r")):
+                    lines[end - 1] = lines[end - 1] + nl_of(text)
+                    end += 1
                 lines.insert(end, f"- {key}：{val}{nl_of(text)}")
                 span = (span[0], span[1], span[2] + 1)
                 changed.append(key + "(新增)")
@@ -1150,7 +1278,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
         print(f"ERROR: {args.from_num}–{args.to_num} 区间内没有活跃记录")
         return 1
     target_dir = os.path.join(journal, "archive", stage)
-    moves = {os.path.basename(p): os.path.join(target_dir, os.path.basename(p))
+    moves = {os.path.abspath(p): os.path.join(target_dir, os.path.basename(p))
              for _, p in picked}
     for dst in moves.values():
         if os.path.exists(dst):
@@ -1224,7 +1352,7 @@ def cmd_split(args: argparse.Namespace) -> int:
         if os.path.exists(target):
             print(f"ERROR: 目标已存在，先处理冲突：{rel(root, target)}")
             return 1
-        moves[os.path.basename(p)] = target
+        moves[os.path.abspath(p)] = target
         plan.append((n, p, target, year))
 
     if not plan:
@@ -1346,6 +1474,9 @@ def cmd_prune(args: argparse.Namespace) -> int:
         return 0
 
     zp = os.path.abspath(args.zip)
+    out_dir = os.path.dirname(zp)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
         for _, p, _, _ in cands:
             z.write(p, rel(root, p))
@@ -1417,8 +1548,12 @@ def cmd_lesson(args: argparse.Namespace) -> int:
     line = args.text.strip()
     if not line.startswith("-"):
         line = "- " + line
-    if "wl/" not in line:
-        line = line.rstrip("。.") + f"（`wl/{args.source:04d}`）"
+    # 只要正文里没引用**本篇**来源，就把 `--source` 的引用补上。
+    # 旧逻辑是"正文里出现任何 wl/ 就不补"，于是 `--source 1` 配上一段提到
+    # `wl/9999` 的文字，会把 0001 这个来源静默吞掉，check 转头去校验 9999。
+    cite = f"`wl/{args.source:04d}`"
+    if cite not in line:
+        line = line.rstrip("。.") + f"（{cite}）"
     payload = line + nl
     if args.topic:
         span = find_section(lines, 2, args.topic)
@@ -1531,6 +1666,9 @@ def cmd_export(args: argparse.Namespace) -> int:
         m = meta_of(entries[n][0])
         rows.append({"num": n, "path": rel(root, entries[n][0]), **{k: m[k] for k in
                      ("title", "date", "iter", "lines", "bytes", "has_date", "has_verify")}})
+    if args.csv and args.json:
+        print("ERROR: `--csv` 与 `--json` 只能选一个（`--json` 本来就是默认）")
+        return 2
     if args.csv:
         import csv
         import io
@@ -1610,7 +1748,10 @@ def cmd_retro(args: argparse.Namespace) -> int:
         text = read(entries[n][0])
         for line in text.splitlines():
             if re.match(r"^\s*-\s*\[ \]", line):
-                out.append(f"- {line.strip()[5:].strip()}（`wl/{n:04d}`）")
+                # 固定切 5 个字符会在 `-  [ ] x`（多一个空格）或裸 `- [ ]` 上切错，
+                # 用正则把复选框前缀整段吃掉。
+                item = re.sub(r"^\s*-\s*\[ \]\s*", "", line).strip()
+                out.append(f"- {item}（`wl/{n:04d}`）")
                 leaves += 1
     if not leaves:
         out.append("- （区间内记录没有未完成项）")
@@ -1669,7 +1810,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = add("new", cmd_new, "生成下一篇记录")
     p.add_argument("--title", required=True)
-    p.add_argument("--iter", type=int, default=None, help=f"迭代编号（默认 -；解析时兼容变更集/批次/阶段/版本/里程碑）")
+    p.add_argument("--iter", type=str, default=None, help=f"迭代编号（默认 -；解析时兼容变更集/批次/阶段/版本/里程碑，也接受 v2/批次B 这类非数字标签）")
     p.add_argument("--slug", default=None)
     p.add_argument("--date", default=None)
     p.add_argument("--cmd", default=None, help="预填验证依据（命令 / 数据 / 引用 / 样本）")
@@ -1808,7 +1949,13 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if getattr(args, "date", None) == "today":
         args.date = today()
-    result = args.func(args)
+    try:
+        result = args.func(args)
+    except ValueError as exc:
+        # write_raw 对非 UTF-8 目标主动抛错，避免把坏字节写成 U+FFFD。
+        print(f"ERROR: 拒绝写入：{exc}")
+        print("       记录文件必须是 UTF-8；请先用编辑器把该文件转成 UTF-8 再重试。")
+        return 2
     return result if isinstance(result, int) else 0
 
 

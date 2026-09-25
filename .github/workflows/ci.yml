@@ -35,5 +35,5 @@ jobs:
           print("SKILL.md frontmatter OK")
           PY
 
-      - name: Skill self-test (57 checks)
+      - name: Skill self-test (95 checks)
         run: python skills/project-work-log/scripts/_selftest.py

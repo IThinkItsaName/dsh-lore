@@ -5,7 +5,7 @@
 **不限编程**：软件、研究、写作、设计、运营、教学……任何跳会话或跨周持续投入的项目都能用。
 术语可换（迭代字段接受 `迭代 / 变更集 / 批次 / 阶段 / 版本 / 里程碑`），验证口径也放宽到“命令 / 数据 / 引用 / 样本”。
 
-适用于支持 [Agent Skills](https://agentskills.io/specification) 的 AI 代理（pi、Claude Code 等）。
+同一个包可以两种方式装：作为 **DeepSeek Harness 插件包**（`dsh.bundle`），或作为普通 **Agent Skill**（[agentskills.io 规范](https://agentskills.io/specification)，pi、Claude Code 等通用）。
 
 > **来源与免责声明**：本仓库的约定、文档与脚本整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，
 > 并**完全由 DeepSeek Flash 系列模型整理生成**（未经人工逐条校验）。
@@ -32,6 +32,38 @@
 
 ## 安装
 
+### DeepSeek Harness（dsh）
+
+本包声明了 `dsh.bundle`，是一个 **DSH 插件包**：装进某个 profile 后，它会把自带的
+`project-work-log` 技能注册进该 profile 的技能目录，不需要复制文件、也不需要配置技能搜索路径。
+
+```bash
+# 从本地目录装进某个 profile（先改路径）
+dsh plugin --profile desktop install /绝对/路径/worklog
+
+# 或直接用 agent 的 plugin_manager 工具装（spec 支持绝对路径 / file: / 包名 / git / tarball）
+```
+
+本包的 `cordis.patch.yml` 会**打开技能子系统**：`dsh-base` 已经声明了 `skill`、`skill-filesystem`、
+`tool-skill` 三行，但出厂是关着的，而这三行缺一不可——
+
+| 行 | 作用 |
+|---|---|
+| `skill` | 技能注册表，本插件通过 `ctx.skills.register(...)` 注册进去 |
+| `skill-filesystem` | 本地技能发现（本包把 `SKILL.md` 以目录 bundle 形式带在 `skills/` 里） |
+| `tool-skill` | 让模型看到并加载技能；没有它，注册了也不会出现在会话目录里 |
+
+补丁用 **override**（按 id 覆盖）而不是 `insert`：`insert` 会追加一行**重复**的行，
+反而让配置指向哪个都不确定。你自己的 profile `cordis.patch.yml` 仍可在最后覆盖或关掉这几行。
+
+| 配置项 | 默认 | 作用 |
+|---|---|---|
+| `skillDir` | `skills/project-work-log` | 技能 bundle 目录（相对本包或绝对路径） |
+| `skillFile` | `SKILL.md` | bundle 内的指令文件名 |
+| `modelInvocable` | `true` | 是否允许模型侧目录 / `skill` 工具加载 |
+| `userInvocable` | `true` | 是否允许人侧入口加载 |
+| `verbose` | `false` | 挂载时打一行日志 |
+
 ### pi
 
 ```bash
@@ -39,7 +71,7 @@
 pi install git:github.com/IThinkItsaName/worklog
 
 # 固定到 tag（推荐，避免上游变动）
-pi install git:github.com/IThinkItsaName/worklog@v0.1.0
+pi install git:github.com/IThinkItsaName/worklog@v0.1.1
 
 # 只装到当前项目（写入 .pi/settings.json，可随仓库共享给团队）
 pi install -l git:github.com/IThinkItsaName/worklog
@@ -91,7 +123,11 @@ python <skill>/scripts/journal.py check --strict && python <skill>/scripts/journ
 .
 ├── README.md
 ├── LICENSE
-├── package.json                 # pi 包声明（keywords: pi-package）
+├── CHANGELOG.md
+├── package.json                 # pi 包声明 + dsh.bundle（DSH 插件包声明）
+├── cordis.patch.yml             # DSH 插件补丁：插入 dsh-worklog 与 skill-filesystem 两行
+├── lib/
+│   └── index.js                 # DSH 插件入口：把自带技能注册进 ctx.skills
 └── skills/
     └── project-work-log/
         ├── SKILL.md             # 技能入口：三层模型、铁律、工作流、反模式
@@ -105,6 +141,10 @@ python <skill>/scripts/journal.py check --strict && python <skill>/scripts/journ
             ├── _selftest.py     # 自测：临时工程跑通全部命令 + CRLF 保真
             └── _measure.py      # 对现成记录目录做一次性测量（analysis.md 的数字可复现）
 ```
+
+> `lib/index.js` 在挂载时读取 `skills/project-work-log/SKILL.md` 的 YAML frontmatter，
+> 再用 `ctx.skills.register(...)` 注册；技能正文每次加载都重读文件，所以**改 Markdown 不需要重建**。
+> 技能本身仍是一份标准 Agent Skill 目录 bundle，`.pi/skills/` 之类的安装方式照旧可用。
 
 ## 命令一览
 
@@ -137,7 +177,11 @@ python <skill>/scripts/journal.py check --strict && python <skill>/scripts/journ
 python skills/project-work-log/scripts/_selftest.py
 ```
 
-会在临时目录里搭一个最小项目，跑通全部命令，并断言：CRLF 保真、**只改目标行**、来源校验会拒绝不存在的篇号等。
+会在临时目录里搭一个最小项目，跑通全部命令，并断言：CRLF 保真、**只改目标行**、来源校验会拒绝不存在的篇号、
+`status --set` 的短名解析（`核对` → `核对 / 验证`）不新增字段、以及**文档模板落盘后能被自己的门禁接受**。
+
+> 写入受限的环境（某些沙箱只允许进程写自己创建过的目录）用 `--root <已存在的目录>` 指定夹具父目录，
+> 例如 `python scripts/_selftest.py --root ./.scratch`。
 
 ## 设计依据
 
@@ -149,14 +193,14 @@ python skills/project-work-log/scripts/_selftest.py
 
 | 维度 | 支持 | 验证情况 |
 |---|---|---|
-| **Python** | 3.7+ 语法 | 仅在 **3.12**（CI / Ubuntu）与 **3.14**（Windows 本机）实测；更低版本**未验证** |
+| **Python** | **3.9+** | 代码用了 PEP 585 注解（`list[str]`）与海象运算符；仅在 **3.12**（CI / Ubuntu）与 **3.14**（Windows 本机）实测 |
 | 第三方依赖 | **无**（纯标准库） | 不需要 `pip install` |
 | 操作系统 | Windows / macOS / Linux | 无平台相关 API；CI 在 Ubuntu、本机在 Windows 实测通过 |
-| 字符编码 | UTF-8 文件 | 控制台编码无关（在 GBK 控制台下实测正常） |
+| 字符编码 | UTF-8 文件 | 控制台编码无关（脚本自行把 stdout 设为 UTF-8）；非 UTF-8 文件不崩但标签会认不出来（按 `errors="replace"` 读），建议先转为 UTF-8 |
 | **解析语言** | 中文默认 + **英文别名** | `日期/Date`、`结论/Conclusion`、`迭代/Iteration`、`验证/Verification`、`当前状态/Status`、`待办/TODO`、`文件索引/Index` 均可解析（英文 fixture 下 `check --strict` 与 `lint --strict` 均 0 error） |
 | 写入语言 | 中文（模板默认） | 要英文写入，改 `references/templates.md` 与 `journal.py` 的模板字符串 |
 | 命令执行 | 可选 | 无 Python / 不能执行命令时退化为纯规范，见 SKILL.md「没有 Python 怎么办」 |
-| harness | 任何支持 Agent Skills 的 | frontmatter 仅 `name` + `description`，且 name 与目录名一致 |
+| harness | 任何支持 Agent Skills 的；以及 **DeepSeek Harness 插件** | skill frontmatter 仅 `name` + `description`，且 name 与目录名一致；DSH 侧另由 `lib/index.js` 注册 |
 | 外部程序 | 无（git 可选） | — |
 
 ## 更新日志

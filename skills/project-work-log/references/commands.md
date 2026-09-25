@@ -6,16 +6,19 @@
 
 ```bash
 python scripts/journal.py --help          # 命令总览
-python scripts/_selftest.py               # 自测：临时工程跑通全部命令（57 项，含非编程场景、整理能力与英文标签）
+python scripts/_selftest.py               # 自测：临时工程跑通全部命令（95 项，含非编程场景、整理能力与英文标签）
 ```
+
+**写入命令的通用规矩**：目标文件必须是 **UTF-8**。不是 UTF-8（GBK 老仓库等）时会**拒绝写入**并返回退出码 2，
+文件保持字节不变——这是故意的，避免把解码失败的字节写成 `U+FFFD` 毁掉中文。
 
 ## 一、少读：把上下文留给真正要看的内容
 
 | 命令 | 作用 | 典型用法 |
 |---|---|---|
-| `brief` | **压缩上下文快照**：当前状态（每行截断）+ 未完成待办 + 最近 N 篇。替代整读 50 KB 索引 | `brief --entries 8 --max-status-lines 30 --width 200` |
+| `brief` | **压缩上下文快照**：当前状态（每行截断）+ 未完成待办 + 最近 N 篇。替代整读 50 KB 索引 | `brief --entries 8 --max-status-lines 30 --width 200 --max-todo 10` |
 | `show` | **单篇大纲**：元数据 + 触发/范围/结论 + 各小节行数，先看这个再决定要不要读全文 | `show 42` / `show ./proj 42` |
-| `search` | **定向检索**：记录 + 经验里按子串/正则只回命中行 | `search "端口冲突"` / `search --regex "E10\d\d" --in journal` |
+| `search` | **定向检索**：记录 + 经验里按子串/正则只回命中行 | `search "端口冲突"` / `search --regex "E10\d\d" --in journal` / `search "验证" --files`（只列文件） |
 | `outline` | 全部记录一行表（编号/日期/迭代/行数/标题），可 `grep` 可排序 | `outline` |
 
 > 用法建议：接手任务先 `brief`；知道大概在哪篇用 `search`；定位到单篇用 `show`；确实需要细节再 `read` 那一个文件。
@@ -27,14 +30,19 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 | `new` | 生成下一篇记录，可选自动进索引 | `new --title "…" --iter 154 --insert --stage "A. 起步"` |
 | `status` | 当前状态块：查看 / 改字段 / 改日期 / 归档旧块 | `status --set "核对=抽样 30 条全部通过" --date` / `status --roll` |
 | `todo` | 滚动待办：加 / 勾选 / 清理已完成 | `todo --add "…"` / `todo --done "子串"` / `todo --drop-done` |
-| `index sync` | 把漏进索引的根目录记录补成表行（方面取自「结论：」） | `index sync --stage "B. 迭代"` |
+| `index sync` | 把漏进索引的根目录记录补成表行（方面取自「结论：」，可用 `--aspect` 覆盖） | `index sync --stage "B. 迭代" --aspect 验证` |
 | `lesson add` | 往经验分册追加一条并**校验来源存在** | `lesson add --volume 02-verification.md --source 53 --topic 方法论 --text "…"` |
 | `append` | 给某篇追加小节（更正 / 遗留更新） | `append 42 --section 更正 --text "…" --bullet` |
 
 约定要点：
 - `status` 永远只维护**唯一**一个 `## 当前状态` 块；`--roll` 会把旧块整段搬进 `journal/archive/STATUS-HISTORY.md` 再写新骨架。
-- `lesson add` 的 `--source` 必须指向真实存在的篇号，否则拒绝写入（防止无主结论）。
+- `status --set "核对=…"` 会落到台账上已有的 `核对 / 验证` 字段（短名可识别），**不会**多长出一个平行字段；
+  `阶段` / `交付物` 同理。名字对不上任何既有字段时才会新增。
+- `lesson add` 的 `--source` 必须指向真实存在的篇号，否则拒绝写入（防止无主结论）；
+  引用会**始终**补上——即使正文里已经提到别的 `wl/NNNN`。
 - `append` 若目标小节已存在则追加到该小节末尾，不会重复建标题。
+- `new` 的可选参数：`--slug`（文件名后缀；**纯中文标题**会退化成 `<篇号>.md`）、
+  `--date`、`--cmd`（写进「方式：」的默认命令）、`--stage`（配合 `--insert` 选索引小节）。
 
 ## 三、整理与清理（记录量增长后）
 
@@ -43,10 +51,10 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 
 | 命令 | 作用 | 典型用法 |
 |---|---|---|
-| `index compact` | **索引瘦身**：把「整节都已归档」的小节折叠成一行区间（`\| [archive/xx/](archive/xx/) \| 01–26（26 篇，已归档） \|`）。只动索引；混合小节或含死链的小节自动跳过 | `index compact --dry-run` / `index compact --stage A` |
-| `archive` | **归档**：把篇号区间移进 `journal/archive/<stage>/`，自动重写全仓链接（索引 / lessons / 其他记录）、补 `archive/README.md` 一行，并做**死链自检** | `archive --stage 02-research --from 27 --to 45` |
+| `index compact` | **索引瘦身**：把「整节都已归档」的小节折叠成一行区间（`\| [archive/xx/](archive/xx/) \| 0027–0045（19 篇，已归档） \|`）。只动索引；混合小节、含死链的小节、**已折叠过的目录行**都自动跳过（所以可重复跑） | `index compact --dry-run` / `index compact --stage A` |
+| `archive` | **归档**：把篇号区间移进 `journal/archive/<stage>/`，自动重写全仓链接（索引 / lessons / **被移动记录自己的出站链接**）、补 `archive/README.md` 一行，并做**死链自检** | `archive --stage 02-research --from 27 --to 45` / `--no-index` 跳过索引行更新 |
 | `split` | **按年分卷**：把活跃记录移进 `journal/<YYYY>/`（取自入口行的 `日期：`），重写链接。适合上千篇的超长期项目 | `split --by-year --dry-run` |
-| `prune` | **冷存**：列出「已归档 + 未被 lessons 引用 + 超期」的候选；`--zip` 打包；`--apply` 才把原件移出并写 `COLD-STORE.md` 清单。**默认只报告** | `prune` → `prune --zip cold.zip` → `... --apply` |
+| `prune` | **冷存**：列出「已归档 + 未被 lessons 引用 + 超期」的候选；`--zip` 打包（自动建输出目录）；`--apply` 才把原件移出并写 `COLD-STORE.md` 清单。**默认只报告** | `prune` → `prune --zip cold.zip` → `... --apply`；`--stage` 限定阶段、`--cold-store` 指定冷存目录 |
 
 推荐顺序：**`archive` → `index compact` →（很久以后）`prune`**；记录过万再考虑 `split --by-year`。
 
@@ -64,8 +72,12 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 `--strict` 把 WARN 当 ERROR（新项目/CI 建议开）；`--quiet` 不打印 INFO。
 旧仓库首次跑会有大量 WARN（缺日期行等）——那正是待回填清单，不是工具坏了。
 
-> **领域无关**：迭代字段解析时兼容 `迭代 / 变更集 / 批次 / 阶段 / 版本 / 里程碑`；
-> “验证”小节接受 `验证 / 复核 / 检查 / 评审 / 结果 / 证据 / 评估 / 确认`；
+> ⚠ **默认档位不是门禁**：缺 `日期：`、缺验证小节、漏索引、状态块没日期，默认都只报 **WARN（退出码 0）**。
+> 只有 `--strict` 才把它们抬成 ERROR。要当 CI 门禁，必须写 `check --strict && lint --strict`。
+
+> **领域无关**：迭代字段解析时兼容 `迭代 / 变更集 / 批次 / 阶段 / 版本 / 里程碑`（英文 `Iteration / Milestone`）；
+> “验证”小节接受 `验证 / 复核 / 检查 / 评审 / 结果 / 证据 / 评估 / 确认 / 实测 / 审查`（英文 `Verification / Review / Results / Evidence / Tests`），
+> 标题级别 h2–h4 都认；
 > `lint` 的“可核对内容”包括命令、数字、链接——不强制要求可执行命令。
 
 ## 五、分析与生成：不止于记账
@@ -73,10 +85,10 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 | 命令 | 作用 | 典型用法 |
 |---|---|---|
 | `stats` | 语料统计：总量、日期跨度、每周节奏、日期/验证合规率、体积、迭代字段覆盖、经验引用覆盖与 top cited | `stats` |
-| `topics` | **同主题簇建议**：自动找"出现在 2–N 篇"的标识符；中文用 `--keywords` 指定 | `topics --limit 15` / `topics --keywords "关键决策,评审意见"` |
-| `digest` | **生成交接摘要文档**：状态 + 待办 + 近期记录表 + 经验要点，`--out` 落盘可直接给新会话/新同事 | `digest --entries 12 --out HANDOFF.md` |
+| `topics` | **同主题簇建议**：自动找"出现在 2–N 篇"的标识符；中文用 `--keywords` 指定 | `topics --limit 15 --max-df 5` / `topics --keywords "关键决策,评审意见"` |
+| `digest` | **生成交接摘要文档**：状态 + 待办 + 近期记录表 + 经验要点，`--out` 落盘可直接给新会话/新同事 | `digest --entries 12 --per-volume 3 --out HANDOFF.md` |
 | `retro` | **阶段复盘骨架**：给篇号区间，自动生成阶段表 + 汇总区间内未完成项，用于 `lessons/99-retrospectives.md` | `retro --from 100 --to 151 --stage "第三阶段" --out retro.md` |
-| `export` | 机器可读导出（JSON / CSV），供其它脚本消费 | `export --csv --out journal.csv` |
+| `export` | 机器可读导出（JSON 默认 / `--csv`），供其它脚本消费 | `export --csv --out journal.csv` / `export --json` |
 
 `topics` 的自动模式只认 ASCII 标识符（文件名、编号、专有名词、错误码），中文主题请用 `--keywords`——这是无依赖环境下的取舍，已在输出里说明。
 
@@ -105,6 +117,6 @@ python scripts/journal.py digest --out HANDOFF.md
 
 | 文件 | 用途 |
 |---|---|
-| `_selftest.py` | 自测全部命令（临时目录，含 CRLF 保真、"只改目标行"、非编程场景断言） |
-| `_package.py` | 把 skill 源目录同步进可发布仓库（开发工作区专用，不随包发布） |
+| `_selftest.py` | 自测全部命令（临时目录，含 CRLF 保真、"只改目标行"、非编程场景、非 UTF-8 拒写等断言）。`--root DIR` 指定夹具父目录（写入受限的沙箱里用），`--keep` 保留夹具排查 |
+| `_package.py` | 把 skill 源目录同步进可发布仓库（开发工作区专用，不随包发布）；`--check` 兼作漂移与插件文件完整性门禁 |
 | `_measure.py` | 对现成 `work-log/`+`lessons/` 做一次性测量，`references/analysis.md` 的数字由它复现 |

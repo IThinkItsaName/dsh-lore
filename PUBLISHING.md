@@ -8,7 +8,7 @@
 |---|---|
 | **许可证** | MIT，版权人已署为 `IThinkItsaName`（要改就编辑 `LICENSE`）。若不想用 MIT，换掉整个文件即可。 |
 | **仓库名 / OWNER** | 已按 `IThinkItsaName/worklog` 写进下文；若改名，先全局替换这两个值。 |
-| **`package.json` 的 `name`** | 现在是 `pi-project-work-log`。**如果只通过 git 安装，名字无所谓**；若要 `npm publish`，先去 npm 查是否重名。 |
+| **`package.json` 的 `name`** | 现在是 `dsh-worklog`（同时兼容 pi 与 dsh）。**如果只通过 git / 本地路径安装，名字无所谓**；若要 `npm publish`，先去 npm 查是否重名。 |
 
 ## 1. 本地初始化并首次提交
 
@@ -50,19 +50,23 @@ git push -u origin main
 pi 安装时可以固定到 tag/commit，用户就不会被上游改动影响：
 
 ```bash
-git tag -a v0.1.0 -m "project-work-log v0.1.0"
-git push origin v0.1.0
+git tag -a v0.2.0 -m "project-work-log v0.2.0"
+git push origin v0.2.0
 ```
 
 之后别人可以这样装：
 
 ```bash
-pi install git:github.com/IThinkItsaName/worklog@v0.1.0
+pi install git:github.com/IThinkItsaName/worklog@v0.2.0
 ```
 
 ## 5. 以后怎么更新
 
 **skill 的唯一源是工作区的 `.pi/skills/project-work-log/`**，本仓库里的 `skills/project-work-log/` 是同步出来的副本。
+
+`lib/index.js`、`cordis.patch.yml`、`package.json`、`README.md`、`CHANGELOG.md` 是**插件自有文件**，
+直接在 `publish/worklog/` 里改（它们不参与同步）；`_package.py --check` 只校验它们在位，不比对内容。
+
 改完 skill 后：
 
 ```bash
@@ -78,10 +82,10 @@ python <工作区>/.pi/skills/project-work-log/scripts/_package.py --check
 # 4) 提交并推送
 cd <工作区>/publish/worklog
 git add -A && git commit -m "chore: sync skill from source" && git push
-git tag -a v0.1.1 -m "v0.1.1" && git push origin v0.1.1   # 有行为变化时
+git tag -a v0.2.1 -m "v0.2.1" && git push origin v0.2.1   # 有行为变化时
 ```
 
-> 不要在 `publish/` 里直接改脚本——下次同步会被覆盖。改源，再同步。
+> 不要在 `publish/worklog/skills/` 里直接改脚本——下次同步会被覆盖。改源，再同步。
 >
 > **发版规矩**：`CHANGELOG.md` **只追加、不改写历史条目**；每次发版更新文末的 compare 链接。
 > **tag 推送后不要移动**（别人可能已钉着它安装）—— 要改就发新版本号。
@@ -92,10 +96,18 @@ git tag -a v0.1.1 -m "v0.1.1" && git push origin v0.1.1   # 有行为变化时
 cd <工作区>/publish/worklog
 
 # 包内路径下也能跑通（验证相对路径没有写死）
-python skills/project-work-log/scripts/_selftest.py        # 期望 57/57 passed
+python skills/project-work-log/scripts/_selftest.py        # 期望 95/95 passed
 
-# 源与包没有漂移
+# 源与包没有漂移，插件自有文件也都在位
 python ../../.pi/skills/project-work-log/scripts/_package.py --check
+
+# 插件清单自洽：dsh.bundle.patch 指向的文件存在、补丁是合法 YAML、入口能解析出技能 frontmatter
+node -e "const p=require('./package.json'); const f=require('fs'); \
+  if(!p.dsh?.bundle?.patch) throw new Error('missing dsh.bundle.patch'); \
+  if(!f.existsSync(p.dsh.bundle.patch)) throw new Error('patch file missing'); \
+  if(!f.existsSync('./lib/index.js')) throw new Error('plugin entry missing'); \
+  console.log('dsh bundle manifest OK');"
+node --input-type=module -e "const m=await import('./lib/index.js'); console.log('exports:', Object.keys(m).join(', '));"
 
 # 没有把缓存/临时文件带进仓库
 git status --porcelain
@@ -104,10 +116,18 @@ git status --porcelain
 ## 7. 别人怎么装（写进 README 的三条路）
 
 ```bash
-pi install git:github.com/IThinkItsaName/worklog          # pi 用户
-cp -r skills/project-work-log ~/.pi/agent/skills/           # 手动
-# 其它 harness：把 skills/ 加入它的技能搜索路径（Agent Skills 标准布局）
+# dsh（本包声明了 dsh.bundle，装进某个 profile）
+dsh plugin --profile desktop install /绝对/路径/worklog
+
+# pi 用户
+pi install git:github.com/IThinkItsaName/worklog
+
+# 手动 / 其它 harness：把 skills/project-work-log 放进技能搜索路径（Agent Skills 标准布局）
+cp -r skills/project-work-log ~/.pi/agent/skills/
 ```
+
+装进 dsh 时还要确认该 profile 里 `skill` / `skill-filesystem` / `tool-skill` 三行是打开的
+（基座 bundle 默认关着，见 README 的 dsh 章节）。
 
 加上 `package.json` 里的 `pi-package` 关键词后，包会被 pi 的软件包画廊 <https://pi.dev/packages> 收录（若公开）。
 

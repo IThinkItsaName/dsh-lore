@@ -397,16 +397,24 @@ def safety_phase(tmp: str) -> None:
 
 
 def doc_phase(tmp: str) -> None:
-    """文档与代码一致性：模板落盘后必须能被自己的门禁接受。
+    """文档与代码一致性：模板落盘后必须能被自己的门禁接受，且引用的数字不许过期。
 
     `references/templates.md` 里的台账模板是给人复制的，一旦里面的示例行被
     `check` 判成死链，照文档初始化出来的项目第一次 `check` 就是红的——而
     SKILL.md 承诺"0 篇记录也应通过"。这条用例把那个承诺钉住。
+
+    同时校验文档里"自测 N 项"的 N 与实际断言数一致：本技能自己就有一条
+    "改一处漏一处"的反模式，文档写死一个过期数字正是同一个毛病（实测踩过：
+    SKILL.md 停在 57，实际已经 95）。
     """
     templates = os.path.join(os.path.dirname(HERE), "references", "templates.md")
     if not os.path.isfile(templates):
         # 只装了 scripts/ 的部署（例如从发布包单独取脚本）没有文档可校验。
         return
+
+    # 文档里的"自测 N 项"由 main() 在所有用例跑完后核对（见 doc_count_claims
+    # 与 main 末尾）——放这里数不出总数，只会自指。
+
     text = read(templates)
     blocks = re.findall(r"```markdown\n(.*?)```", text, re.S)
     ledger = next((b for b in blocks if "## 文件索引" in b), None)
@@ -663,6 +671,29 @@ def main() -> int:
             print(f"夹具保留在：{tmp}")
         else:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    # 文档里若写了当前自测规模（"共 N 项" / "N/N 通过"），必须等于真正跑过的
+    # 断言数。历史叙述（"由 34 项增至 57 项"）不在此列——所以只认下面两种写法。
+    # 放在这里是因为只有跑完才知道总数；在 doc_phase 里数等于自指。
+    total_ran = len(results)
+    docs = [os.path.join(os.path.dirname(HERE), "SKILL.md"),
+            os.path.join(os.path.dirname(HERE), "references", "analysis.md"),
+            os.path.join(os.path.dirname(HERE), "references", "commands.md")]
+    for path in docs:
+        if not os.path.isfile(path):
+            continue
+        text = read(path)
+        claims = set()
+        for pattern in (r"共\s*(\d+)\s*项", r"(\d+)\s*项\s*(?:通过|passed)",
+                        r"(\d+)\s*/\s*(\d+)\s*(?:通过|passed)"):
+            for m in re.finditer(pattern, text):
+                for g in m.groups():
+                    if g is not None:
+                        claims.add(int(g))
+        for claimed in sorted(claims):
+            ok(claimed == total_ran,
+               f"{os.path.basename(path)} quotes the current self-test count",
+               f"says {claimed}, ran {total_ran}")
 
     failed = [label for good, label in results if not good]
     print(f"\n{len(results) - len(failed)}/{len(results)} passed")

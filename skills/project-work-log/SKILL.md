@@ -147,7 +147,7 @@ python scripts/journal.py retro --from 100 --to 151 --out r.md  # 阶段复盘�
 python scripts/journal.py export --csv --out journal.csv   # 机器可读导出
 ```
 
-自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签，57 项）。
+自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全；**断言数以脚本实际输出为准**，全绿即通过）。
 
 > 典型接手动作：`brief` → `search` → `show` → 需要细节才 `read` 那一个文件。
 > 典型收尾动作：`new --insert` → 补正文 → `status` → `lesson add` → `check --strict` && `lint --strict`。

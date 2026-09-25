@@ -6,7 +6,7 @@
 
 ```bash
 python scripts/journal.py --help          # 命令总览
-python scripts/_selftest.py               # 自测：临时工程跑通全部命令（95 项，含非编程场景、整理能力与英文标签）
+python scripts/_selftest.py               # 自测：临时工程跑通全部命令（含非编程场景、整理能力、英文标签、数据安全）
 ```
 
 **写入命令的通用规矩**：目标文件必须是 **UTF-8**。不是 UTF-8（GBK 老仓库等）时会**拒绝写入**并返回退出码 2，

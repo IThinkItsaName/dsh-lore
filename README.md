@@ -154,7 +154,11 @@ python <skill>/scripts/journal.py check --strict && python <skill>/scripts/journ
 ```
 
 > `lib/index.js` 在挂载时读取 `skills/project-work-log/SKILL.md` 的 YAML frontmatter，
-> 再用 `ctx.skills.register(...)` 注册。它**只 import `node:` 内置模块**，没有任何第三方依赖 ——
+> 然后用 `ctx.skills.registerProvider(...)` 注册一个**技能提供者**：`list()` 报目录、`get()` 每次
+> **重新读文件**给正文——所以改 Markdown 不需要重启，也不需要重建。
+> （对比：`ctx.skills.register()` 在挂载时就把正文快照下来，改文件要重启才生效。）
+>
+> 它**只 import `node:` 内置模块**，没有任何第三方依赖 ——
 > 这是硬要求：插件装进 profile 后按自己的真实路径解析 import，而宿主包都在 `app.asar` 里，
 > 树外插件解析不到（详见下方配置表的说明）。
 > 技能本身仍是一份标准 Agent Skill 目录 bundle，`.pi/skills/` 之类的安装方式照旧可用。

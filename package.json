@@ -32,11 +32,12 @@
   "exports": {
     ".": "./lib/index.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*": "./locale/*"
   },
   "scripts": {
     "test": "python skills/project-work-log/scripts/_selftest.py",
-    "test:plugin": "node tests/run.mjs && node tests/registry-contract.mjs && node tests/manifest.mjs && node tests/audit-paths.mjs && node tests/audit-doc-consistency.mjs && node tests/audit-ranks.mjs && node tests/audit-versions.mjs",
+    "test:plugin": "node tests/run.mjs && node tests/registry-contract.mjs && node tests/manifest.mjs && node tests/audit-paths.mjs && node tests/audit-doc-consistency.mjs && node tests/audit-ranks.mjs && node tests/audit-versions.mjs && node tests/audit-locale.mjs",
     "test:skill-only": "node tools/build-skill-only.mjs --check && node tests/audit-paths.mjs",
     "audit": "node tests/preaudit.mjs"
   },
@@ -46,6 +47,7 @@
     "skills",
     "tools",
     "skill-only",
-    "tests"
+    "tests",
+    "locale"
   ]
 }

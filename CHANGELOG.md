@@ -8,6 +8,33 @@
 
 ## [未发布]
 
+### 修复（插件页显示的文字不跟随语言设置）
+
+- **插件管理页里的标题与描述现在跟随 DSH 的语言设置。** 此前无论切到哪种语言，
+  那一行永远是英文的 `package.json` 顶层 `description`。原因不是"没做本地化"，而是两处
+  各自都会**静默失败**的配置：
+
+  1. **`package.json` 顶层 `meta` 根本不被插件管理器读取。** 它只取
+     `name` / `version` / `description`，再拼上 `readPluginMeta()` 的结果。所以之前写在
+     顶层 `meta` 里的中文从未显示过。
+  2. **`exports` 没放行 `locale` 子路径。** DSH 用 Node 的模块解析器读
+     `<包名>/locale/<语言>.json`，而我们的 `exports` 只有 `.` / `./cordis.patch.yml` /
+     `./package.json` —— 解析抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`，调用方把它当成"没有语言文件"，
+     **不报错、不提示**，直接退回英文。
+
+  现在：`exports` 新增 `"./locale/*"`，`files` 新增 `"locale"`（否则 npm 发布时整个目录
+  不会进包，别人装上仍然只有英文），并新增 `locale/{en,zh-cn,zh}.json`
+  （`{ meta: { title, description } }`）。
+
+  > `en.json` 是**锚点**：它用来定位目录，缺了它**所有**其它语言文件都会被忽略，
+  > 不只是英文失效。`zh-cn` 与 `zh` 两个 id 都放了，因为 DSH 文档里的 id 形如 `en`
+  > （小写、短），而 `zh` 与 `zh-cn` 都是合法 BCP-47、都会被收进语言表 —— 命中哪个都行。
+
+- 新增 `tests/audit-locale.mjs`：钉住 `exports` 子路径、`files` 覆盖、`en.json` 锚点、
+  语言 id 合法且不重复、每个文件的结构，并**复现 DSH 的 `readPluginMeta`** 确认它真能拿到
+  多语言映射而不是裸字符串。三种静默失败都已验证会被抓到（去掉 `exports`、去掉 `files`、
+  删掉 `en.json`）。
+
 ## [0.3.1] - 2026-09-26
 
 > **为什么是 0.3.1 而不是 0.3.0**：`v0.3.0` 这个 tag 先打了出去，但它指向的

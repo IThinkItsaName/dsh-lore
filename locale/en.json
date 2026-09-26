@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "worklog",
+    "description": "Long-term project work-log system for AI agents: process records + index ledger + lessons, with a stdlib-only toolbox. Works for software, research and writing projects alike."
+  }
+}

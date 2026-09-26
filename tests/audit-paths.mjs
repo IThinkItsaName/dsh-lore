@@ -162,7 +162,30 @@ const onlyAll = [...onlyText.values()].join('\n')
 
 ok(onlyAll.includes('work_log/'), 'the script-free variant keeps the work_log/ container')
 ok(onlyAll.includes('精细度'), 'the script-free variant keeps the 精细度 field')
-ok(onlyAll.includes('session'), 'the script-free variant keeps the default session mode')
+
+/*
+ * The DEFAULT TIER, not merely the word "session".
+ *
+ * The previous assertion here was `onlyAll.includes('session')`, which was weak and
+ * went stale: the tier table legitimately names all four tiers, so that substring is
+ * present no matter which one is the default — and when the default was corrected from
+ * `session` back to `full` after measuring the real corpora, the assertion happily kept
+ * passing while testing nothing. Match the declaration itself, and cross-check it against
+ * the running code so doc and behaviour cannot drift apart again.
+ */
+const declaredDefault = /\*\*`(\w+)`（默认）\*\*/.exec(onlyConventions)?.[1]
+ok(declaredDefault !== undefined,
+   'the script-free variant declares which tier is the default',
+   declaredDefault ?? 'no `**`tier`（默认）**` marker found in references/conventions.md')
+
+const codeDefault = /^MODE_DEFAULT\s*=\s*["'](\w+)["']/m.exec(
+  readFileSync(`${PKG}/skills/project-work-log/scripts/journal.py`, 'utf8'),
+)?.[1]
+ok(codeDefault !== undefined, 'read MODE_DEFAULT from journal.py', String(codeDefault))
+ok(declaredDefault === codeDefault,
+   `the script-free variant's default tier matches the code (${codeDefault})`,
+   `docs say ${declaredDefault}, code says ${codeDefault}`)
+
 ok(/验证|复核|检查|评审|结果|证据|评估|确认|实测|审查/.test(onlyAll),
    'the script-free variant still requires a verification section')
 

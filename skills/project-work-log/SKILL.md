@@ -16,9 +16,11 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 
 | 层 | 位置 | 职责 | 生命周期 |
 |---|---|---|---|
-| **过程层** | `work_log/NNNN-*.md`（容器根；分卷后 `work_log/<YYYY>/NNNN-*.md`） | 一篇 = 一次会话（默认档；档位可调，见下「记录精细度」）：背景 → 事实 → 方案 → 执行 → 验证 → 遗留 | append-only，收口后不改写 |
+| **过程层** | `work_log/NNNN-*.md`（分卷后 `work_log/<YYYY>/NNNN-*.md`） | 一篇记录一次工作（一篇覆盖多少，见下「记录精细度」） | append-only，收口后不改写 |
 | **索引层** | `work_log/README.md` | 分阶段索引 + 同主题簇 + 滚动待办 + **唯一**当前状态块 | 每次收尾更新 |
 | **经验层** | `work_log/lessons/*.md` | 提炼后的可复用知识：症状 → 根因 → 做法 → 来源 | 持续追加，每条必须有来源 |
+
+记录正文的顺序固定：背景 → 事实 → 方案 → 执行 → 验证 → 遗留。
 
 一句话：**过程留证据，索引管导航，经验可复用**。三层不互相复制内容。
 
@@ -27,13 +29,16 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 日志与运行产物在 `work_log/logs/<来源>/`。完整布局与「日志归位要求」见
 [references/conventions.md](references/conventions.md)。
 
-> **领域无关**：这套结构不限于编程。
-> 迭代字段接受 `迭代 / 变更集 / 批次 / 阶段 / 版本 / 里程碑`（英文 `Iteration / Milestone`）；
-> 验证小节接受 `验证 / 复核 / 检查 / 评审 / 结果 / 证据 / 评估 / 确认 / 实测 / 审查`
-> （英文 `Verification / Review / Results / Evidence / Tests`），标题级别 h2–h4 都认；
-> “可核对的内容”可以是命令、数据、引用或样本。
-> 例：研究项目用 `批次：3` + `## 结果`（样本量、结论、反例）；写作项目用 `版本：v2` + `## 评审`（编辑意见与处理）；
-> 软件项目用 `变更集：154` + `## 验证`（测试命令与通过数）。
+> **领域无关**：这套结构不限于编程。三个标签各自认一组同义词：
+>
+> - **迭代**：`迭代 / 变更集 / 批次 / 阶段 / 版本 / 里程碑`（英文 `Iteration / Milestone`）
+> - **验证小节**：`验证 / 复核 / 检查 / 评审 / 结果 / 证据 / 评估 / 确认 / 实测 / 审查`
+>   （英文 `Verification / Review / Results / Evidence / Tests`）；标题级别 h2–h4 都认
+> - **可核对的内容**：命令、数据、引用、样本都算
+>
+> 各领域的写法：研究项目 `批次：3` + `## 结果`（样本量、结论、反例）；写作项目 `版本：v2` +
+> `## 评审`（编辑意见与处理）；软件项目 `变更集：154` + `## 验证`（测试命令与通过数）。
+>
 > ⚠ 一个标签一个值：写 `迭代：3`，**不要**写 `迭代 / 批次：3`（解析不出来）。
 
 这套体系来自一个真实项目的 `work-log/` + `lessons/` 实践；基线分析（哪些沿用、哪些坑要避开）见
@@ -110,7 +115,8 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 
 1. **记录**：先看档位——`python scripts/journal.py mode <项目根>`。
    默认档 `session` 下，**同一会话已有记录就追加到那一篇**（`append`），不要新开；
-   确实要新开时用 `python scripts/journal.py new <项目根> --title "标题" [--iter N]`，把入口 5 行（日期/迭代/触发/范围/结论）先填上。
+   确实要新开时用 `python scripts/journal.py new <项目根> --title "标题" [--iter N]`，把入口那 5 行先填上：
+   日期、迭代、触发、范围、结论。
 2. **确认**：方案、口径、取舍写进记录；等用户拍板（涉及数据/破坏性操作必须确认）。
 3. **执行**：小步做、每步可回退；做了什么记进「执行」表。
 4. **验证**：用该项目能给出的核对方式（测试、数据、引用、样本、评审），把**依据 + 结果 + 未覆盖**写进验证小节。
@@ -208,8 +214,8 @@ python scripts/journal.py export --csv --out work_log.csv   # 机器可读导出
 
 **本技能的核心是约定，脚本只是加速器。** 环境里没有 Python 也能完整使用，只是费手：
 
-1. **建结构**：按 [references/templates.md](references/templates.md) 手工落 `work_log/README.md`、`work_log/ARCHIVE.md`、`work_log/STATE-HISTORY.md`、`work_log/lessons/README.md`（已有旧体系就沿用旧名，见「目录布局」的回退顺序）。
-2. **写记录**：按记录模板写入口 5 行 + 验证小节 + 遗留；标题固定 `# NNNN · 标题`。
+1. **建结构**：按 [references/templates.md](references/templates.md) 手工落这四个文件：`work_log/README.md`、`work_log/ARCHIVE.md`、`work_log/STATE-HISTORY.md`、`work_log/lessons/README.md`。（已有旧体系就沿用旧名，见「目录布局」的回退顺序。）
+2. **写记录**：按记录模板写入口那 5 行，加验证小节与遗留；标题固定 `# NNNN · 标题`。
 3. **收尾**：把「工作流 C 收尾清单」当人工检查表逐条走；把 `check` / `lint` 的判据（见 [references/commands.md](references/commands.md)）当核对清单。
 4. **检索导航**：用 `grep` / `rg` 代替 `search`，用索引表代替 `brief` / `outline`。
 5. **整理**：归档就是"移文件 + 改链接"（容器根 → `<stage>/`），手工做时**先全仓 grep 链接再改**——脚本的价值主要就在这里（自动重写 + 死链自检）。
@@ -220,12 +226,14 @@ python scripts/journal.py export --csv --out work_log.csv   # 机器可读导出
 
 ## 环境边界
 
-- **纯标准库**，不需要 `pip install`。代码用了 PEP 585 泛型注解（`list[str]`）与海象运算符，
-  所以实际下限是 **Python 3.9**；实测 **3.12**（CI / Ubuntu）与 **3.14**（Windows 本机）。
+- **纯标准库**，不需要 `pip install`。
+- 实际下限是 **Python 3.9**：代码用了 PEP 585 泛型注解（`list[str]`）与海象运算符。
+  实测过 **3.12**（CI / Ubuntu）与 **3.14**（Windows 本机）。
 - Windows / macOS / Linux 均可（脚本无平台相关 API）。
-- 记录文件用 **UTF-8**。控制台编码无关（脚本自行把 stdout 设为 UTF-8）。
-  非 UTF-8 的老仓库**不会让工具崩**（按 `errors="replace"` 读，坏字节变 `�`），
-  但中文标签会因此认不出来、`check` 会报一串 WARN —— 那是编码问题，不是记录坏了，先用编辑器转成 UTF-8。
+- 记录文件用 **UTF-8**。控制台编码无关，脚本自己把 stdout 设为 UTF-8。
+- 非 UTF-8 的老仓库**不会让工具崩**：脚本按 `errors="replace"` 读，坏字节变成 `�`。
+  但中文标签会因此认不出来，`check` 会报一串 WARN。那是编码问题，不是记录坏了 ——
+  先用编辑器把仓库转成 UTF-8。
 - **解析中英双语**（写入默认中文）：`日期/Date`、`结论/Conclusion`、`触发/Trigger`、`范围/Scope`、
   `迭代/Iteration`（及 `变更集/批次/阶段/版本/里程碑/Milestone`）、
   `验证/Verification`（及 `复核/检查/审查/评审/结果/证据/评估/确认/实测`）、

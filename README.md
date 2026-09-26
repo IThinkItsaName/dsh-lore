@@ -270,7 +270,12 @@ python <skill>/scripts/journal.py check --strict && python <skill>/scripts/journ
 ## 自测
 
 ```bash
+# 技能：临时工程跑通全部命令 + 断言
 python skills/project-work-log/scripts/_selftest.py
+
+# 插件 harness（需要 Node，不需要安装任何依赖）
+npm run test:plugin     # run / registry-contract / manifest / audit-paths
+npm run audit           # preaudit：端到端——宿主将会 import 什么
 ```
 
 会在临时目录里搭一个最小项目，跑通全部命令，并断言：CRLF 保真、**只改目标行**、来源校验会拒绝不存在的篇号、
@@ -278,6 +283,22 @@ python skills/project-work-log/scripts/_selftest.py
 
 > 写入受限的环境（某些沙箱只允许进程写自己创建过的目录）用 `--root <已存在的目录>` 指定夹具父目录，
 > 例如 `python scripts/_selftest.py --root ./.scratch`。
+
+插件 harness 覆盖的是**装进 dsh 之后才会暴露的问题**：注册表的候选/定义字段校验、
+`waitWithAbort` 对 provider 返回值的 promise 要求、bundle 补丁里的 id 是否真存在、
+以及两个技能引用同一个容器名的一致性。两个可选环境变量让检查更完整，**缺省时相应检查自动跳过、
+不会误报失败**：
+
+| 变量 | 作用 |
+|---|---|
+| `DSH_SRC_DIR` | 指向抽取出的 DSH 源码目录，用于核对补丁里的 id 是否真在 `dsh-base` 里声明 |
+| `DSH_PROFILE_DIR` | 指向 dsh profile，用于核对链接安装是否指向本包、pnpm store 是否在位 |
+
+> `tests/_pkg.mjs` 自己探测包的位置，所以从仓库根、包内 `tests/`、或工作区副本运行都能工作；
+> 要强制指定就设 `DSH_WORKLOG_PKG`。
+>
+> harness 的源在工作区的 `logs/tests/`，由 `_package.py` 镜像进本仓库的 `tests/`
+> （与 skill 同一道漂移门禁），所以**不要手改 `tests/`** —— 改源再同步。
 
 ## 设计依据
 

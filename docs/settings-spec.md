@@ -105,24 +105,50 @@
 
 ### 能改什么
 
-| 设置项 | 类型 | 默认 | 位置 |
-|---|---|---|---|
-| `guidelinesEnabled` | 开关 | 开 | 主区 |
-| `guidelinesLanguage` | 下拉：中文 / English | 中文 | 主区 |
-| `verbose` | 开关 | 关 | 主区 |
-| `skillDir` | 文本框 | 包内默认 | **高级折叠区** |
-| `guidelinesDir` | 文本框 | 包内默认 | **高级折叠区** |
-| `container` | 文本框 | `work_log` | **高级折叠区，标注破坏性** |
-| `lessons` | 文本框 | `lessons` | **高级折叠区，标注破坏性** |
-| `mode` | 四档下拉 | `full` | 主区，**语义见 §三** |
+| 设置项 | 类型 | 默认 | 位置 | 谁读它 |
+|---|---|---|---|---|
+| `guidelinesEnabled` | 开关 | 开 | 主区 | **插件**（挂载时） |
+| `guidelinesLanguage` | 分段控件：中文 / English | 中文 | 主区 | **插件**（挂载时） |
+| `verbose` | 开关 | 关 | 主区 | **插件**（挂载时） |
+| `skillDir` | 文本框 | 包内默认 | 高级 | **插件**（挂载时） |
+| `guidelinesDir` | 文本框 | 包内默认 | 高级 | **插件**（挂载时） |
+| `container` | 文本框 | `work_log` | 高级 | **`journal.py`** —— 插件只存 |
+| `lessons` | 文本框 | `lessons` | 高级 | **`journal.py`** —— 插件只存 |
+| `mode` | 四档下拉 | `full` | 高级 | **`journal.py`** —— 插件只存 |
+
+**最后三行是项目级设置**，不是插件设置。它们存在插件设置文件里，只是为了让页面能
+给新项目提供默认值；**插件自己不读它们**（见 §三）。
+
+> 实现时这条曾被混起来：`effectiveSettings()` 一度返回全部 11 个键，于是
+> `apply()` 的 options 里带着三个模块从不读的键，而路由把这三个也报成
+> "插件会怎么做"。现在拆开：`KNOWN_CONFIG_KEYS`（挂载时读）与
+> `PROJECT_DEFAULT_KEYS`（只存不读）。
 
 ### 必须标注的事
 
-1. **改完需重启 DSH 生效。** 不标就是骗人 —— 这些是 `apply()` 时读的。
-2. **改名类（`container`/`lessons`）是破坏性的**：已有项目改名后 `journal.py`
+1. **靠插件读的那几个：改完需重启 DSH 生效。** 不标就是骗人 —— 它们是 `apply()` 时读的。
+2. **上面三行项目级设置不归插件管**，界面必须说清它们写的是项目的 `.config.json`、
+   由 `journal.py` 读 —— 否则用户会以为勾一下插件设置就改了某个项目的行为。
+3. **改名类（`container`/`lessons`）是破坏性的**：已有项目改名后 `journal.py`
    **找不到记录，而且不会说"你是不是改名了"**，只会报"找不到容器"。这条坑我们踩过同类。
-3. **`guidelinesLanguage` 只影响准则那份技能**（`worklog` 技能本身是中文写死的）。
-   今天它是"改 profile 补丁 + 重启"，设置页把它变成点点就能改。
+4. **`guidelinesLanguage` 只影响准则那份技能**（`worklog` 技能本身是中文写死的）。
+
+### 设置文件的落点与优先级
+
+| | |
+|---|---|
+| 落点 | `<DSH_HOME>/worklog/settings.json`（`$DSH_HOME` 否则 `~/.dsh`；`DSH_WORKLOG_SETTINGS` 可整路径覆盖） |
+| 优先级 | **设置文件 > row config（`cordis.patch.yml`）> 内置默认** |
+
+**文件必须赢，这不是口味问题**：bundle 补丁里写死了 `guidelinesEnabled` /
+`guidelinesLanguage` / `skillDir` / `guidelinesDir` 四个键。如果 row 赢，
+**设置页改什么都无效**。
+
+**为什么不放在包旁边**：装进 profile 的是指向 git 工作树的 junction，
+写在那里会弄脏工作树、还容易被误提交；而重装/升级会替换那个目录 ——
+恰恰是最不该丢设置的时候。`dsh-status-rotator` 也是为这个原因从包内
+`config.json` 迁到了 home 目录。
+
 
 ## 三、`mode` 在两个面上的语义（唯一允许重叠的一项）
 
@@ -136,6 +162,7 @@
 - 设置页的 `mode` 是「**新项目初始化的默认档**」
 - 插件在**项目初始化时**把这个值写进 `.config.json`
 - `journal.py` **始终只读项目文件**，不去问插件
+- **而插件自己完全不读 `mode`** —— 它只是替项目记住这个默认值
 
 ### 为什么不让 journal.py 直接读插件配置
 
@@ -203,13 +230,63 @@ ctx.slots.inject("settings.section", () => ctx.slots.register({
 }, SettingsPanel))
 ```
 
-### 配置存取
+### 界面组件 —— 用官方的，不要手搓
 
-`dsh-status-rotator` 的做法：**节点半边自己起 HTTP 端点**（`/plugins/<name>/config.json`）
-读写配置，**不依赖 DSH 的 `Config` schema**。
+`@deepseek-ai/dsh-client-ui-primitives`（在那 9 项 baseline 里）提供现成组件，
+**只用 `--dsw-*` 令牌着色、Cordis-free**。已核实的签名：
+
+```ts
+Switch({ checked, onChange, label, disabled?, title?, className? })
+  // label 必填 —— 组件设计上不允许交出没有无障碍名的开关
+Input({ icon?, className?, ...inputAttributes })          // 外层 span，原生属性透传
+SegmentedControl<V extends string>({ id, value, options, onChange, label, disabled?, className? })
+  // options: { value, label, disabled?, title? }[]，至少两段
+DisclosureRow({ icon, title, open, expandable, onToggle, …, children? })
+  // 折叠区用它
+```
+
+另有 `Button` / `Pill` / `Tag` / `Checkbox` / `Menu` / `Modal` / `RiskConfirmation` /
+`StateDot` / `SegmentedTabs` / `PathLabel` / `TextShimmer`。
+
+> 这解释了 `dsh-status-rotator` 的 259 KB：它自带了整套 CSS。**我们不必重蹈** ——
+> 用官方组件就自动跟着主题与语言走。
+
+### 配置存取 —— 节点半边起路由
+
+浏览器端碰不到文件系统，所以由**节点半边**把配置服务出去：
+
+```js
+ws = ctx.get("webServer")            // 可选服务：用 ctx.get，不要写进 inject
+routeDisposer = ws.register({
+  kind: "exact",
+  path: "/plugins/dsh-worklog/settings.json",
+  handler: (req, res) => { … },      // 标准 Node http handler
+})
+return () => routeDisposer()          // 必须交回 disposer
+```
+
+**两个坑**（都在 `dsh-status-rotator` 里印证过）：
+
+1. **必须交回 route disposer。** 重复的 `(kind, path)` 会抛错，所以插件重载时
+   没释放的路由会让**激活直接失败**。
+2. **`webServer` 可能在 `apply()` 时还不存在**，需要轮询等待（它用的是
+   500ms × 最多 20 次）。用 `ctx.get("webServer")` 而不是 `inject`，
+   这样没有 Web 服务器的 DSH 构建也不会让插件挂掉。
+
+`WebRoute = { kind: 'exact'|'prefix', path, handler: (req, res) => void|Promise<void> }`。
+请求体用 `for await (const chunk of req)` 读，并设上限。
 
 这解释了为什么以前认为的"硬障碍"不成立 —— 我们一直没法导出 `Config`
 （树外插件解析不到 `@deepseek-ai/schemastery`），但**那条路本来就不必走**。
+
+### 验收限制（必须说清）
+
+**设置页是浏览器里的 React，实现者看不到它。** 能机械验证的是：
+语法合法、`exports`/`files`/`dsh.client` 齐全、`require` 的每个 specifier 都在那 9 项里、
+节点侧路由的 GET/PUT 行为、以及节点半边原有行为不回归。
+
+**渲染效果只能由人刷新页面确认。** 所以按"最小可用先行"推进：
+先只做 `guidelinesEnabled` + `guidelinesLanguage` 两个控件，跑通再加别的。
 
 ## 六、机制查证结果
 
@@ -283,16 +360,21 @@ export function apply(ctx) { … }
 所以浏览器半边与我们节点半边的 `lib/index.js` **是同一个形状** ——
 都是 `export const inject` + `export function apply(ctx)`。
 
-### 6.4 唯一剩下的未知：浏览器端怎么读写配置
+### 6.4 浏览器端怎么读写配置 —— 已确认
 
-**降级为局部问题**，不影响"设置页能不能做出来"这个大前提。两条路：
+**用 `ctx.get("webServer")` 注册自己的路由**（见 §五「配置存取」）。服务契约：
 
-| 做法 | 需要查什么 |
-|---|---|
-| 节点半边起 HTTP 端点（`dsh-status-rotator` 的做法） | 宿主的路由注册 API |
-| 客户端读写一个已存在的通用通道 | DSH 有没有通用的插件配置端点 |
+```ts
+register(route: WebRoute): () => void
+WebRoute = { kind: 'exact'|'prefix', path: string,
+             handler: (req: IncomingMessage, res: ServerResponse) => void|Promise<void> }
+```
 
-**在实现客户端时再定。**
+`webServer` 是**可选**服务（`ctx.get("webServer")` + 未定义检查），
+所以没有 Web 服务器的 DSH 构建不会因此挂掉。
+
+> 至此 §六 四条**全部确认**。剩下的只是"第一次真跑会不会撞到签名细节" ——
+> 所以仍按"最小可用先行"推进。
 
 ## 七、实现顺序
 

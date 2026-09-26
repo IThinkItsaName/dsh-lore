@@ -18,6 +18,11 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
     }
   },
   "meta": {
@@ -31,13 +36,14 @@
   },
   "exports": {
     ".": "./lib/index.js",
+    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json",
     "./locale/*": "./locale/*"
   },
   "scripts": {
     "test": "python skills/project-work-log/scripts/_selftest.py",
-    "test:plugin": "node tests/run.mjs && node tests/registry-contract.mjs && node tests/manifest.mjs && node tests/audit-paths.mjs && node tests/audit-doc-consistency.mjs && node tests/audit-ranks.mjs && node tests/audit-versions.mjs && node tests/audit-locale.mjs",
+    "test:plugin": "node tests/run.mjs && node tests/registry-contract.mjs && node tests/manifest.mjs && node tests/audit-paths.mjs && node tests/audit-doc-consistency.mjs && node tests/audit-ranks.mjs && node tests/audit-versions.mjs && node tests/audit-locale.mjs && node tests/audit-client.mjs && node tests/audit-client-runtime.mjs && node tests/audit-settings.mjs",
     "test:skill-only": "node tools/build-skill-only.mjs --check && node tests/audit-paths.mjs",
     "audit": "node tests/preaudit.mjs"
   },

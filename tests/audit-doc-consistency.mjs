@@ -31,7 +31,16 @@ const ok = (condition, label, detail = '') => {
 const ENTRY = `${PKG}/lib/index.js`
 const src = readFileSync(ENTRY, 'utf8')
 
-const DOCS = [`${PKG}/README.md`, `${PKG}/PUBLISHING.md`, `${PKG}/docs/worklog-spec.md`]
+// What counts as "the documentation" is the file list below. `SETTINGS.md` is
+// the plugin-settings reference added alongside the settings page; the other three
+// are the pre-existing documents.
+//
+const DOCS = [
+  `${PKG}/README.md`,
+  `${PKG}/PUBLISHING.md`,
+  `${PKG}/SETTINGS.md`,
+  `${PKG}/docs/worklog-spec.md`,
+]
 const docText = DOCS.map((file) => {
   try { return readFileSync(file, 'utf8') } catch { return '' }
 }).join('\n')

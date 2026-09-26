@@ -36,7 +36,7 @@
   },
   "scripts": {
     "test": "python skills/project-work-log/scripts/_selftest.py",
-    "test:plugin": "node tests/run.mjs && node tests/registry-contract.mjs && node tests/manifest.mjs && node tests/audit-paths.mjs",
+    "test:plugin": "node tests/run.mjs && node tests/registry-contract.mjs && node tests/manifest.mjs && node tests/audit-paths.mjs && node tests/audit-doc-consistency.mjs",
     "test:skill-only": "node tools/build-skill-only.mjs --check && node tests/audit-paths.mjs",
     "audit": "node tests/preaudit.mjs"
   },

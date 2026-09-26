@@ -354,7 +354,15 @@ let SettingsPanel = null
 
   /* ---- 3a. the initial load populates the form from the server ---- */
   {
-    const server = createServer({ guidelinesEnabled: false, guidelinesLanguage: 'en', mode: 'digest' })
+    // The document mirrors what the settings file holds after the page has been saved
+    // once: the two path keys are present but blank, which is exactly the state that
+    // shows the "（默认）" marker. Spelling them out matters — this case used to pass
+    // only because the developer's real settings file happened to be read here, so the
+    // assertion depended on the machine rather than on the panel.
+    const server = createServer({
+      guidelinesEnabled: false, guidelinesLanguage: 'en', mode: 'digest',
+      skillDir: '', guidelinesDir: '',
+    })
     globalThis.fetch = server.fetchStub
 
     const tree = api.mount(SettingsPanel, {})
@@ -419,10 +427,29 @@ let SettingsPanel = null
       `${String(inputs[2].props.placeholder)} / ${String(inputs[3].props.placeholder)}`)
     // The right-hand "in effect" mark belongs to load-time options only; leaving it
     // on a stored-but-unread field is the same false claim in a smaller font.
-    const defaultMarks = (panelText.match(/（默认）/g) ?? []).length
-    ok(defaultMarks === 2,
-      'only the two load-time path fields carry an "in effect (default)" mark',
-      `${defaultMarks} mark(s) in: ${panelText.slice(-320)}`)
+    //
+    // Read from the row's own attribute rather than from the rendered text. This
+    // runtime expands only the top-level component, so anything inside a nested
+    // component is invisible to `textOf` — the previous version of this assertion read
+    // a count of 0 and passed anyway, because the developer's real settings file
+    // happened to be loaded. Asserting structurally removes both problems.
+    const rows = [...walk(loaded)].filter((node) => node.props?.['data-mark'] !== undefined)
+    const marked = rows.filter((node) => node.props['data-mark'] !== 'none')
+    ok(rows.length === 4, 'the four advanced text rows expose a mark slot', String(rows.length))
+    ok(marked.length === 2,
+      'only two of them carry an "in effect (default)" mark',
+      `${marked.length} of ${rows.length}`)
+    ok(marked.every((node) => node.props['data-mark'].includes('（默认）')),
+      'a carried mark says it is the default',
+      marked.map((node) => node.props['data-mark']).join(' | '))
+    // Indices 0 and 1 are the two load-time path fields; 2 and 3 are the project-side
+    // pair, which the plugin does not read and therefore must not mark as in effect.
+    ok(rows[0].props['data-mark'] !== 'none' && rows[1].props['data-mark'] !== 'none',
+      'the two load-time path fields are the marked ones',
+      `${rows[0].props['data-mark']} | ${rows[1].props['data-mark']}`)
+    ok(rows[2].props['data-mark'] === 'none' && rows[3].props['data-mark'] === 'none',
+      'the two stored-but-unread fields carry no in-effect mark',
+      `${rows[2].props['data-mark']} | ${rows[3].props['data-mark']}`)
   }
 
   /* ---- 3b. clicking the Switch posts the whole form, serially ---- */

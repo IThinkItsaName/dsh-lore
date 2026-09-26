@@ -87,3 +87,23 @@ POST /plugins/dsh-worklog/settings.json   写；整份表单，逐字段校验�
 
 中文文案是完整的；英文词典也已就位（键集与中文一致，
 `tests/audit-client.mjs` 会核对）。
+
+## 为什么「改完需重启」是硬限制
+
+Cordis 官方**是支持不重启改配置的** —— 见 `docs/cordis-tutorial/05-config.zh.md`
+的 volatile 字段：给 `Config` schema 里的字段加 `.volatile()`，用 `.get()` 读，
+字段变化会更新引用并发 `loader/volatile-update`，**不重新挂载插件**。
+
+**但那条路要求插件导出 `Config` schema**，而树外插件解析不到 `@deepseek-ai/schemastery`
+（它在应用的 asar 里）。`tests/run.mjs` 专门断言本插件**不导出 `Config`**，
+所以界面上那句「改完需重启 DSH」不是偷懒，是这条边界的结果。
+
+`dsh-status-rotator` 面对同一限制，做法也一样：客户端半边 + 自建 HTTP 路由，
+而不是 schema。
+
+## 界面样式走宿主的设计令牌
+
+`lib/client.js` 只用 `--dsw-alias-*` 令牌着色。**令牌名写错不会报错** —— `var()`
+会静默回落到 fallback，页面照样渲染，但已经不再跟主题与暗色模式走。所以
+`tests/audit-client-tokens.mjs` 把用到的每个令牌对照宿主自己的词表（206 个名字，
+由 `tests/tools/refresh-tokens.mjs` 从 DSH 检出里抽取），并拒绝带硬编码 fallback 的写法。

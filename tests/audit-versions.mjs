@@ -1,4 +1,4 @@
-// Version consistency across the release surface.
+// Version and repository-name consistency across the release surface.
 //
 // Why this exists: `package.json`, the git tags, the CHANGELOG and the install
 // examples drifted apart more than once, and nobody noticed. `v0.1.1` shipped with
@@ -6,6 +6,11 @@
 // the README install line was still pinned to `v0.1.1` two releases later. The cause
 // was structural — PUBLISHING.md's release steps said "tidy the CHANGELOG" and never
 // said "bump the version".
+//
+// The repository name drifts the same way, and did: the repo was renamed to
+// `dsh-worklog` while three files and two local remotes still pointed at the old
+// name. A rename is also the moment PUBLISHING.md warns about ("if you rename,
+// replace these two values first"), so it is worth gating rather than remembering.
 //
 // All of it is statically decidable, so it is checked here rather than trusted.
 //
@@ -75,6 +80,46 @@ for (const entry of pinned) {
   ok(tagged === version,
      `pinned example ${entry} matches package.json (${version})`,
      'an install example pinned to an old tag installs the wrong thing')
+}
+
+/* ---- 7. every repository mention must name the same repo ----
+   The canonical value is read from the files themselves rather than from the git
+   remote: reading a remote needs a pipe to capture git's output, and this sandbox
+   forbids a program opening a pipe, so `git config` cannot be called from inside
+   the test. Cross-checking the files against each other still catches the real
+   failure — one file updated on rename and another missed — and
+   DSH_WORKLOG_SLUG, when set, additionally pins the expected value. */
+const mentions = new Map()
+for (const [file, text] of [['README.md', readme], ['PUBLISHING.md', publishing], ['CHANGELOG.md', changelog]]) {
+  const found = new Set(
+    [...text.matchAll(/github\.com[/:]([^/\s)"'<>]+)\/([^/\s)"'<>#@]+?)(?:\.git)?(?:[/@)\s"'<>#]|$)/g)]
+      .map((m) => `${m[1]}/${m[2]}`),
+  )
+  ok(found.size > 0, `${file} names the repository at least once`, [...found].join(', '))
+  for (const slug of found) {
+    if (!mentions.has(slug)) mentions.set(slug, [])
+    mentions.get(slug).push(file)
+  }
+}
+
+ok(mentions.size > 0, 'collected the repository names used by the docs')
+if (mentions.size > 1) {
+  for (const [slug, where] of mentions) {
+    ok(false, `every repository mention names the same repo (saw ${slug})`,
+       `also named in: ${where.join(', ')} — a half-finished rename leaves links and install lines on the old name, and GitHub's redirect hides it`)
+  }
+} else {
+  const [slug] = [...mentions.keys()]
+  console.log(`      repository slug in docs: ${slug}`)
+  ok(true, `all ${[...mentions.values()].flat().length} repository mentions agree (${slug})`)
+}
+
+const expected = process.env.DSH_WORKLOG_SLUG ?? ''
+if (expected === '') {
+  ok(true, 'expected-slug check SKIPPED (set DSH_WORKLOG_SLUG to pin it)')
+} else {
+  ok(mentions.has(expected), `the docs name the expected repository (${expected})`,
+     `docs name: ${[...mentions.keys()].join(', ')}`)
 }
 
 console.log(problems.length === 0 ? '\nversion consistency OK' : `\n${problems.length} FAILED`)

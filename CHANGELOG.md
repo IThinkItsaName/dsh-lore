@@ -8,6 +8,18 @@
 
 ## [未发布]
 
+### 变更（仓库改名）
+
+- **仓库由 `worklog` 改名为 `dsh-worklog`**，与 npm 包名一致。文档里的 13 处引用
+  （`README.md` / `PUBLISHING.md` / `CHANGELOG.md` 的链接表）与两个本地 remote 已同步。
+  > GitHub 会对旧名做重定向，所以漏改**不会报错** —— 只是链接与安装命令里留着旧名。
+  > 正因为静默，`tests/audit-versions.mjs` 现在断言**所有仓库引用彼此一致**
+  > （可选地由 `DSH_WORKLOG_SLUG` 钉住期望值），半途而废的改名会被抓出来。
+  >
+  > 这条检查**不读 git remote**：读 remote 要捕获 git 输出，而本沙箱禁止程序开管道，
+  > 所以进程内调不到 `git config`。改为让文件互相比对 —— 仍能抓住真正会出事的
+  > "改了一半"，只是不能自动得知远端真名。
+
 ### 修复（插件页显示的文字不跟随语言设置）
 
 - **插件管理页里的标题与描述现在跟随 DSH 的语言设置。** 此前无论切到哪种语言，
@@ -377,9 +389,9 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/worklog/compare/v0.3.1...HEAD
-[0.3.1]: https://github.com/IThinkItsaName/worklog/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/IThinkItsaName/worklog/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/IThinkItsaName/worklog/compare/v0.1.1...v0.2.0
-[0.1.1]: https://github.com/IThinkItsaName/worklog/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/IThinkItsaName/worklog/tree/v0.1.0
+[未发布]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/IThinkItsaName/dsh-worklog/tree/v0.1.0

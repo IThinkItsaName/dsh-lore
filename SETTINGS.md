@@ -22,13 +22,54 @@
 
 改完客户端半边、重启过宿主之后，**还要在浏览器里硬刷新一次**（Windows/Linux `Ctrl+Shift+R`，macOS `Cmd+Shift+R`）。不刷新可能看到"半加载"的样子：页面出来了但**没有样式**，或少了新加的东西。
 
-**机制**（不是玄学，值得知道）：
+**机制**：CSS 注入写在工厂闭包里 —— 无论本插件还是 `dsh-status-rotator`（后者的 `<style>` 在它 `client.js` 的设置面板代码旁创建并挂到 `<head>`）。工厂体在**物化时**执行一次，如果那一轮样式没进到 `<head>`，之后不会再补，直到整页真正重载。
 
-`window.__ModuleLoader__` 把每个插件的 `factory(require)` 结果**记忆化在 `loadCache` 里**，所以**工厂体一个页面会话只跑一次**。而 CSS 注入正是写在工厂闭包里的 —— 无论本插件还是 `dsh-status-rotator`（后者的 `<style>` 在它 `client.js` 的设置面板代码旁创建并挂到 `<head>`）。
+> 2026-09-26 实际踩到：`dsh-status-rotator` 的设置页在重启后显示为无样式（按钮是原生小方块、没有间距），再重启一次就好了。当时先怀疑是新装的插件干扰，方向是错的。
 
-于是：**如果工厂物化那一轮样式没进到 `<head>`，之后不会再补**，直到整页真正重载。看着就像"插件坏了"，其实只是产物没重新执行。
+## 已知的宿主缺陷：样式会被别的插件"认领"走（2026-09-26）
 
-> 2026-09-26 实际踩到：`dsh-status-rotator` 的设置页在重启后显示为无样式（按钮是原生小方块、没有间距），再重启一次就好了 —— 全程与本插件的代码无关。当时先怀疑是新装的插件干扰，方向是错的：**先想到"工厂不再执行"这条机制，比排查插件冲突快得多。**
+**这不是本插件的 bug，但本插件会触发它** —— 记在这里，因为下次它再犯时，从零查会花很久。
+
+### 机制
+
+宿主的客户端模块系统在**工厂体跑完之后**认领样式（`packages/client/modules/src/client/system.ts`）：
+
+```js
+const exports = registered.factory(this.makeRequire(ownerId, edges))   // :305 工厂体
+const record = { id, exports, styles: claimStyles(ownerId), edges }    // :306 然后认领
+
+const claimStyles = (id) => {                                          // :71
+  for (const el of document.querySelectorAll('style:not([data-plugin])'))
+    el.setAttribute('data-plugin', id)     // ← 认领【当下所有】无主 <style>
+}
+```
+
+而模块 **revision 变化**时会清掉"属于它"的样式（`:432-434`，改 `lib/client.js` 就会触发）：
+
+```js
+this.invalidate(row.id, row.rev)
+removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 <style>
+```
+
+**于是时间顺序决定归属**：谁的模块后物化，谁就认领当时所有无主样式。本插件**不注入任何 `<style>`**，所以当它物化时，它会把别人**尚未标记**的样式认到自己名下 —— 之后本插件每次改动都会把那些样式删掉。
+
+### 为什么偏偏是本插件触发
+
+`dsh-status-rotator` 用 `createElement("style")` 建了 4 个样式标签（它的 `client.js` L1645 / L1712 / L3108 / **L4183**），**全文没有 `data-plugin`**。其中 L4183 那个在**设置面板组件里**创建 —— 首次打开设置页它才诞生，那时两个模块都已物化，**所以它一直是无主的**，谁下次物化就归谁。
+
+### 症状
+
+另一个插件的设置页**失去样式**（按钮变原生小方块、没有间距），再重启宿主一次可能就好 —— 表现为间歇性。
+
+### 责任与修法
+
+| 角色 | 该做什么 |
+|---|---|
+| `dsh-status-rotator` | 建 `<style>` 后加一行 `el.setAttribute('data-plugin', 'dsh-status-rotator')`。宿主注释写着"预标记的标签会带上它"，说明**打标记是受支持的做法** |
+| 宿主 | `claimStyles` 的时间窗太宽：应只认领**工厂体运行期间**新增的标签，而不是"当下所有无主" |
+| 本插件 | **保持零 `<style>` 注入** —— 这是能做的最干净的防御，因为不注入就没有可被误认领的东西 |
+
+**不要**在本插件里扫描并"修复"别人的标签：那要写死别的插件的 id，脆弱且越界。
 
 ## 设置文件在哪
 

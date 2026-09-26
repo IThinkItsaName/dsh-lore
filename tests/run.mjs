@@ -324,6 +324,110 @@ ok(ctxG.logs.some(([level, m]) => level === 'info' && m.includes('project-work-l
 ok(ctxG.logs.some(([level, m]) => level === 'info' && m.includes('reliability-guidelines')),
    'verbose logs the guidelines skill')
 
+/* ---- DEGRADED CONTEXTS ------------------------------------------------
+   `ctx.logger` is not something this plugin can rely on: only `skills` is
+   declared in `inject`, and a missing, partial, or throwing logger used to make
+   `apply()` throw — a crash during mount, over a log line. These pin the rule that
+   logging never takes the row down, and that the message is not silently dropped
+   when the host sink is unusable. */
+const NOOP_SKILLS = () => ({ registerProvider: () => () => {} })
+
+for (const [label, makeCtx] of [
+  ['no logger at all', () => ({ skills: NOOP_SKILLS() })],
+  ['logger is an empty object', () => ({ logger: {}, skills: NOOP_SKILLS() })],
+  ['logger.warn is not a function', () => ({
+    logger: { warn: 42, error() {}, info() {} }, skills: NOOP_SKILLS(),
+  })],
+  ['logger methods throw', () => ({
+    logger: {
+      error() { throw new Error('sink is broken') },
+      warn() { throw new Error('sink is broken') },
+      info() {},
+    },
+    skills: NOOP_SKILLS(),
+  })],
+]) {
+  let survived = true
+  let detail = ''
+  try {
+    // A missing bundle exercises the error path, which is where the old code threw.
+    mod.apply(makeCtx(), { skillDir: `${PKG}/no/such/dir`, bogusKey: 1 })
+  } catch (error) {
+    survived = false
+    detail = `${error.constructor.name}: ${error.message}`
+  }
+  ok(survived, `apply() survives a degraded logger (${label})`, detail)
+}
+
+// The fallback must actually report, not swallow: with no usable sink the message
+// goes to console.error, which is the only place left.
+{
+  const seen = []
+  const original = console.error
+  console.error = (...args) => { seen.push(args.join(' ')) }
+  try {
+    mod.apply({ skills: NOOP_SKILLS }, { skillDir: `${PKG}/no/such/dir` })
+  } finally {
+    console.error = original
+  }
+  ok(seen.some((m) => m.includes('skill bundle')),
+     'an unusable logger falls back to console.error instead of dropping the message',
+     JSON.stringify(seen))
+}
+
+/* ---- ACTIONABLE ERROR MESSAGES ---------------------------------------- */
+{
+  const messages = []
+  mod.apply({ logger: { error: (m) => messages.push(String(m)), warn() {}, info() {} }, skills: NOOP_SKILLS() },
+    { skillDir: `${PKG}/no/such/dir` })
+  const msg = messages[0] ?? ''
+  ok(msg.includes('not found'), 'a missing bundle says "not found", not a bare ENOENT', msg)
+  ok(msg.includes('SKILL.md'), 'a missing bundle names the file it looked for')
+  ok(msg.includes('skillDir'), 'a missing bundle names the config that resolves it')
+  ok(!msg.includes('ENOENT'), 'a missing bundle does not leak the raw ENOENT wording', msg)
+  ok(!/Error:\s/.test(msg), 'a missing bundle is not prefixed with a redundant "Error:"', msg)
+}
+
+/* A malformed bundle must not print the same path twice. */
+{
+  const dir = `${import.meta.dirname ?? '.'}/.badbundle-probe`
+  const fs = await import('node:fs')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(`${dir}/SKILL.md`, '# no frontmatter here\n\nbody\n')
+  const messages = []
+  try {
+    mod.apply({ logger: { error: (m) => messages.push(String(m)), warn() {}, info() {} }, skills: NOOP_SKILLS() },
+      { skillDir: dir })
+    const msg = messages[0] ?? ''
+    const occurrences = msg.split(dir.replaceAll('\\', '/')).length - 1
+    ok(msg.includes('invalid skill bundle'), 'a malformed bundle is reported as invalid', msg)
+    ok(occurrences <= 1, 'a malformed bundle prints its path only once', `${occurrences}x in: ${msg}`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/* ---- A MISSING REGISTRY IS REPORTED, NOT THROWN ---------------------- */
+{
+  for (const [label, skills] of [
+    ['ctx.skills absent', undefined],
+    ['registerProvider is not a function', { registerProvider: 42 }],
+  ]) {
+    const messages = []
+    let survived = true
+    let detail = ''
+    try {
+      mod.apply({ logger: { error: (m) => messages.push(String(m)), warn() {}, info() {} }, skills }, {})
+    } catch (error) {
+      survived = false
+      detail = `${error.constructor.name}: ${error.message}`
+    }
+    ok(survived, `a missing registry does not throw (${label})`, detail)
+    ok(messages.some((m) => m.includes('registerProvider')),
+       `a missing registry names what is absent (${label})`, JSON.stringify(messages))
+  }
+}
+
 /* ------------------------------------------------------------------ total */
 
 const failed = results.filter(([good]) => !good)

@@ -1,6 +1,6 @@
 {
   "name": "dsh-worklog",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "Long-term project work-log system for AI agents (software, research, writing, design, operations): process journal + index ledger + lessons, with a stdlib-only Python toolbox. Ships as an Agent Skill and as a DeepSeek Harness plugin bundle.",
   "license": "MIT",
   "type": "module",
@@ -36,7 +36,7 @@
   },
   "scripts": {
     "test": "python skills/project-work-log/scripts/_selftest.py",
-    "test:plugin": "node tests/run.mjs && node tests/registry-contract.mjs && node tests/manifest.mjs && node tests/audit-paths.mjs && node tests/audit-doc-consistency.mjs && node tests/audit-ranks.mjs",
+    "test:plugin": "node tests/run.mjs && node tests/registry-contract.mjs && node tests/manifest.mjs && node tests/audit-paths.mjs && node tests/audit-doc-consistency.mjs && node tests/audit-ranks.mjs && node tests/audit-versions.mjs",
     "test:skill-only": "node tools/build-skill-only.mjs --check && node tests/audit-paths.mjs",
     "audit": "node tests/preaudit.mjs"
   },

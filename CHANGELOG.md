@@ -8,6 +8,33 @@
 
 ## [未发布]
 
+## [0.3.1] - 2026-09-26
+
+> **为什么是 0.3.1 而不是 0.3.0**：`v0.3.0` 这个 tag 先打了出去，但它指向的
+> `package.json` 里还写着 `0.2.0` —— 包清单与 tag 不一致。按本文件顶部"tag 一旦推送
+> 就不要移动"的规矩，tag 保持不动，改用 0.3.1 承载这批内容。
+> 0.3.0 与 0.3.1 之间没有代码差异。
+
+### 修复（发布面的版本一致性）
+
+- **`package.json` 的 `version` 与 tag 对齐**（`0.2.0` → `0.3.1`）。这两处此前长期
+  不一致：`v0.1.1` 的包里写着 `0.1.0`，`v0.3.0` 的包里写着 `0.2.0`。
+  根因是**流程缺了一步** —— `PUBLISHING.md` 的发布步骤写了"整理 CHANGELOG"，
+  **没写"提升版本号"**。已补进流程，并加了一条静态检查（见下）。
+- **README 的安装示例不再落后**（`@v0.1.1` → `@v0.3.1`）；`PUBLISHING.md` 里的
+  tag 示例同步更新。
+- **CHANGELOG 的版本链接表补全**：`[未发布]` 的比较基准此前停在 `v0.2.0`（指向错误的区间），
+  现在指向最新发布；并补上 `[0.3.1]` / `[0.3.0]` 两条定义。
+
+### 新增（检查）
+
+- `tests/audit-versions.mjs`：钉住发布面的一致性 —— 清单版本是规范 semver、
+  CHANGELOG 有对应的带日期小节、顶部保留 `[未发布]`、每个已发布小节在链接表里有定义、
+  `[未发布]` 的比较基准是最新发布、以及**所有钉住 tag 的安装示例都等于当前版本**。
+- `tests/audit-ranks.mjs`：钉住 catalog rank 的关系（见下「修复」一节的说明）。
+- `tests/audit-doc-consistency.mjs`：入口读的**每个环境变量**与认的**每个配置键**
+  必须在文档里，且 `cordis.patch.yml` 只设已声明的键。
+
 ### 修复（插件入口的健壮性与诊断）
 
 - **`ctx.logger` 缺失/残缺/抛异常时，插件不再崩在挂载阶段。** 此前 `apply()` 与
@@ -25,6 +52,27 @@
 - 新增回归 12 条（`run.mjs` 96 → **118**）：4 种残缺 logger、2 种缺失注册表、
   以及错误信息的可操作性（含"不泄漏原始 ENOENT"、"路径只出现一次"）。
   已用"把修复退化掉"的方式验证这些断言会真的变红。
+
+### 修复（注释与行为不一致）
+
+- **模块说明声称用 `register`（不是 `registerProvider`）**，并说 provider"得自己重新实现
+  frontmatter 解析与目录排序"。实际早就用 provider 了 —— 那正是"改 `SKILL.md` 不需要重启"
+  的原因。更糟的是**同一文件里另两处注释说的正好相反**，文件自我矛盾。
+- **`readFrontmatter` 的说明说块标量（`|` / `>`）会被拒绝**，而代码就在下方**实现了它**
+  （实测 `|` 解析为 `"第一行\n第二行"`）。改为如实描述三种值形式，并讲清嵌套映射的
+  真实行为（缩进行跳过、键进 `unknown` 列表被报出来，而不是被静默吞掉）。
+- **删掉未记录的 `DSH_WORKLOG_BASE` 后门**：全仓只有它自己那一处读取，行补丁、harness、
+  文档都没设过。删而不补文档，是因为它提供的能力**已经是被文档化的那个** ——
+  `skillDir` 接受绝对路径且 README 配置表写明。相应的 `ctx` 参数也从签名和两处调用点移除。
+- **catalog rank 的注释是错的，而且机制比注释重要**。原文说 `350` 让本包"低于项目本地发现"。
+  读注册表后确认：候选按 rank **升序**排（小的赢），但 **rank 只在同一层内决定同名归属**；
+  跨层由**层级优先级**决定（项目 > runtime > 用户），rank 不参与。所以"用 rank 低于项目根"
+  是无意义的。`350` 真正的位置在**同层的**文件系统根之间：项目本地 100/200、
+  `customSkillDirs` 300、本包 350、用户级 400/500；而最要紧的是它**高于**注册表的
+  `RUNTIME_RANK`（250），所以同层的 `ctx.skills.register()` 会在同名冲突中赢过本插件。
+  这些关系现在由 `tests/audit-ranks.mjs` 对着注册表源码钉住，并写明它**测不了**跨层优先级
+  （那是组合装配的性质，从包里观测不到）。已用改常量双向验证：`700` 会输给用户级根、
+  `150` 会输给 `RUNTIME_RANK` 与项目根。
 
 ### 变更（格式规格：以三个真实语料为准重写）
 
@@ -302,7 +350,9 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/worklog/compare/v0.2.0...HEAD
+[未发布]: https://github.com/IThinkItsaName/worklog/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/IThinkItsaName/worklog/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/IThinkItsaName/worklog/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/IThinkItsaName/worklog/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/IThinkItsaName/worklog/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/IThinkItsaName/worklog/tree/v0.1.0

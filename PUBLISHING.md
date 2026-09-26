@@ -50,15 +50,19 @@ git push -u origin main
 pi 安装时可以固定到 tag/commit，用户就不会被上游改动影响：
 
 ```bash
-git tag -a v0.2.0 -m "project-work-log v0.2.0"
-git push origin v0.2.0
+git tag -a v0.3.1 -m "project-work-log v0.3.1"
+git push origin v0.3.1
 ```
 
 之后别人可以这样装：
 
 ```bash
-pi install git:github.com/IThinkItsaName/worklog@v0.2.0
+pi install git:github.com/IThinkItsaName/worklog@v0.3.1
 ```
+
+> ⚠ **打 tag 之前先改 `package.json` 的 `version`，并确认它等于 tag 去掉 `v`。**
+> 这两处曾经长期不一致（`v0.1.1` 的包里写着 `0.1.0`，`v0.3.0` 的包里写着 `0.2.0`），
+> 因为下面的流程只写了"整理 CHANGELOG"，**没写"提升版本号"**。现在补上了。
 
 ## 5. 以后怎么更新
 
@@ -78,11 +82,12 @@ python <工作区>/.pi/skills/project-work-log/scripts/_package.py --check
 
 # 3) 有面向用户的变更时，先追加 CHANGELOG（见下）
 #    把 CHANGELOG.md 里 `## [未发布]` 的内容整理成 `## [x.y.z] - YYYY-MM-DD`
+#    同时：改 package.json 的 version，并补上 CHANGELOG 底部的版本链接
 
 # 4) 提交并推送
 cd <工作区>/publish/worklog
 git add -A && git commit -m "chore: sync skill from source" && git push
-git tag -a v0.2.1 -m "v0.2.1" && git push origin v0.2.1   # 有行为变化时
+git tag -a v0.3.2 -m "v0.3.2" && git push origin v0.3.2   # 有行为变化时
 ```
 
 > 不要在 `publish/worklog/skills/` 里直接改脚本——下次同步会被覆盖。改源，再同步。

@@ -23,6 +23,11 @@ VERIFY_WORDS = ("验证", "实测", "复核", "检查", "审查", "评审", "结
                 "Verification", "Review", "Results", "Evidence", "Tests")
 STATUS_KEYS = ("当前状态", "Status", "Current Status")
 HISTORY_KEYS = ("历史状态", "Status History")
+# 台账 `## 当前状态` 里的记录精细度字段（mode 命令写入）。规范值只有四个；
+# 老台账没有这一栏是正常的，按默认档 `session` 报。
+MODE_FIELD = "精细度"
+MODE_DEFAULT = "session"
+MODE_VALUES = ("full", "session", "digest", "milestone")
 
 # 与 journal.py 保持一致：默认容器名 + 旧名回退顺序。
 CONTAINER_FALLBACKS = ("work_log", "journal", "work-log")
@@ -67,6 +72,18 @@ def resolve_lessons(name: str | None, container: str, root: str) -> str:
     return os.path.join(container, name or LESSONS_FALLBACKS[0])
 
 
+def mode_line(idx: str) -> str:
+    """报台账里的记录精细度；老台账没有这一栏就报默认档。"""
+    mfield = re.search(rf"^\s*-\s*{re.escape(MODE_FIELD)}\s*[：:][ \t]*(.*?)[ \t]*$", idx, re.M)
+    cell = mfield.group(1) if mfield else ""
+    token = re.match(r"^([A-Za-z0-9]+)", cell)
+    value = token.group(1).lower() if token else ""
+    if value in MODE_VALUES:
+        return f"mode        : {value}" + (f"   （{cell}）" if cell != value else "")
+    why = f"，现值认不出：{cell!r}" if cell else ""
+    return f"mode        : {MODE_DEFAULT}   (默认：台账没有 `{MODE_FIELD}` 字段{why})"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="统计记录容器 + lessons/ 现状（一次性测量工具）")
     ap.add_argument("root", nargs="?", default=".", help="项目根，默认当前目录")
@@ -102,6 +119,11 @@ def main() -> int:
                 nums.setdefault(int(m.group(1)), []).append(
                     os.path.relpath(os.path.join(dp, f), root).replace(os.sep, "/"))
     ks = sorted(nums)
+    index = os.path.join(wl, "README.md")
+    idx = read_text(index) if os.path.isfile(index) else ""
+    # 精细度先报：它和「有没有记录」无关，早退的分支也要看得到。
+    if idx:
+        print(mode_line(idx))
     if not ks:
         print("没有找到编号记录。")
         return 0

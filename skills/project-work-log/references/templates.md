@@ -80,7 +80,11 @@
 - 交付物与指纹：
 - 环境：
 - 阻塞 / 等待：
+- 精细度：session
 ```
+
+> `精细度` 是状态块的第八个字段，取值 `full` / `session` / `digest` / `milestone`（默认 `session`），
+> 由 `journal.py mode --set …` 维护；`（原因：…）` 是可选的一行切换理由（见 `conventions.md`「记录精细度」）。
 
 > ⚠ 索引表里那行 `[0001-示例.md]` 是**格式示例**；`check` 会把指向不存在文件的链接判成
 > `ERROR 死链`（见 `conventions.md`）。初始化后**删掉该行**（或改成真实文件名），
@@ -120,6 +124,7 @@
 - 交付物与指纹：
 - 环境：
 - 阻塞 / 等待：
+- 精细度：session
 ```
 
 ## 5. 经验分册模板（`work_log/lessons/NN-topic.md`）

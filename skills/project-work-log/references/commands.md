@@ -37,6 +37,7 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 | 命令 | 作用 | 典型用法 |
 |---|---|---|
 | `new` | 生成下一篇记录，可选自动进索引 | `new --title "…" --iter 154 --insert --stage "A. 起步"` |
+| `mode` | **记录精细度**（一篇 = 什么）：查看 / 切换档位 | `mode` / `mode --set digest --why "阶段收口"` |
 | `status` | 当前状态块：查看 / 改字段 / 改日期 / 归档旧块 | `status --set "核对=抽样 30 条全部通过" --date` / `status --roll` |
 | `todo` | 滚动待办：加 / 勾选 / 清理已完成 | `todo --add "…"` / `todo --done "子串"` / `todo --drop-done` |
 | `index sync` | 把漏进索引的根目录记录补成表行（方面取自「结论：」，可用 `--aspect` 覆盖） | `index sync --stage "B. 迭代" --aspect 验证` |
@@ -47,12 +48,48 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 - `status` 永远只维护**唯一**一个 `## 当前状态` 块；`--roll` 会把旧块整段搬进 `work_log/STATE-HISTORY.md`
   再写新骨架（旧布局已有 `archive/STATUS-HISTORY.md` 时沿用它，不另起一份）。
 - `status --set "核对=…"` 会落到台账上已有的 `核对 / 验证` 字段（短名可识别），**不会**多长出一个平行字段；
-  `阶段` / `交付物` 同理。名字对不上任何既有字段时才会新增。
-- `lesson add` 的 `--source` 必须指向真实存在的篇号，否则拒绝写入（防止无主结论）；
+  `阶段` / `交付物` 同理。名字对不上任何既有字段时才会新增。- `lesson add` 的 `--source` 必须指向真实存在的篇号，否则拒绝写入（防止无主结论）；
   引用会**始终**补上——即使正文里已经提到别的 `wl/NNNN`。
 - `append` 若目标小节已存在则追加到该小节末尾，不会重复建标题。
 - `new` 的可选参数：`--slug`（文件名后缀；**纯中文标题**会退化成 `<篇号>.md`）、
   `--date`、`--cmd`（写进「方式：」的默认命令）、`--stage`（配合 `--insert` 选索引小节）。
+
+### mode：记录精细度（一篇 = 什么）
+
+```bash
+python scripts/journal.py mode                    # 打印当前档位 + 一行释义
+python scripts/journal.py mode --set digest       # 切换档位
+python scripts/journal.py mode --why "阶段收口"    # 只补一行切换原因，不改档位
+python scripts/journal.py mode --set full --dry-run
+```
+
+档位存在台账 `## 当前状态` 的第八个固定字段 `精细度`：
+
+| 档位 | 一篇 = | 一次会话的预期产出 |
+|---|---|---|
+| `full` | 一个可交付的子单元 | 2–3 篇 |
+| **`session`（默认）** | 一次会话，或一个可交付成果 | 最多 1 篇；同一会话的第二件事追加到同一篇 |
+| `digest` | 一个阶段（跨多次会话） | 多次会话并成一篇 |
+| `milestone` | 一个阶段收口 | 只留决策与经验 |
+
+输出：
+
+```
+session    一次会话最多一篇；同一会话里的第二件事追加到同一篇。
+（台账里没有 `精细度` 字段：当前取默认档 `session`）
+切换：`journal.py mode --set session|full|digest|milestone`
+```
+
+要点：
+
+- **没有 `精细度` 字段不算错**：报默认档 `session` 并明说它是默认。这次改动之前写下的台账照样能跑。
+- **值一律写拉丁规范值**；`--set` 也认中文别名（`完整` / `会话` / `摘要` / `里程碑`），并忽略大小写，写入时规范化。
+- `--set` 的取值在这里手工校验：**未知值报 `ERROR: 认不出的精细度 …` 并退出码 2**，不改任何文件。
+- `--why` 把原因写进同一个字段值：`- 精细度：digest（原因：阶段收口）`。之后 `mode` / `brief` / `status` 都能看到。
+- `--set --dry-run` 只打印将写入的值，与其它写入命令一致。
+- 没有容器时报「找不到记录容器」并退出 1，与 `status` / `todo` 一致。
+- **档位不放宽验证**：任何档位下 `check` 都照报「缺验证小节」。`digest` / `milestone` 另有一条义务——
+  写明这一轮**刻意没记什么**（`未记录：…`），缺了由 `lint` 报 WARN（**不是** ERROR，老项目不会因此变红）。
 
 ## 三、整理与清理（记录量增长后）
 
@@ -77,7 +114,7 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 | 命令 | 检查内容 | 退出码 |
 |---|---|---|
 | `check` | 结构：编号重复/断档、标题篇号一致、`日期：` 行、验证小节、md 死链、漏索引、状态块唯一且新鲜、lessons 来源可回指 | 有 ERROR → 1 |
-| `lint` | 内容：占位符残留（`<命令 / 数据 / 引用 / 样本>`/`TODO`…）、空小节、结论无可核对信息、验证无可核对内容、含糊措辞（"应该没问题"） | 有 ERROR → 1 |
+| `lint` | 内容：占位符残留（`<命令 / 数据 / 引用 / 样本>`/`TODO`…）、空小节、结论无可核对信息、验证无可核对内容、含糊措辞（"应该没问题"）、粗档位记录缺 `未记录：…` | 有 ERROR → 1 |
 
 `--strict` 把 WARN 当 ERROR（新项目/CI 建议开）；`--quiet` 不打印 INFO。
 旧仓库首次跑会有大量 WARN（缺日期行等）——那正是待回填清单，不是工具坏了。
@@ -89,6 +126,8 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 > “验证”小节接受 `验证 / 复核 / 检查 / 评审 / 结果 / 证据 / 评估 / 确认 / 实测 / 审查`（英文 `Verification / Review / Results / Evidence / Tests`），
 > 标题级别 h2–h4 都认；
 > `lint` 的“可核对内容”包括命令、数字、链接——不强制要求可执行命令。
+> 精细度档位（`mode`）**不改变这两道门禁的判据**：验证小节在所有档位下都必填；
+> 只有“粗档位要写明未记录什么”这一条随档位增加。
 
 ## 五、分析与生成：不止于记账
 
@@ -113,12 +152,14 @@ python scripts/journal.py search "会话格式" --in work_log   # 旧写法 --in
 python scripts/journal.py show 51
 
 # 3. 收尾一篇：补索引 → 更新状态 → 抽经验 → 过门禁
+python scripts/journal.py mode                     # 先确认档位：默认 session = 同一会话不另开篇
 python scripts/journal.py new --title "…" --iter 154 --insert --stage "新阶段"
 python scripts/journal.py status --set "迭代=154" --set "核对=抽样 30 条全部通过" --date
 python scripts/journal.py lesson add --volume 04-verification-and-safety.md --source 152 --text "…"
 python scripts/journal.py check --strict && python scripts/journal.py lint --strict
 
-# 4. 阶段结束：归档 + 复盘骨架
+# 4. 阶段结束：切档位 → 归档 → 复盘骨架
+python scripts/journal.py mode --set digest --why "阶段收口"
 python scripts/journal.py retro --from 100 --to 151 --out work_log/lessons/99-retrospectives.md
 python scripts/journal.py digest --out HANDOFF.md
 ```
@@ -127,6 +168,6 @@ python scripts/journal.py digest --out HANDOFF.md
 
 | 文件 | 用途 |
 |---|---|
-| `_selftest.py` | 自测全部命令（临时目录，含 CRLF 保真、"只改目标行"、非编程场景、非 UTF-8 拒写、新布局与旧布局回退等断言）。`--root DIR` 指定夹具父目录（写入受限的沙箱里用），`--keep` 保留夹具排查 |
+| `_selftest.py` | 自测全部命令（临时目录，含 CRLF 保真、"只改目标行"、非编程场景、非 UTF-8 拒写、新布局与旧布局回退、精细度档位与"验证不随档位放宽"等断言）。`--root DIR` 指定夹具父目录（写入受限的沙箱里用），`--keep` 保留夹具排查 |
 | `_package.py` | 把 skill 源目录同步进可发布仓库（开发工作区专用，不随包发布）；`--check` 兼作漂移与插件文件完整性门禁 |
-| `_measure.py` | 对现成 `work_log/`（或旧 `work-log/`）+ `lessons/` 做一次性测量，`references/analysis.md` 的数字由它复现 |
+| `_measure.py` | 对现成 `work_log/`（或旧 `work-log/`）+ `lessons/` 做一次性测量，`references/analysis.md` 的数字由它复现；同时报出台账的 `精细度`（缺字段则报默认档） |

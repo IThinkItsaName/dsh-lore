@@ -169,6 +169,96 @@ def entry(num: str, title: str, date: str, itr: str = "-") -> str:
             f"## 四、验证\n\n- 方式：`true`\n- 结果：1 passed\n")
 
 
+# ---- 精细度（记录档位）夹具 ------------------------------------------------
+# 台账模板多了一行 `- 精细度：`（`## 当前状态` 的第八个固定字段）。老台账没有
+# 这一行也必须照常工作——`MODE_INDEX` 是「有这一栏」，`MODE_LEGACY_INDEX` 是
+# 「没有这一栏」（模拟改动之前写下的项目）。
+MODE_INDEX = """# M
+
+## 文件索引
+
+### A. 起步
+
+| 文件 | 方面 |
+|---|---|
+| [0001-work.md](0001-work.md) | 起步 |
+
+## 待办（滚动清单）
+
+- [ ] keep me
+
+## 当前状态（2026-09-13）
+
+- 阶段 / 版本：v1
+- 迭代：-
+- 产出：
+- 核对 / 验证：
+- 交付物与指纹：
+- 环境：
+- 阻塞 / 等待：
+- 精细度：session
+"""
+
+MODE_LEGACY_INDEX = """# M legacy
+
+## 文件索引
+
+### A. 起步
+
+| 文件 | 方面 |
+|---|---|
+| [0001-work.md](0001-work.md) | 起步 |
+
+## 待办（滚动清单）
+
+- [ ] keep me
+
+## 当前状态（2026-09-13）
+
+- 阶段 / 版本：v1
+- 迭代：-
+- 产出：
+- 核对 / 验证：
+- 交付物与指纹：
+- 环境：
+- 阻塞 / 等待：
+"""
+
+# 精细度不改变验证要求：任何档位下这篇都必须带可核对内容的验证小节。
+MODE_WORK = """# 0001 · Work
+
+日期：2026-09-13
+迭代：1
+触发：selftest
+范围：none
+结论：312 项测试通过
+
+---
+
+## 一、背景与事实核查
+
+seed
+
+## 四、验证
+
+- 方式：`pytest -q`
+- 结果：312 passed
+"""
+
+MODE_ROLL_ENTRY = """# 0002 · More work
+
+日期：2026-09-14
+迭代：2
+触发：selftest
+范围：none
+结论：1 项通过
+
+## 四、验证
+
+- 方式：`true`
+- 结果：1 passed
+"""
+
 results: list[tuple[bool, str]] = []
 
 
@@ -575,6 +665,191 @@ def doc_phase(tmp: str) -> None:
        r.stdout + r.stderr)
 
 
+def mode_phase(parent: str) -> None:
+    """记录精细度（`mode`）：默认档 / 切换 / 拒绝未知值 / 四档都在 / 老台账不受影响。
+
+    最关键的一条是最后一组：**精细度只放宽「要不要另起一篇」，不放宽验证要求**——
+    四档下「缺验证小节」都必须是 WARN，不能被粗档位放行。粗档位额外担一条义务
+    （写明「未记录」什么），这条只在显式设成粗档位时才要求。
+    """
+    # 老台账（没有 `精细度` 字段）：默认档 + 不出新错 ----------------------
+    legacy = os.path.join(parent, "modelegacy")
+    os.makedirs(os.path.join(legacy, CONTAINER, "lessons"))
+    write(os.path.join(legacy, CONTAINER, "README.md"), MODE_LEGACY_INDEX)
+    write(os.path.join(legacy, CONTAINER, "0001-work.md"), MODE_WORK)
+    write(os.path.join(legacy, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
+    write(os.path.join(legacy, CONTAINER, "lessons", "01-topic.md"),
+          "# 01 · T\n\n来源：wl/0001。\n\n## 子主题\n\n- **s**：a。根因：b。做法：c。（`wl/0001`）\n")
+    lidx = os.path.join(legacy, CONTAINER, "README.md")
+
+    r = run(legacy, "mode")
+    ok(r.returncode == 0 and r.stdout.startswith("session"),
+       "mode: a ledger without 精细度 reports the default session", r.stdout + r.stderr)
+    ok("默认" in r.stdout, "mode: the report says the value is the default", r.stdout)
+    ok("精细度" not in read(lidx), "mode (read-only) writes nothing to the ledger")
+
+    r = run(legacy, "check", "--strict", "--quiet")
+    ok(r.returncode == 0, "a ledger without 精细度 still passes check --strict", r.stdout + r.stderr)
+    r = run(legacy, "lint", "--strict", "--quiet")
+    ok(r.returncode == 0, "a ledger without 精细度 still passes lint --strict", r.stdout + r.stderr)
+
+    # 切换：写入 / 读回 / 原因 ---------------------------------------------
+    r = run(legacy, "mode", "--set", "digest", "--why", "阶段收口")
+    ok(r.returncode == 0, "mode --set exits 0", r.stdout + r.stderr)
+    ok("- 精细度：digest（原因：阶段收口）" in read(lidx),
+       "mode --set writes the value and the reason onto the status field", read(lidx))
+    r = run(legacy, "mode")
+    ok(r.stdout.startswith("digest"), "mode reads the value back", r.stdout)
+    ok("阶段收口" in r.stdout, "mode prints the recorded reason", r.stdout)
+
+    # brief / outline 带着这个多出来的字段照常渲染
+    r = run(legacy, "brief", "--entries", "1")
+    ok("精细度：digest（原因：阶段收口）" in r.stdout, "brief renders the extra status field", r.stdout)
+    r = run(legacy, "outline")
+    ok(r.returncode == 0, "outline still runs with the extra field present", r.stdout + r.stderr)
+
+    # 反复切换只改那一行，不长出第二个字段
+    for value in ("full", "milestone", "session"):
+        run(legacy, "mode", "--set", value)
+    ok(read(lidx).count("- 精细度") == 1, "repeated mode --set keeps exactly one 精细度 field")
+    fields_n = [l for l in read(lidx).splitlines() if l.startswith("- ") and "：" in l]
+    ok(len(fields_n) == 8, "the status block has 8 fields after mode --set", f"{fields_n}")
+
+    # `--why` 只补原因，不动档位
+    r = run(legacy, "mode", "--why", "这次记详细点")
+    ok(r.returncode == 0 and "- 精细度：session（原因：这次记详细点）" in read(lidx),
+       "mode --why records the reason without changing the mode", r.stdout + read(lidx))
+
+    # 四档都收；中文别名规范化成拉丁值 --------------------------------
+    for value in ("full", "session", "digest", "milestone"):
+        r = run(legacy, "mode", "--set", value)
+        ok(r.returncode == 0 and f"- 精细度：{value}" in read(lidx),
+           f"mode --set accepts {value}", r.stdout + r.stderr)
+        r = run(legacy, "mode")
+        ok(r.stdout.startswith(value), f"mode reads {value} back", r.stdout)
+    r = run(legacy, "mode", "--set", "摘要")
+    ok(r.returncode == 0 and "- 精细度：digest" in read(lidx),
+       "mode --set accepts the Chinese alias and normalises it to the latin value",
+       r.stdout + read(lidx))
+
+    # 未知值必须拒绝，且非零退出 ------------------------------------------
+    before = read(lidx)
+    r = run(legacy, "mode", "--set", "详细点")
+    ok(r.returncode != 0, "mode --set rejects an unknown value with a non-zero exit", r.stdout)
+    ok(r.returncode == 2, "the rejection uses exit code 2 (same as a bad argument)", r.stdout)
+    ok("认不出的精细度" in r.stdout and "full" in r.stdout and "milestone" in r.stdout,
+       "the rejection names the bad value and lists the accepted modes", r.stdout)
+    ok("Traceback" not in r.stderr, "the rejection is not a traceback", r.stderr[:200])
+    ok(read(lidx) == before, "the rejected value changes nothing")
+    r = run(legacy, "mode", "--set", "session", "--dry-run")
+    ok(r.returncode == 0 and read(lidx) == before, "mode --set --dry-run changes nothing", r.stdout)
+
+    # 没有容器时 `mode --set` 必须报错退出 ---------------------------------
+    r = run(parent, "mode", "--set", "full", os.path.join(parent, "no-such-project"))
+    ok(r.returncode != 0 and "找不到记录容器" in r.stdout,
+       "mode --set on a missing container reports the same missing-container error",
+       r.stdout + r.stderr)
+
+    # `精细度` 就是状态块字段：`status --set` 直接改它也落到同一行 ----------
+    idx_path = lidx
+    write(idx_path, MODE_INDEX)
+    r = run(legacy, "status", "--set", "精细度=full")
+    ok(r.returncode == 0 and "- 精细度：full" in read(idx_path),
+       "status --set 精细度 lands on the existing field", r.stdout + read(idx_path))
+    ok(read(idx_path).count("- 精细度") == 1, "status --set 精细度 adds no parallel field",
+       read(idx_path))
+    r = run(legacy, "mode")
+    ok(r.stdout.startswith("full"), "mode reads a value written by status --set", r.stdout)
+
+    # status --roll 的新骨架必须有 8 个固定字段（含 `精细度`）--------------
+    write(idx_path, MODE_INDEX)
+    write(os.path.join(legacy, CONTAINER, "0002-more.md"), MODE_ROLL_ENTRY)
+    r = run(legacy, "status", "--roll", "--date", "2026-09-15")
+    ok(r.returncode == 0, "status --roll exits 0 with 精细度 in the block", r.stdout + r.stderr)
+    rolled = read(idx_path)
+    fields = [l.split("：")[0].removeprefix("- ").strip()
+              for l in rolled.splitlines() if l.startswith("- ") and "：" in l]
+    ok(len(fields) == 8, "the rolled status skeleton carries 8 fixed fields", f"{fields}")
+    ok("精细度" in fields, "精细度 is one of them", f"{fields}")
+    ok("- 精细度：" in rolled, "the new skeleton leaves 精细度 empty, not pre-filled", rolled)
+
+    # ---- 关键不变量：验证要求在**每一档**都成立 --------------------------
+    # 在 MODE_WORK 上删掉验证小节，四档逐个确认 `check` 仍报「缺验证」。
+    for value in ("full", "session", "digest", "milestone"):
+        probe = os.path.join(parent, f"modeverify-{value}")
+        os.makedirs(os.path.join(probe, CONTAINER, "lessons"))
+        write(os.path.join(probe, CONTAINER, "README.md"),
+              MODE_INDEX.replace("- 精细度：session", f"- 精细度：{value}"))
+        # 正文里连「验证」二字都不留，确保报的是「缺验证小节」而不是别的原因。
+        write(os.path.join(probe, CONTAINER, "0001-work.md"),
+              MODE_WORK.replace("## 四、验证", "## 四、收尾"))
+        write(os.path.join(probe, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
+        write(os.path.join(probe, CONTAINER, "lessons", "01-topic.md"),
+              "# 01 · T\n\n来源：wl/0001。\n\n## 子主题\n\n- **s**：a。根因：b。做法：c。（`wl/0001`）\n")
+        r = run(probe, "check", "--quiet")
+        ok("缺「验证」小节" in r.stdout,
+           f"verify section is still required at mode={value}", r.stdout + r.stderr)
+        r = run(probe, "check", "--strict", "--quiet")
+        ok(r.returncode != 0, f"and it still fails --strict at mode={value}", r.stdout + r.stderr)
+
+    # ---- 粗档位的额外义务：写明「未记录」什么 ----------------------------
+    coarse = os.path.join(parent, "modecoarse")
+    os.makedirs(os.path.join(coarse, CONTAINER, "lessons"))
+    write(os.path.join(coarse, CONTAINER, "README.md"),
+          MODE_INDEX.replace("- 精细度：session", "- 精细度：digest"))
+    write(os.path.join(coarse, CONTAINER, "0001-work.md"), MODE_WORK)
+    write(os.path.join(coarse, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
+    write(os.path.join(coarse, CONTAINER, "lessons", "01-topic.md"),
+          "# 01 · T\n\n来源：wl/0001。\n\n## 子主题\n\n- **s**：a。根因：b。做法：c。（`wl/0001`）\n")
+    cidx = os.path.join(coarse, CONTAINER, "README.md")
+
+    r = run(coarse, "lint")
+    ok("未记录" in r.stdout, "lint: a coarse-mode record without 未记录 is flagged", r.stdout)
+    ok(r.returncode == 0, "lint: that flag is a WARN, not an ERROR", r.stdout)
+    r = run(coarse, "check", "--strict", "--quiet")
+    ok(r.returncode == 0, "check --strict ignores the 未记录 obligation (no new hard error)",
+       r.stdout + r.stderr)
+
+    # 补上「未记录」（条目式）后放行
+    write(os.path.join(coarse, CONTAINER, "0001-work.md"), MODE_WORK + """
+## 五、未记录
+
+- 本轮的两处配置调整，见提交 abc1234。
+""")
+    r = run(coarse, "lint", "--quiet")
+    ok(r.returncode == 0, "lint: 未记录 as its own section satisfies the obligation", r.stdout + r.stderr)
+
+    # 换成行内一句也认
+    write(os.path.join(coarse, CONTAINER, "0001-work.md"),
+          MODE_WORK + "\n未记录：本轮的两处配置调整，见提交 abc1234。\n")
+    r = run(coarse, "lint", "--quiet")
+    ok(r.returncode == 0, "lint: an inline 未记录 line satisfies it too", r.stdout + r.stderr)
+
+    # milestone 同样要求
+    write(cidx, MODE_INDEX.replace("- 精细度：session", "- 精细度：milestone"))
+    write(os.path.join(coarse, CONTAINER, "0001-work.md"), MODE_WORK)
+    r = run(coarse, "lint")
+    ok("未记录" in r.stdout, "lint: milestone carries the same 未记录 obligation", r.stdout)
+
+    # 细档位不管这条：同一篇在 session / full 下都不该被要求
+    for value in ("full", "session"):
+        write(cidx, MODE_INDEX.replace("- 精细度：session", f"- 精细度：{value}"))
+        r = run(coarse, "lint", "--quiet")
+        ok(r.returncode == 0, f"lint: mode={value} does not demand 未记录", r.stdout + r.stderr)
+        ok("未记录" not in r.stdout, f"lint: mode={value} says nothing about 未记录", r.stdout)
+
+    # 文档一致性：templates.md 的台账模板里那一行 `- 精细度：…` 必须是 mode 认得的规范值，
+    # 否则照文档初始化出来的项目一上来就是「值认不出」。（台账模板排在状态历史模板之前，
+    # 所以 re.search 命中的就是台账里那一行。）
+    templates = os.path.join(os.path.dirname(HERE), "references", "templates.md")
+    if os.path.isfile(templates):
+        m = re.search(r"^-\s*精细度\s*[：:]\s*([A-Za-z0-9]+)\s*$", read(templates), re.M)
+        ok(m is not None, "templates.md: the ledger template carries a canonical 精细度 value")
+        if m:
+            ok(m.group(1) in ("full", "session", "digest", "milestone"),
+               "templates.md: the template's 精细度 value is one of the four modes", m.group(1))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="journal.py 自测")
     ap.add_argument("--root", default=None,
@@ -782,6 +1057,9 @@ def main() -> int:
 
         # 旧布局只读回退（journal/ + 顶层 lessons/）--------------------------
         legacy_phase(tmp)
+
+        # 记录精细度（默认档 / 切换 / 验证不变量 / 老台账不受影响）------------
+        mode_phase(tmp)
 
         # CRLF fidelity ----------------------------------------------------
         index_path = os.path.join(tmp, CONTAINER, "README.md")

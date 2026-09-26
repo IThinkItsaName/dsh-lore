@@ -30,6 +30,7 @@
 读写 · 维护
     new       生成下一篇记录（--insert 自动补索引行）
     status    当前状态块：show / set / date / roll
+    mode      记录精细度（一篇 = 什么）：show / --set / --why
     todo      待办清单：list / add / done / drop-done
     index     索引：sync 补漏行
     lesson    经验：add 追加带来源的条目
@@ -111,7 +112,31 @@ DATE_PAREN_RE = re.compile(r"[（(][^）)\r\n]*[）)]")
 # 模板里的日期占位符：识别它是为了"刚初始化"和"真的没写日期"能分开。
 STATUS_DATE_PLACEHOLDER = re.compile(r"YYYY-MM-DD")
 
-STATUS_KEYS = ["阶段 / 版本", "迭代", "产出", "核对 / 验证", "交付物与指纹", "环境", "阻塞 / 等待"]
+STATUS_KEYS = ["阶段 / 版本", "迭代", "产出", "核对 / 验证", "交付物与指纹", "环境", "阻塞 / 等待",
+               "精细度"]
+
+# 记录精细度（台账 `## 当前状态` 的第八个固定字段 `精细度`）。
+# 字段值一律写**拉丁规范值**；下面这张表同时是中文别名表与人类可读释义。
+# 精细度只放宽「要不要另起一篇」，**不放宽验证要求**：任何档位都必须有验证小节。
+MODES: dict[str, tuple[str, ...]] = {
+    "full": ("full", "完整", "详细", "细"),
+    "session": ("session", "会话", "一次会话", "单次会话"),
+    "digest": ("digest", "摘要", "汇总", "归并"),
+    "milestone": ("milestone", "里程碑", "收口", "阶段收口"),
+}
+MODE_DEFAULT = "session"
+MODE_MEANING = {
+    "full": "一段可交付的子单元就是一篇，一次会话可能开出 2–3 篇。",
+    "session": "一次会话最多一篇；同一会话里的第二件事追加到同一篇。",
+    "digest": "一篇覆盖一个阶段（跨多次会话），把多轮会话并成一篇。",
+    "milestone": "阶段收口才写，只留决策与经验。",
+}
+# 粗档位（digest / milestone）必须写明「这一轮刻意没有记录什么」，否则粗粒度会静默丢信息。
+# 认「未记录 / 未记 / 未收录」三种写法，标题或正文里出现都算。
+MODE_COARSE = ("digest", "milestone")
+UNRECORDED_KEY = "未记录"
+UNRECORDED_WORDS = ("未记录", "未记", "未收录")
+MODE_ALIASES = {a: canon for canon, aliases in MODES.items() for a in aliases}
 
 # ---- 容器布局 ----
 # 记录体系收在**一个**容器目录里（过程记录 + 台账 + 经验层 + 日志）。
@@ -782,6 +807,8 @@ def lint(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bo
     if not journal:
         rep.add("ERROR", root, "找不到记录容器（work_log/；旧名 journal/、work-log/ 也认）")
         return rep
+    # 档位只在台账里读一次：粗档位的额外义务按它判（默认档 = session，不加要求）。
+    mode, _mode_why, _mode_default = _mode_and_why(journal)
     for n, paths in sorted(find_entries(journal, lessons_skip(lessons)).items()):
         path = paths[0]
         where = rel(root, path)
@@ -805,6 +832,13 @@ def lint(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bo
             for w in VAGUE:
                 if w in body:
                     rep.add("WARN", where, f"验证含含糊措辞：`{w}`")
+        # 粗档位的额外义务：写明这一轮**刻意没有记录**什么。
+        # 只出 WARN，且只在台账显式设成粗档位时生效——默认档（含没有 `精细度`
+        # 字段的老台账）一句都不多说，所以老项目不会因为这条突然变红。
+        if mode in MODE_COARSE and not any(w in text for w in UNRECORDED_WORDS):
+            rep.add("WARN", where, f"精细度是 `{mode}`，但没写「{UNRECORDED_KEY}」——"
+                                   f"补一行 `{UNRECORDED_KEY}：这一轮没记什么，见 …`，"
+                                   f"否则粗档位会静默丢信息")
         for i, line in enumerate(lines):
             h = heading_level(line)
             if not h or h[0] < 2:
@@ -815,6 +849,59 @@ def lint(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bo
             if j >= len(lines) or heading_level(lines[j]):
                 rep.add("WARN", where, f"空小节：`{h[1]}`")
     return rep
+
+
+# --------------------------------------------------------------------------- #
+# 精细度（记录档位）：存在台账 `## 当前状态` 的 `精细度` 字段里
+# --------------------------------------------------------------------------- #
+# 字段值形如 `session` 或 `session（原因：阶段收口）`：规范值 + 可选的一行原因。
+# 原因跟在同一条字段行里，是因为它随容器走、进版本控制、并复用已经测过的
+# `status --set` 写入路径；另起文件或另开字段都不划算。
+MODE_CELL_RE = re.compile(r"^\s*([A-Za-z0-9]+)\s*(.*)$")
+MODE_WHY_RE = re.compile(r"^[（(]\s*(?:原因|理由)\s*[：:]\s*(.*?)\s*[）)]\s*$")
+
+
+def mode_cell(text: str) -> str | None:
+    """读出台账状态块里的 `精细度` 字段值；没有这个字段返回 None。"""
+    lines = text.splitlines()
+    span = find_labeled_section(lines, 2, L_STATUS)
+    if not span:
+        return None
+    for line in lines[span[1]: span[2]]:
+        m = re.match(r"^(\s*-\s*)([^：:\r\n]+)[：:][ \t]*(.*?)[ \t]*$", line)
+        if m and m.group(2).strip() == "精细度":
+            return m.group(3).strip()
+    return None
+
+
+def mode_of(text: str) -> tuple[str | None, str]:
+    """从台账全文解析 (档位, 原因)。
+
+    没有字段、或者值认不出来时返回 `(None, "")`——**不猜、不当作默认值**，
+    好让调用方把「没有这一栏」和「写了一栏但写错了」分开处理。
+    """
+    cell = mode_cell(text)
+    if not cell:
+        return None, ""
+    m = MODE_CELL_RE.match(cell)
+    if not m:
+        return None, ""
+    canon = MODE_ALIASES.get(m.group(1).lower())
+    if not canon:
+        return None, ""
+    wm = MODE_WHY_RE.match(m.group(2))
+    return canon, (wm.group(1) if wm else "")
+
+
+def mode_value(mode: str, why: str = "") -> str:
+    """把档位（+可选原因）编成字段值。"""
+    return f"{mode}（原因：{why}）" if why else mode
+
+
+def _mode_and_why(journal: str) -> tuple[str, str, bool]:
+    """返回 (生效档位, 原因, 是否来自默认值)。缺字段或值认不出来都算默认值。"""
+    mode, why = mode_of(read(os.path.join(journal, "README.md")))
+    return (mode, why, False) if mode else (MODE_DEFAULT, "", True)
 
 
 # --------------------------------------------------------------------------- #
@@ -1269,6 +1356,59 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     print("".join(lines[span[0]:span[2]]).strip())
     return 0
+
+
+def cmd_mode(args: argparse.Namespace) -> int:
+    """查看 / 切换记录精细度（台账 `## 当前状态` 的 `精细度` 字段）。
+
+    只读时缺字段不算错：报默认档位，并说明它是默认。写入时复用 `status --set`
+    那条已经测过的外科式路径，不另造写文件逻辑。
+    """
+    root = os.path.abspath(args.root)
+    journal, lessons = resolve_layout(root, args.journal, args.lessons)
+    if not journal:
+        print("ERROR: 找不到记录容器（work_log/；旧名 journal/、work-log/ 也认），"
+              "先按 templates.md 初始化")
+        return 1
+    text, lines = _index_lines(journal)
+    if not find_labeled_section(lines, 2, L_STATUS):
+        print(f"ERROR: 索引里没有 `## {K_STATUS}` 块")
+        return 1
+    cur, why, is_default = _mode_and_why(journal)
+
+    if args.set is None and not args.why:
+        print(f"{cur}    {MODE_MEANING[cur]}")
+        if is_default:
+            cell = mode_cell(text)
+            tail = (f"认不出 `{cell}`（只认 full/session/digest/milestone），按默认档处理"
+                    if cell else "台账里没有 `精细度` 字段")
+            print(f"（{tail}：当前取默认档 `{MODE_DEFAULT}`）")
+        if why:
+            print(f"原因：{why}")
+        print(f"切换：`journal.py mode --set {MODE_DEFAULT}|full|digest|milestone`")
+        return 0
+
+    # `--why` 不带 `--set` 时只补原因，档位不动（沿用现有原因；没有就新建）。
+    mode = cur
+    if args.set is not None:
+        # 取值在这里手工校验，不用 argparse 的 choices：choices 会把 16 个别名
+        # 原样倒进报错里，既长又不合本文件的语气。
+        mode = MODE_ALIASES.get(args.set.strip().lower())
+        if mode is None:
+            print(f"ERROR: 认不出的精细度 `{args.set}`；只认 full / session / digest / milestone"
+                  f"（也认中文：{'、'.join(MODES[m][1] for m in MODES)}）")
+            print("       例：`mode --set digest --why \"阶段收口\"`")
+            return 2
+    value = mode_value(mode, args.why or why)
+    if args.dry_run:
+        print(f"[dry-run] 精细度 → {value}")
+        return 0
+    ns = argparse.Namespace(root=args.root, journal=args.journal, lessons=args.lessons,
+                            set=[f"精细度={value}"], date=None, roll=False, dry_run=False)
+    rc = cmd_status(ns)
+    if rc == 0:
+        print(f"精细度：{value}    {MODE_MEANING[mode]}")
+    return rc
 
 
 def cmd_todo(args: argparse.Namespace) -> int:
@@ -1947,7 +2087,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="journal.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="项目长期工作记录工具箱：少读（brief/show/search）、少写（status/todo/index/append/lesson）、可校验（check/lint）。",
+        description="项目长期工作记录工具箱：少读（brief/show/search）、少写（status/mode/todo/index/append/lesson）、可校验（check/lint）。",
         epilog="约定见 skill 的 references/conventions.md；完整命令说明见 references/commands.md。",
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -2023,6 +2163,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     p.add_argument("--date", default=None, nargs="?", const="today")
     p.add_argument("--roll", action="store_true", help="旧块归档到 STATE-HISTORY.md（旧布局 archive/STATUS-HISTORY.md）并写新骨架")
+    p.add_argument("--dry-run", action="store_true")
+
+    p = add("mode", cmd_mode, "记录精细度：查看 / 切换")
+    p.add_argument("--set", default=None,
+                   help="切换档位：full / session / digest / milestone"
+                        "（也认中文别名：完整 / 会话 / 摘要 / 里程碑，写入时一律规范化）")
+    p.add_argument("--why", default=None,
+                   help="附一行切换原因（写进 `精细度` 字段：`session（原因：…）`）")
     p.add_argument("--dry-run", action="store_true")
 
     p = add("todo", cmd_todo, "待办清单")

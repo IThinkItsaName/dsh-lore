@@ -5,24 +5,32 @@
 --------------------------------------------------------
     工作记录容器 = <项目根>/work_log/   （默认名，可配置；旧名 journal/、work-log/ 仍被识别）
 
-        README.md            台账（唯一）：索引 + 同主题簇 + 待办 + 当前状态
-        NNNN-*.md            过程记录，直接放在容器根
-        <YYYY>/NNNN-*.md     按年分卷后的记录
-        <stage>/NNNN-*.md    归档记录，阶段目录直接建在容器下（不再有 archive/ 一层）
+        README.md            台账（唯一）：索引 + 同主题簇 + 待办 + 当前状态（状态块可选）
+        NNN-*.md             过程记录（编号式），直接放在容器根
+        YYYY-MM-DD-*.md      过程记录（日期式），直接放在容器根
+        <YYYY>/…             按年分卷后的记录
+        <stage>/…            归档记录，阶段目录直接建在容器下（不再有 archive/ 一层）
         STATE-HISTORY.md     被替换下来的旧「当前状态」块
         ARCHIVE.md           归档索引
+        LEGACY.md            旧记录声明（可选，见「渐进原则」）
         lessons/             经验层（分册），是容器的子目录
         logs/<来源>/         日志与运行产物（见 conventions.md「日志归位要求」）
 
+两种记录命名**都认**（实测 237 篇编号式 + 71 篇日期式）：
+- 编号式 `NNN-<slug>.md`，H1 必须 `# NNN · <标题>`；编号永不复用、归档不改号。
+- 日期式 `YYYY-MM-DD-<slug>.md`，H1 必须 `# YYYY-MM-DD <标题>`（日期后可接一个行内实验号，如 `R21：`）。
+- 两种都要求 H1 与文件名一致。**两种都不匹配的文件不是记录，一律忽略**，不做半解析。
+
 设计目标：**少读、少写、可校验**。
-- 少读：brief / show / search / outline 只吐出需要的那点内容，不必读 50 KB 的索引。
+- 少读：brief / show / search / outline / snapshot 只吐出需要的那点内容，不必读 50 KB 的索引。
 - 少写：status / todo / index / append / lesson 做外科式行级编辑（保留 CRLF 与其余字节）。
-- 可校验：check 查结构，lint 查内容质量，两者都可当门禁（退出码 1）。
+- 可校验：check 查结构，lint 查内容质量；渐进原则让旧记录只报 info，不制造一片红。
 
 命令分组
 --------
 读写 · 上下文
     brief     压缩上下文快照（当前状态 + 待办 + 近期记录），替代整读索引
+    snapshot  最近 N 篇的入口元信息汇总（只读，不改任何文件）
     show      单篇大纲（元数据 + 小节 + 行数），决定要不要读全文
     search    定向检索（记录 + 经验），只回命中行
     outline   全部记录的一行表（编号/日期/迭代/标题）
@@ -37,8 +45,8 @@
     append    向某篇记录追加小节（更正 / 遗留）
 
 读写 · 分析与生成
-    check     结构门禁（编号、日期、验证、死链、漏索引、状态、来源）
-    lint      内容质量（占位符残留、空小节、含糊措辞、结论缺数字）
+    check     结构门禁（编号/标题、验证、死链、漏索引、状态、来源；旧记录只报 info）
+    lint      内容质量（占位符残留、空小节、含糊措辞、结论缺数字、验证小节只有设置）
     stats     语料统计（节奏、长度、合规率、引用覆盖）
     topics    同主题簇建议（关键词共现 / --keywords 指定）
     digest    生成交接摘要文档（--out 落盘）
@@ -51,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import fnmatch
 import json
 import os
 import re
@@ -69,8 +78,11 @@ L_DATE = ("日期", "Date")
 L_CONCLUSION = ("结论", "Conclusion", "Result")
 L_TRIGGER = ("触发", "Trigger", "Context")
 L_SCOPE = ("范围", "Scope")
+# `变更集` 是**可选**字段（实测 146/162 篇写「无」），它是迭代字段的一个别名，不是一个必填项。
 L_ITER = ("迭代", "变更集", "批次", "阶段", "版本", "里程碑", "Iteration", "Milestone")
+# 验证类小节词表。`实验 / 判定 / 评测` 是给研究类项目的（见 references/conventions.md）。
 L_VERIFY = ("验证", "实测", "复核", "检查", "审查", "评审", "结果", "证据", "评估", "确认",
+            "实验", "判定", "评测",
             "Verification", "Review", "Results", "Evidence", "Tests")
 L_STATUS = ("当前状态", "Status", "Current Status")
 L_TODO = ("待办", "TODO", "Todo", "Tasks")
@@ -88,14 +100,29 @@ K_ITER_DEFAULT = L_ITER[0]
 K_VERIFY = L_VERIFY[0]
 K_STATUS = L_STATUS[0]
 K_TODO = L_TODO[0]
+K_INDEX = L_INDEX[0]
 # 兼容旧名（内部与自测都在用）
 K_ITER_ALIASES = L_ITER
 VERIFY_WORDS = L_VERIFY
 
-ENTRY_RE = re.compile(r"^(\d+)(?:-.*)?\.md$")
+# ---- 记录文件名：两种约定都认（见 references/conventions.md「两种命名约定」）----
+# `^\d{4}-\d{2}-\d{2}-` 必须先于编号式判断：否则 `2026-09-02-x.md` 会被
+# `^(\d+)-` 半解析成「编号 2026」，于是 11 个日期式文件互相重号、报出假错误。
+DATE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$", re.I)
+NUM_NAME_RE = re.compile(r"^(\d{1,4})-(.+)\.md$")
+# 编号式也允许纯编号名（纯中文标题的退化形式，见 slugify）。
+NUM_BARE_RE = re.compile(r"^(\d{1,4})\.md$")
+# 记录文件（两种约定之一）。`is_record_name` 是唯一的判据，别在别处另写一套。
+NUM_FILE_RE = re.compile(r"^(?:\d{1,4}(?:-[^/\\]*)?)\.md$", re.I)
+
 # 按年分卷后的目录名：**恰好 4 位数字**才算年份卷，所以 `02-research` 这类阶段名不会被误认。
 YEAR_DIR_RE = re.compile(r"^\d{4}$")
-HEADING_RE = re.compile(r"^#\s*(\d+)\s*[·.、:：]")
+# 编号式 H1：`# 209 · 标题`（分隔符也认 `.`、`、`、`:`、`：`）。
+HEADING_RE = re.compile(r"^#\s*(\d{1,4})\s*[·.、:：]")
+# 日期式 H1：`# 2026-09-06 标题`；日期与标题之间可空一格，也可直接写标题。
+DATE_HEAD_RE = re.compile(r"^#\s*(\d{4}-\d{2}-\d{2})\b[ \t]*[·.、:：]?[ \t]*(.*)$")
+# 行内实验号（`R21：`）——日期式标题上允许的可选增补，不参与身份。
+INLINE_TAG_RE = re.compile(r"^\**([A-Za-z]{1,4}\d{1,4})\**\s*[：:]\s*(.+)$")
 H1_RE = re.compile(r"^#\s+(.+)$", re.M)
 DATE_LINE_RE = re.compile(rf"^(?:{_any(L_DATE)})\s*[：:]\s*(\S+)", re.M)
 CONCLUSION_RE = re.compile(rf"^(?:{_any(L_CONCLUSION)})\s*[：:]\s*(.*)$", re.M)
@@ -104,6 +131,9 @@ SCOPE_RE = re.compile(rf"^(?:{_any(L_SCOPE)})\s*[：:]\s*(.+)$", re.M)
 STATUS_HEAD_RE = re.compile(
     rf"^#{{2,3}}[ \t]*(?:{_any(L_STATUS)})[ \t]*(?:[（(][^）)\r\n]*[）)])?[ \t]*$", re.M)
 ISO_DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+# 一个「数字 / 百分比」记号：允许 `%`、千分位与小数，但**不允许**前面紧跟字母数字
+# （否则 `R21`、`v4`、`0029` 会各自算一个数字记号，把「只有一个编号」的散文判成有数据）。
+NUM_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])\d+(?:[.,]\d+)?%?")
 VERIFY_HEAD_RE = re.compile(rf"^#{{2,4}}\s*.*(?:{_any(L_VERIFY)})", re.M)
 LINK_RE = re.compile(r"\]\(([^)\s]+)\)")
 CITE_RE = re.compile(r"wl/(\d+)")
@@ -124,7 +154,7 @@ MODES: dict[str, tuple[str, ...]] = {
     "digest": ("digest", "摘要", "汇总", "归并"),
     "milestone": ("milestone", "里程碑", "收口", "阶段收口"),
 }
-MODE_DEFAULT = "session"
+MODE_DEFAULT = "full"
 MODE_MEANING = {
     "full": "一段可交付的子单元就是一篇，一次会话可能开出 2–3 篇。",
     "session": "一次会话最多一篇；同一会话里的第二件事追加到同一篇。",
@@ -152,6 +182,37 @@ NON_RECORD_DIRS = ("lessons", "logs")
 ARCHIVE_INDEX = "ARCHIVE.md"
 STATUS_HISTORY = "STATE-HISTORY.md"
 COLD_STORE = "COLD-STORE.md"
+# 旧记录声明（可选）：容器里已有的记录写在里面，逐条列出，只有它列到的记录才降级。
+LEGACY_DECL = "LEGACY.md"
+
+# ---- 渐进原则（老记录只报不拦）----
+# 依据是**显式清单**，不是日期启发式：日期不可靠（实测同一份语料里日期字段只覆盖一半），
+# 而「这条记录是改动之前写的」只有人能确定。三处来源，优先级从高到低：
+#   1. `--legacy <glob|name|…>`（命令行，逗号分隔；显式给了就以它为准，空串也算显式）
+#   2. 容器根的 `LEGACY.md`（跟着容器进版本控制，团队共用）
+#   3. 都没有时按**容器规模**兜底（见 `LEGACY_AUTO_MIN_RECORDS`）：
+#      够大的容器按「整批都是旧记录」处理，小容器按「新项目」处理。
+LEGACY_DEFAULT: tuple[str, ...] = ("**",)
+
+# 兜底判据的规模门槛：容器里**少于**这么多篇记录时，不吃兜底，按新格式判 error。
+#
+# 为什么用规模、而不是日期：日期不可靠（实测同一份语料里日期字段只覆盖一半），
+# 而"记录还很少"是"这个容器刚起步"的一个客观信号（实测三个语料是 30 / 71 / 207 篇）。
+# 于是：
+#   - 新项目（记录还少）：写坏的记录照报 error —— 新规格该红就红；
+#   - 老项目（记录已多）：旧格式问题只报 info —— 零配置也不是一片红；
+#   - 一个**体量小**的老项目会被当成新项目（多报几条），用 `LEGACY.md` 一次就能收准。
+#
+# 代价写清楚：这条兜底是"宁可多报，也不放过新记录"。想彻底按新格式判就用 `--legacy ""`。
+LEGACY_AUTO_MIN_RECORDS = 5
+
+# 只有「因旧格式而失败」的发现才受渐进原则影响。判据是这条：新格式要求它吗？
+# 索引覆盖、死链、lessons 来源这些**从来就有**的客观规则不在内，永远照报。
+RULE_TITLE = "标题形制"       # H1 必须与文件名一致（编号式带篇号 / 日期式带日期）
+RULE_ENTRY_DATE = "入口日期行"  # 旧技能要求 `日期：` 字段行
+RULE_VERIFY = "验证小节"       # 旧技能要求六段式里的验证小节
+
+LEGACY_RULES = (RULE_TITLE, RULE_ENTRY_DATE, RULE_VERIFY)
 
 
 def _status_key_parts(key: str) -> list[str]:
@@ -311,6 +372,132 @@ def resolve_lessons(root: str, container: str | None, name: str | None) -> str |
     return None
 
 
+# --------------------------------------------------------------------------- #
+# 两种命名约定：判据只写在这一处
+# --------------------------------------------------------------------------- #
+def is_record_name(name: str) -> bool:
+    """文件名是不是一条记录（编号式或日期式）。两者都不匹配就不是记录。
+
+    `README.md`、`ARCHIVE.md`、`INDEX.md`、`模型效果总表.md`、`归档-…md`
+    都落在这里返回 False —— 它们**不是**记录，不做半解析。
+    """
+    return bool(DATE_NAME_RE.match(name) or NUM_FILE_RE.match(name))
+
+
+def name_style(name: str) -> str:
+    """记录文件名的形制：`date` / `num` / `""`（不是记录）。"""
+    if DATE_NAME_RE.match(name):
+        return "date"
+    if NUM_FILE_RE.match(name):
+        return "num"
+    return ""
+
+
+def name_number(name: str) -> int | None:
+    """编号式文件名的篇号；日期式与其它返回 None。"""
+    if DATE_NAME_RE.match(name):
+        return None
+    m = NUM_NAME_RE.match(name) or NUM_BARE_RE.match(name)
+    return int(m.group(1)) if m else None
+
+
+def name_date(name: str) -> str:
+    """日期式文件名里的日期（`YYYY-MM-DD`）；不是日期式就返回空串。"""
+    return name[:10] if DATE_NAME_RE.match(name) else ""
+
+
+def legacy_decl_path(container: str) -> str:
+    """容器根的 `LEGACY.md` 落点。"""
+    return os.path.join(container, LEGACY_DECL)
+
+
+def legacy_explicit(container: str, cli: str | None) -> tuple[bool, list[str]]:
+    """返回 (是否用了显式清单, 清单)。
+
+    显式清单的两个来源：命令行 `--legacy`、容器根的 `LEGACY.md`。
+    两者都没有时返回 `(False, [])`——调用方使用**兜底判据**（见 `LEGACY_AUTO_MIN_RECORDS`）。
+    """
+    if cli is not None:
+        return True, [p.strip() for p in cli.split(",") if p.strip()]
+    path = legacy_decl_path(container)
+    if os.path.isfile(path):
+        pats = []
+        for line in read(path).splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            s = re.sub(r"^[-*+]\s*", "", s).strip().strip("`")
+            if s:
+                pats.append(s)
+        return True, pats
+    return False, []
+
+
+def _legacy_match(pat: str, path: str, container: str, name: str) -> bool:
+    """一条 glob 是否命中这条记录。支持容器相对路径、纯文件名、`**`、`<stage>/*`。
+
+    `**` 与 `*` 都当"全部命中"：用户写 `*` 的本意几乎一定是"全库"，
+    而在 fnmatch 里 `*` 不跨 `/`，对归档记录里的 `archive/<stage>/x.md` 会落空——
+    那会让人以为"我明明写了 * 却没生效"。宁可当全命中，也不要这种静默落空。
+    """
+    if pat in ("**", "*"):
+        return True
+    relp = rel(container, path)
+    for cand in (relp, name, f"**/{relp}", f"**/{name}"):
+        if fnmatch.fnmatch(cand, pat):
+            return True
+    # 目录前缀写法：`archive/**`、`archive/`、`archive`
+    for suffix in ("", "/", "/**"):
+        for base in (pat.rstrip("/"),):
+            d = (base + suffix).rstrip("/")
+            if d and d != "**" and (relp == d or relp.startswith(d + "/")):
+                return True
+    return False
+
+
+def is_legacy(container: str, path: str, patterns: list[str]) -> bool:
+    """这条记录算不算「改动之前写的」——决定它的旧格式问题是 info 还是 WARN/ERROR。"""
+    name = os.path.basename(path)
+    return any(_legacy_match(p, path, container, name) for p in patterns)
+
+
+def old_format_hits(text: str, style: str, num: int | None, date: str) -> list[str]:
+    """一篇记录踩中了几条**旧格式**规则（用于说明与自测，不参与判定）。
+
+    只看会受渐进原则影响的那几条：H1 形制、入口 `日期：` 行、验证小节。
+    与 `check` 里的实际判定必须**同一口径**——两边说的是同一件事，不能各判一套。
+    """
+    hits: list[str] = []
+    h1 = H1_RE.search(text)
+    if not h1:
+        hits.append(RULE_TITLE)
+    elif style == "num":
+        m = HEADING_RE.match("# " + h1.group(1))
+        if not m or int(m.group(1)) != num:
+            hits.append(RULE_TITLE)
+    else:
+        m = DATE_HEAD_RE.match("# " + h1.group(1))
+        if not m or m.group(1) != date:
+            hits.append(RULE_TITLE)
+    dm = DATE_LINE_RE.search(text)
+    if not dm and not date and not date_from_h1(h1.group(1) if h1 else ""):
+        hits.append(RULE_ENTRY_DATE)
+    if not find_verify_section(text.splitlines()):
+        hits.append(RULE_VERIFY)
+    return hits
+
+
+def auto_legacy_paths(recs: list[dict]) -> set[str]:
+    """兜底判据：没有显式清单时，把**够大的**容器整批当旧记录。
+
+    只有一条规则：记录数 ≥ `LEGACY_AUTO_MIN_RECORDS` ⇒ 全部命中。
+    小容器返回空集 —— 那是新项目，按新格式判（理由与代价见那个常量的注释）。
+    """
+    if len(recs) < LEGACY_AUTO_MIN_RECORDS:
+        return set()
+    return {r["path"] for r in recs}
+
+
 def resolve_layout(root: str, container_arg: str | None, lessons_arg: str | None
                    ) -> tuple[str | None, str | None]:
     """一次解析出（容器目录, 经验目录）。
@@ -360,7 +547,10 @@ def cold_store_path(container: str) -> str:
 
 
 def find_entries(container: str, skip_dirs: tuple[str, ...] = ()) -> dict[int, list[str]]:
-    """容器下所有编号记录（含归档与分卷）。
+    """容器下所有**编号式**记录（含归档与分卷），按篇号分组。
+
+    只收编号式：日期式记录没有篇号，进了这个表就会互相覆盖。需要两种都遍历时用
+    `find_records`；需要篇号（归档 / 分卷 / `wl/NNNN` 回指）时才用本函数。
 
     `skip_dirs` 用来排除容器内**不是记录**的子目录：经验层（`--lessons` 改名后
     要显式传进来，见 `lessons_skip`）与日志目录（`logs/`）。它们里面的
@@ -371,10 +561,52 @@ def find_entries(container: str, skip_dirs: tuple[str, ...] = ()) -> dict[int, l
     for dp, dn, fn in os.walk(container):
         dn[:] = [d for d in dn if d not in skip]
         for f in fn:
-            m = ENTRY_RE.match(f)
-            if m:
-                found.setdefault(int(m.group(1)), []).append(os.path.join(dp, f))
+            if not NUM_FILE_RE.match(f) or DATE_NAME_RE.match(f):
+                continue
+            n = name_number(f)
+            if n is not None:
+                found.setdefault(n, []).append(os.path.join(dp, f))
     return found
+
+
+def find_records(container: str, skip_dirs: tuple[str, ...] = ()) -> list[dict]:
+    """容器下**全部**记录（编号式 + 日期式），按身份排序。
+
+    每条是一个 dict：`{rid, kind, num, date, style, name, path, label, prefix}`。
+    `rid` 是稳定身份，也是排序键 —— 编号式零填充成 5 位（`00046`），日期式就是
+    `YYYY-MM-DD`，两者字典序即时间序。文件名不匹配任何约定的文件**不在结果里**。
+    """
+    skip = {".git", "node_modules", *NON_RECORD_DIRS, *skip_dirs}
+    out: list[dict] = []
+    for dp, dn, fn in os.walk(container):
+        dn[:] = [d for d in dn if d not in skip]
+        for f in fn:
+            style = name_style(f)
+            if not style:
+                continue
+            path = os.path.join(dp, f)
+            if style == "date":
+                rid, num, date = f[:10], None, f[:10]
+            else:
+                num = name_number(f)
+                rid, date = f"{num:05d}", ""
+            out.append({"rid": rid, "kind": "num" if style == "num" else "date",
+                        "num": num, "date": date, "style": style, "name": f,
+                        "path": path, "prefix": ""})
+    out.sort(key=lambda r: (r["rid"], r["name"]))
+    for r in out:
+        r["path"] = r["path"]
+    return out
+
+
+def display_of(rec: dict) -> str:
+    """一行表 / 标题里显示的身份（编号式给篇号，日期式给日期）。"""
+    return f"{rec['num']:04d}" if rec["kind"] == "num" else rec["date"]
+
+
+def entry_label(rec: dict) -> str:
+    """面向人的标签：编号式 `#0007`，日期式给文件名。"""
+    return f"#{rec['num']:04d}" if rec["kind"] == "num" else rec["name"]
 
 
 def _rel_parts(container: str, path: str) -> list[str]:
@@ -407,7 +639,7 @@ def is_archived_entry(container: str, path: str, skip_dirs: tuple[str, ...] = ()
     否则 `index compact` 会把经验分册折成一个「归档阶段」（`--lessons` 改名后
     由 `skip_dirs` 补上实际名字，见 `lessons_skip`）。
     """
-    if not ENTRY_RE.match(os.path.basename(path)):
+    if not (NUM_FILE_RE.match(os.path.basename(path)) and not DATE_NAME_RE.match(os.path.basename(path))):
         return False
     parts = _rel_parts(container, path)
     if len(parts) < 2:
@@ -541,18 +773,47 @@ def parse_iter(text: str) -> str:
     return ""
 
 
+def strip_title_prefix(title: str, style: str, fname_date: str = "") -> str:
+    """去掉 H1 里属于「身份」的那一段，只留标题文字。
+
+    编号式去掉 `NNN · `；日期式去掉行首的日期，以及紧随其后的行内实验号（`R21：`）。
+    """
+    s = title.strip()
+    if style == "num":
+        return re.sub(r"^\d{1,4}\s*[·.、:：]\s*", "", s).strip()
+    if style == "date":
+        s = re.sub(r"^\d{4}-\d{2}-\d{2}\s*[·.、:：]?\s*", "", s).strip()
+        m = INLINE_TAG_RE.match(s)
+        if m:
+            s = m.group(2).strip()
+    return s
+
+
 def meta_of(path: str) -> dict:
-    """解析一篇记录的元数据（不全量保留正文）。"""
+    """解析一篇记录的元数据（不全量保留正文）。
+
+    两种命名都认：形制从**文件名**判定，`date` 优先取入口的 `日期：` 行，
+    日期式记录没有那一行时退回文件名里的日期（实测 71 篇里 68 篇靠文件名）。
+    """
     text = read(path)
+    name = os.path.basename(path)
+    style = name_style(name) or "num"
+    fdate = name_date(name)
     h1 = H1_RE.search(text)
-    title = re.sub(r"^\d+\s*[·.、:：]\s*", "", h1.group(1)).strip() if h1 else os.path.basename(path)
+    h1_text = h1.group(1).strip() if h1 else ""
+    title = strip_title_prefix(h1_text, style, fdate) if h1 else name
     dm = DATE_LINE_RE.search(text)
+    # `日期：` 是可选的：没有它时用文件名 / H1 上的日期顶上，别让「两个地方都写了
+    # 日期」的记录反而报缺日期。
+    date = dm.group(1) if dm else (fdate or date_from_h1(h1_text))
     iv = parse_iter(text)
+    if not iv and style == "date":
+        iv = inline_tag_of(h1_text)
     cm = CONCLUSION_RE.search(text)
     sections = re.findall(r"^(#{2,3})\s+(.+?)\s*$", text, re.M)
     return {
         "title": title,
-        "date": dm.group(1) if dm else "",
+        "date": date,
         "iter": iv,
         "conclusion": (cm.group(1).strip() if cm else ""),
         "sections": [s[1] for s in sections],
@@ -561,9 +822,120 @@ def meta_of(path: str) -> dict:
         # 磁盘上的真实字节数；不能用 len(text.encode())，因为 read() 会归一换行，
         # CRLF 文件会因此少算一半换行。
         "bytes": _file_size(path),
-        "has_date": bool(dm),
+        "has_date": bool(date),
         "has_verify": bool(VERIFY_HEAD_RE.search(text)),
+        "style": style,
     }
+
+
+def date_from_h1(h1_text: str) -> str:
+    """H1 里的日期（日期式）。`h1_text` 是 `# ` 之后的那段。"""
+    m = DATE_HEAD_RE.match("# " + h1_text) if h1_text else None
+    return m.group(1) if m else ""
+
+
+def inline_tag_of(h1_text: str) -> str:
+    """日期式 H1 上可选的线内实验号（`R21`）；没有就返回空串。"""
+    m = DATE_HEAD_RE.match("# " + h1_text) if h1_text else None
+    if not m:
+        return ""
+    # H1 已经去掉 `# ` 这一层，所以拿第 2 组（日期之后的那段）当标题。
+    t = INLINE_TAG_RE.match(m.group(2).strip().lstrip("*").strip())
+    return t.group(1) if t else ""
+
+
+# 入口元信息的两族写法：引用块式（`> 状态：… ｜ 工具：…`）与字段行式（`日期：…`）。
+# 只认实义字段名：`结论 / 触发 / 范围 / 日期 / 状态 / 工具 / 产物 / 迭代 / 变更集 …`。
+# 不认 `说明`、`注` 这类太泛的词，否则正文里的普通行会被当成入口块。
+ENTRY_KEYS = ("日期", "Date", "状态", "Status", "工具", "Tool", "产物", "Output", "Artifact",
+              "触发", "Trigger", "Context", "范围", "Scope", "结论", "Conclusion", "Result",
+              "迭代", "变更集", "批次", "阶段", "版本", "里程碑", "Iteration", "Milestone",
+              "来源", "Source", "环境", "Environment")
+FIELD_RE = re.compile(rf"^[ \t]*[-*+]?[ \t]*(?:{_any(ENTRY_KEYS)})\s*[：:]\s*(.*\S)?[ \t]*$")
+ENTRY_H3_RE = re.compile(r"^#{3,4}[ \t]*.*(?:入口|元信息|头部|概要)[ \t]*$")
+
+
+def entry_block_of(text: str) -> tuple[dict[str, str], str]:
+    """读一篇记录**已在手上的正文**，返回 (字段表, 原始块文本)。
+
+    参数是正文本身（调用方已经 `read` 过），不是路径 —— 少读一次盘，也免得把
+    正文当路径传进来（那会静默返回空表）。
+
+    认两种风格，也认它们混写：
+    - **引用块式**（实测 `embeding try` 在用）：`> 状态：… ｜ 工具：… ｜ 产物：…`
+    - **字段行式**（实测原型与 `comfy` 在用）：`日期：…` / `触发：…` / `范围：…` / `结论：…`
+    - 另有一个可选的小节式：`### 入口` 下写字段行。
+
+    **没有入口块不是错**：返回空表，调用方照常输出（`snapshot` 靠这条不炸）。
+    """
+    lines = text.splitlines()
+    fields: dict[str, str] = {}
+    first, last = None, None
+
+    def take(i: int, raw: str) -> None:
+        nonlocal first, last
+        m = FIELD_RE.match(raw)
+        if not m:
+            return
+        key = raw.strip().lstrip("-*+ ").split("：")[0].split(":")[0].strip()
+        val = (m.group(1) or "").strip()
+        if key and val and key not in fields:
+            fields[key] = val
+        if first is None:
+            first = i
+        last = i
+
+    # 1) 前 40 行里的引用块式与字段行式（入口元信息总在开头）。
+    for i, raw in enumerate(lines[:40]):
+        s = raw.strip()
+        if s.startswith(">"):
+            for part in re.split(r"[｜|]", s.lstrip("> ").strip()):
+                m = FIELD_RE.match(part)
+                if m:
+                    key = part.strip().split("：")[0].split(":")[0].strip()
+                    val = (m.group(1) or "").strip()
+                    if key and val:
+                        fields.setdefault(key, val)
+                    if first is None:
+                        first = i
+                    last = i
+            continue
+        take(i, raw)
+
+    # 2) `### 入口` / `### 元信息` 小节（可选写法）。只在开头那一段找。
+    if not fields:
+        for i, raw in enumerate(lines[:60]):
+            if ENTRY_H3_RE.match(raw):
+                f2, l2 = None, None
+                for j in range(i + 1, min(i + 20, len(lines))):
+                    if re.match(r"^#{1,4}\s", lines[j]):
+                        break
+                    if FIELD_RE.match(lines[j]):
+                        key = lines[j].strip().split("：")[0].split(":")[0].strip()
+                        val = (FIELD_RE.match(lines[j]).group(1) or "").strip()
+                        if key and val:
+                            fields.setdefault(key, val)
+                        f2 = j if f2 is None else f2
+                        l2 = j
+                if fields:
+                    first, last = f2, l2
+                break
+    block = "\n".join(lines[first:last + 1]) if first is not None and last is not None else ""
+    return fields, block
+
+
+def entry_line(fields: dict[str, str], order: tuple[str, ...], width: int = 120) -> str:
+    """把入口字段压成一行（只输出确实有的字段，缺的不占位）。"""
+    parts = []
+    seen = set()
+    for key in order:
+        if key in fields and fields[key] and key not in seen:
+            seen.add(key)
+            parts.append(f"{key}：{_clip(fields[key], width)}")
+    for key, val in fields.items():
+        if key not in seen and val:
+            parts.append(f"{key}：{_clip(val, width)}")
+    return " ｜ ".join(parts)
 
 
 def all_metas(entries: dict[int, list[str]]) -> dict[int, dict]:
@@ -616,18 +988,83 @@ def insert_at_end_of_section(lines: list[str], start: int, end: int, new_lines: 
 
 
 def find_verify_section(lines: list[str]):
-    """按各领域的叫法找「验证 / 复核」小节（验证、评审、检查、结果、证据…）。"""
+    """按各领域的叫法找「验证 / 复核」小节（验证、评审、检查、结果、证据…）。
+
+    返回 `(标题行下标, 正文起, 正文止, 标题文字, 标题形制)`；最后一项目前只有
+    `verify_gap` 用得上——标题里带「设置 / 目的 / 方法 / 计划」的多半只写了做法。
+    找不到返回 None。
+    """
     for level in (4, 3, 2):
         for word in VERIFY_WORDS:
             span = find_section(lines, level, word)
             if span:
-                return span
+                head = re.sub(r"^#+\s*", "", lines[span[0]].strip()).strip()
+                return (span[0], span[1], span[2], head, _head_kind(head))
     return None
 
 
+SETUP_WORDS = ("设置", "目的", "方法", "计划", "步骤", "待办", "框架", "准备", "背景", "口径")
+
+
+def _head_kind(head: str) -> str:
+    """标题是不是「只交代做法」的那一类（设置 / 目的 / 方法 / 计划…）。"""
+    return "设置" if any(w in head for w in SETUP_WORDS) else ""
+
+
+def verify_gap(body: str, head: str = "") -> str:
+    """验证小节「实质内容」口径：只有设置、没有结果时返回一句人话，否则空串。
+
+    两档判据，都是保守的「宁可漏报、别误报」：
+
+    1. **通用档**：正文里必须有 2 个以上独立数字（`NUM_TOKEN_RE`）、或 2 个以上
+       反引号包起来的命令/路径、或 3 行以上表格/列表；都不满足时，只要正文够长
+       （≥120 字符）也算过——那是散文式论述，不是空架子。
+    2. **设置档**（标题含「设置 / 目的 / 方法 / 计划 / 步骤 / 待办 / 框架 / 准备 /
+       背景 / 口径」）：`## 评测设置` 这类标题**只交代做法**，所以不能拿命令顶数：
+       必须有 2 个以上数字，或有表格。规格 §十一 待确认项 1 点的就是这条。
+
+    已知误报风险（都写进了 references/commands.md「验证小节实质要求」）：
+    - 「方法对比」式散文（讲方法的取舍、不落数字）会被报出来。所以默认只报 **WARN**，
+      只有 `--strict` 才抬成 ERROR——工具不下判决，人来判。
+    - `## 验证：本次未独立验证，见 wl/0009` 这种**诚实的否定**因为带数字会被放过去
+      （漏报）。漏报比误报便宜：漏报只是少提一句，误报会让人开始忽略这个工具。
+    - 真实语料上的命中量：comfy 30 篇 0 命中、原型 207 篇 3 命中、`embeding try`
+      71 篇 1 命中（见 scripts/_selftest.py 的 format_phase 与本次改动的实测）。
+    """
+    t = body.strip()
+    if len(t) < 10:
+        return "空小节"
+    nums = len(NUM_TOKEN_RE.findall(t))
+    backs = t.count("`")
+    rows = len(re.findall(r"(?m)^\s*\|", t))
+    bullets = len(re.findall(r"(?m)^\s*[-*+]\s", t))
+    if _head_kind(head):
+        return "" if (nums >= 2 or rows >= 3) else f"长度 {len(t)} 字符、只有设置没有结果"
+    if nums >= 2 or backs >= 2 or rows >= 3 or bullets >= 3:
+        return ""
+    if len(t) >= 120:
+        return ""
+    return f"长度 {len(t)} 字符的散文"
+
+
+def _mark_legacy(rep: "Report", idx: int | None, legacy: bool, rule: str) -> None:
+    """把刚加的那条发现标成「旧格式规则」，必要时由渐进原则降为 info。
+
+    只降级 `LEGACY_RULES` 里那几条（H1 形制 / 入口日期行 / 验证小节）：死链、
+    漏索引、lessons 来源这些**从来就有**的客观规则不受影响，永远照报。
+    """
+    if rule not in LEGACY_RULES:
+        return
+    rep.mark_legacy(idx, legacy, rule)
+
+
 def _checkable(text: str) -> bool:
-    """是否含可核对的信息：命令（反引号）/ 数字 / 链接。用于 lint 的领域无关口径。"""
-    return ("`" in text) or bool(re.search(r"\d", text)) or ("http" in text)
+    """是否含可核对的信息：命令（反引号）/ 数字 / 链接。用于 lint 的领域无关口径。
+
+    数字用 `NUM_TOKEN_RE` 而不是 `\\d`：`R21`、`v4`、`wl/0009` 里的数字是**引用**，
+    不是数据，不该被当成「有可核对的信息」（否则「见 wl/0009」会被判成有数据）。
+    """
+    return ("`" in text) or bool(NUM_TOKEN_RE.search(text)) or ("http" in text)
 
 
 # --------------------------------------------------------------------------- #
@@ -638,15 +1075,44 @@ class Report:
         self.strict = strict
         self.rows: list[tuple[str, str]] = []
         self._seen: set[tuple[str, str]] = set()
+        # 每条发现属于哪条「规则」（渐进原则只降级旧格式那几条）。按行号对齐 storage。
+        self.rules: list[str] = []
+        self.legacy_rows: set[int] = set()
 
-    def add(self, level: str, where: str, msg: str) -> None:
+    def add(self, level: str, where: str, msg: str, rule: str = "") -> int | None:
+        """加一条发现，返回行号；重复（同级别同文字）被吞掉时返回 None。"""
         if self.strict and level == "WARN":
             level = "ERROR"
         key = (level, f"{where}: {msg}")
         if key in self._seen:
-            return
+            return None
         self._seen.add(key)
         self.rows.append((level, f"{where}: {msg}"))
+        self.rules.append(rule)
+        return len(self.rows) - 1
+
+    def mark_legacy(self, idx: int | None, legacy: bool, rule: str) -> None:
+        """这条发现是「旧格式规则」；`legacy` 为真时降级为 info。
+
+        在 `prune_legacy` 里统一做，是因为降级必须在**所有**发现加完之后 ——
+        否则汇总行会先数出一个已经不存在的 ERROR。
+        """
+        if idx is None or idx >= len(self.rules):
+            return
+        if rule:
+            self.rules[idx] = rule
+        if legacy:
+            self.legacy_rows.add(idx)
+
+    def prune_legacy(self) -> int:
+        """把 legacy 行降到 INFO，返回降级条数。"""
+        n = 0
+        for i in sorted(self.legacy_rows):
+            lv, text = self.rows[i]
+            if lv != "INFO":
+                self.rows[i] = ("INFO", text)
+                n += 1
+        return n
 
     def errors(self) -> int:
         return sum(1 for lv, _ in self.rows if lv == "ERROR")
@@ -679,7 +1145,8 @@ def _check_links(root: str, path: str, rep: Report) -> None:
             rep.add("ERROR", where, f"死链：{target}")
 
 
-def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bool) -> Report:
+def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bool,
+          legacy: str | None = None) -> Report:
     rep = Report(strict)
     journal, lessons = resolve_layout(root, journal_arg, lessons_arg)
     if not journal:
@@ -688,12 +1155,19 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
     jname = rel(root, journal)
     index = os.path.join(journal, "README.md")
     if not os.path.isfile(index):
-        rep.add("ERROR", jname, "缺索引 README.md（台账）")
+        # 台账是**建议**不是门槛：实测五条线里有四条根本没有台账文件，记录照样在写。
+        # 缺它只报 info（索引层缺位），不像以前那样一上来就一条 ERROR。
+        rep.add("INFO", jname, f"没有台账 `{os.path.basename(index)}`（索引层可选；"
+                               f"要导航与状态就按 templates.md 补一份）")
+    explicit, pats = legacy_explicit(journal, legacy)
 
     entries = find_entries(journal, lessons_skip(lessons))
+    recs = find_records(journal, lessons_skip(lessons))
+    # 兜底判据只在**没有**显式清单时生效；显式给了就完全按它判（含 `--legacy ""`）。
+    auto_paths = set() if explicit else auto_legacy_paths(recs)
     nums = sorted(entries)
-    if not entries:
-        rep.add("INFO", jname, "目录里还没有编号记录（新项目正常）")
+    if not recs:
+        rep.add("INFO", jname, "目录里还没有记录（新项目正常）")
     for n, paths in sorted(entries.items()):
         if len(paths) > 1:
             rep.add("ERROR", jname, f"编号 {n} 重复：{[rel(root, p) for p in paths]}")
@@ -703,45 +1177,92 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
             shown = ", ".join(str(g) for g in gaps[:10]) + (" …" if len(gaps) > 10 else "")
             rep.add("WARN", jname, f"编号断档 {len(gaps)} 处：{shown}")
 
-    total = sum(len(v) for v in entries.values())
+    total = len(recs)
+    style_count = {"num": sum(1 for r in recs if r["kind"] == "num"),
+                   "date": sum(1 for r in recs if r["kind"] == "date")}
     date_missing = verify_missing = 0
-    for n in nums:
-        for path in entries[n]:
-            text = read(path)
-            where = rel(root, path)
-            h1 = H1_RE.search(text)
-            if not h1:
-                rep.add("WARN", where, "缺一级标题（应为 `# NNNN · 标题`）")
-            else:
-                m = HEADING_RE.match("# " + h1.group(1))
-                if not m:
-                    rep.add("WARN", where, "一级标题未带篇号（应为 `# NNNN · 标题`）")
-                elif int(m.group(1)) != n:
-                    rep.add("ERROR", where, f"标题篇号 {m.group(1)} 与文件名 {n} 不一致")
-            dm = DATE_LINE_RE.search(text)
-            if not dm:
-                date_missing += 1
-                rep.add("WARN", where, f"缺 `{K_DATE}：YYYY-MM-DD` 入口行")
-            elif not ISO_DATE_RE.fullmatch(dm.group(1)):
-                rep.add("WARN", where, f"日期格式不是 YYYY-MM-DD：{dm.group(1)}")
-            if not VERIFY_HEAD_RE.search(text):
-                verify_missing += 1
-                rep.add("WARN", where, "缺「验证」小节（命令 + 结果 + 未覆盖）")
+    for rec in recs:
+        text = read(rec["path"])
+        where = rel(root, rec["path"])
+        legacy_rec = rec["path"] in auto_paths or is_legacy(journal, rec["path"], pats)
+        rec_style = rec["kind"]
+        sect = find_verify_section(text.splitlines())
+
+        h1 = H1_RE.search(text)
+        if not h1:
+            want = "`# NNN · 标题`" if rec_style == "num" else "`# YYYY-MM-DD 标题`"
+            i = rep.add("WARN", where, f"缺一级标题（应为 {want}）")
+            _mark_legacy(rep, i, legacy_rec, RULE_TITLE)
+        elif rec_style == "num":
+            m = HEADING_RE.match("# " + h1.group(1))
+            if not m:
+                i = rep.add("WARN", where, "一级标题未带篇号（应为 `# NNN · 标题`）")
+                _mark_legacy(rep, i, legacy_rec, RULE_TITLE)
+            elif int(m.group(1)) != rec["num"]:
+                rep.add("ERROR", where, f"标题篇号 {m.group(1)} 与文件名 {rec['num']} 不一致")
+        else:
+            m = DATE_HEAD_RE.match("# " + h1.group(1))
+            if not m:
+                i = rep.add("WARN", where, "一级标题未带日期（应为 `# YYYY-MM-DD 标题`）")
+                _mark_legacy(rep, i, legacy_rec, RULE_TITLE)
+            elif m.group(1) != rec["date"]:
+                rep.add("ERROR", where, f"标题日期 {m.group(1)} 与文件名 {rec['date']} 不一致")
+
+        # `日期：` 入口行**可选**：日期式记录的日期在文件名与 H1 上，两处都有就不该报缺。
+        dm = DATE_LINE_RE.search(text)
+        if dm and not ISO_DATE_RE.fullmatch(dm.group(1)):
+            rep.add("WARN", where, f"日期格式不是 YYYY-MM-DD：{dm.group(1)}")
+        elif not dm and not rec["date"] and not date_from_h1(h1.group(1) if h1 else ""):
+            date_missing += 1
+            i = rep.add("WARN", where,
+                        f"缺 `{K_DATE}：YYYY-MM-DD` 入口行（日期式记录也可把日期写在文件名里）")
+            _mark_legacy(rep, i, legacy_rec, RULE_ENTRY_DATE)
+
+        if not sect:
+            verify_missing += 1
+            i = rep.add("WARN", where, "缺验证类小节（标题含 "
+                                       + " / ".join(VERIFY_WORDS[:12]) + " 之一，h2–h4 都算）")
+            _mark_legacy(rep, i, legacy_rec, RULE_VERIFY)
+        else:
+            body = "".join(text.splitlines()[sect[1]:sect[2]]).strip()
+            bad = verify_gap(body, sect[3])
+            if bad:
+                i = rep.add("WARN", where, f"验证小节 `{sect[3]}` 只有{bad}——"
+                                           f"要数字 / 百分比 / 命令 / 引用输出 / 表格 / 对照")
+                _mark_legacy(rep, i, legacy_rec, RULE_VERIFY)
+                if sect[4] == "设置":
+                    rep.add("INFO", where, "标题是「设置 / 目的 / 方法」这类，验证要求的是**结果**："
+                                           "把实测数字或命令输出补上（见 commands.md「验证小节实质要求」）")
     if total:
         if date_missing:
             rep.add("INFO", jname, f"{date_missing}/{total} 篇缺日期行")
         if verify_missing:
             rep.add("INFO", jname, f"{verify_missing}/{total} 篇缺验证小节")
+        if style_count["num"] and style_count["date"]:
+            rep.add("INFO", jname, f"两种命名混用（编号式 {style_count['num']} 篇 / "
+                                   f"日期式 {style_count['date']} 篇）；容器内建议只用一种")
+
+    # 覆盖检查**要先有索引表**。容器整份没有 `## 文件索引` 时，逐篇报一次
+    # 「未出现在索引中」只会刷出几十行同一件事（实测 `embeding try` 的四条线
+    # 正是这样），真正缺的是那一节。所以整节缺失只报一次。
+    has_index_section = any(f"## {a}" in read(index) for a in L_INDEX) if os.path.isfile(index) else False
+    if has_index_section:
+        for rec in recs:
+            if is_active_entry(journal, rec["path"]) and entry_link(journal, rec["path"]) not in read(index):
+                rep.add("WARN", jname, f"记录 {entry_link(journal, rec['path'])} 未出现在索引中")
+    elif recs:
+        rep.add("INFO", jname, f"台账没有「{K_INDEX}」一节——索引层缺位，"
+                               f"{len(recs)} 篇记录都没有索引行（要导航就补一节 `## {K_INDEX}`）")
 
     if os.path.isfile(index):
         idx_text = read(index)
         _check_links(root, index, rep)
-        for n in nums:
-            if is_active_entry(journal, entries[n][0]) and entry_link(journal, entries[n][0]) not in idx_text:
-                rep.add("WARN", jname, f"记录 {entry_link(journal, entries[n][0])} 未出现在索引中")
         blocks = STATUS_HEAD_RE.findall(idx_text)
         if not blocks:
-            rep.add("WARN", jname, f"索引缺 `## {K_STATUS}` 块")
+            # 状态块**容器自选**：没有不算错。分散状态的容器（实测 5 条线里 4 条）
+            # 根本不该看到红字，所以这里只给一条 info 建议。
+            rep.add("INFO", jname, f"台账没有 `## {K_STATUS}` 块（容器自选；"
+                                   f"加一块则由 check 校验新鲜度，不加不报错）")
         elif len(blocks) > 1:
             rep.add("ERROR", jname, f"索引有 {len(blocks)} 个「{K_STATUS}」块"
                                     f"（只能有一个，旧块移入 {rel(root, status_history_path(journal))}）")
@@ -751,8 +1272,8 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
             block = blocks[0] + (after[: nxt.start()] if nxt else after)
             sd = max_date_in(block)
             newest = None
-            for n in nums:
-                d = max_date_in(read(entries[n][0]))
+            for rec in recs:
+                d = max_date_in(read(rec["path"]))
                 if d and (newest is None or d > newest):
                     newest = d
             if not sd:
@@ -801,17 +1322,22 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
 # --------------------------------------------------------------------------- #
 # lint：内容质量门禁
 # --------------------------------------------------------------------------- #
-def lint(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bool) -> Report:
+def lint(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bool,
+         legacy: str | None = None) -> Report:
     rep = Report(strict)
     journal, lessons = resolve_layout(root, journal_arg, lessons_arg)
     if not journal:
         rep.add("ERROR", root, "找不到记录容器（work_log/；旧名 journal/、work-log/ 也认）")
         return rep
-    # 档位只在台账里读一次：粗档位的额外义务按它判（默认档 = session，不加要求）。
+    # 档位只在台账里读一次：粗档位的额外义务按它判（默认档不加要求）。
     mode, _mode_why, _mode_default = _mode_and_why(journal)
-    for n, paths in sorted(find_entries(journal, lessons_skip(lessons)).items()):
-        path = paths[0]
+    recs = find_records(journal, lessons_skip(lessons))
+    explicit, pats = legacy_explicit(journal, legacy)
+    auto_paths = set() if explicit else auto_legacy_paths(recs)
+    for rec in recs:
+        path = rec["path"]
         where = rel(root, path)
+        legacy_rec = path in auto_paths or is_legacy(journal, path, pats)
         text = read(path)
         lines = text.splitlines()
         for token in PLACEHOLDERS:
@@ -819,19 +1345,27 @@ def lint(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bo
                 rep.add("WARN", where, f"占位符未清理：`{token}`")
         cm = CONCLUSION_RE.search(text)
         if not cm or not cm.group(1).strip():
-            rep.add("WARN", where, "「结论：」为空")
+            # `结论：` 也是旧格式的入口字段之一；老记录没它就只报 info。
+            i = rep.add("WARN", where, "「结论：」为空")
+            _mark_legacy(rep, i, legacy_rec, RULE_ENTRY_DATE)
         elif not _checkable(cm.group(1)):
             rep.add("WARN", where, "结论没有可核对的信息（数字 / 引用 / 链接）")
         span = find_verify_section(lines)
         if span:
             body = "".join(lines[span[1]:span[2]]).strip()
             if len(body) < 10:
-                rep.add("WARN", where, "验证小节为空")
+                i = rep.add("WARN", where, "验证小节为空")
+                _mark_legacy(rep, i, legacy_rec, RULE_VERIFY)
             elif not _checkable(body):
-                rep.add("WARN", where, "验证小节没有可核对的内容（命令 / 数据 / 引用 / 样本）")
+                i = rep.add("WARN", where, "验证小节没有可核对的内容（命令 / 数据 / 引用 / 样本）")
+                _mark_legacy(rep, i, legacy_rec, RULE_VERIFY)
             for w in VAGUE:
                 if w in body:
                     rep.add("WARN", where, f"验证含含糊措辞：`{w}`")
+        else:
+            # check 已经报过「缺验证小节」；lint 只在旧记录上补一句同样的 info 口径。
+            i = rep.add("WARN", where, "缺验证小节（无法判断内容质量）")
+            _mark_legacy(rep, i, legacy_rec, RULE_VERIFY)
         # 粗档位的额外义务：写明这一轮**刻意没有记录**什么。
         # 只出 WARN，且只在台账显式设成粗档位时生效——默认档（含没有 `精细度`
         # 字段的老台账）一句都不多说，所以老项目不会因为这条突然变红。
@@ -936,17 +1470,72 @@ def _clip(text: str, width: int) -> str:
     return text[: width - 1] + "…"
 
 
+def snapshot_of(rec: dict, root: str) -> dict:
+    """汇总一篇记录的入口元信息（供 `snapshot` 用）。
+
+    编号式取入口的 `日期：` 行（没有就退回 H1 里的日期），日期式直接取文件名日期。
+    **没有入口块不是错**：字段表就是空的，照常返回，调用方照常输出。
+    """
+    text = read(rec["path"])
+    m = meta_of(rec["path"])
+    fields, _block = entry_block_of(text)
+    date = m["date"] or rec["date"]
+    ref = f"wl/{rec['num']:04d}" if rec["kind"] == "num" else rec["name"]
+    return {"rec": rec, "where": rel(root, rec["path"]), "date": date, "ref": ref,
+            "title": m["title"], "fields": fields}
+
+
+def cmd_snapshot(args: argparse.Namespace) -> int:
+    """把最近 N 篇的入口元信息汇总成一份**只读**快照。
+
+    补的是「状态分散在每篇开头」这件事（实测 `embeding try` 把 `> 状态：… ｜ 工具：…`
+    写在每篇开头，台账里根本没有状态块）。**只读**：只打印，绝不写容器里的任何文件；
+    `--out` 是给调用方自己落盘用的，路径由调用方给。
+    """
+    root = os.path.abspath(args.root)
+    journal, lessons = resolve_layout(root, args.journal, args.lessons)
+    if not journal:
+        print("ERROR: 找不到记录容器")
+        return 1
+    recs = find_records(journal, lessons_skip(lessons))
+    if not recs:
+        print("没有记录")
+        return 0
+    picked = list(reversed(recs))[: args.entries]
+    out = [f"# SNAPSHOT  {rel(root, journal)}"
+           f"  （最近 {len(picked)} / 共 {len(recs)} 篇；只读快照，不改任何文件）", ""]
+    without = 0
+    for item in picked:
+        s = snapshot_of(item, root)
+        out.append(f"{s['date'] or '(无日期)':10s}  {s['ref']}  {_clip(s['title'], args.width - 30)}")
+        if s["fields"]:
+            out.append("    " + entry_line(s["fields"], (), args.width))
+        else:
+            without += 1
+            out.append("    （没有入口元信息块）")
+    if without:
+        out.append("")
+        out.append(f"（{without}/{len(picked)} 篇没有入口元信息块——不是错误，只是这层没写）")
+    body = "\n".join(out)
+    if args.out:
+        write_raw(os.path.abspath(args.out), body.rstrip("\n") + "\n")
+        print(f"wrote {args.out} ({len(picked)} entries)")
+    else:
+        print(body)
+    return 0
+
+
 def cmd_brief(args: argparse.Namespace) -> int:
     root = os.path.abspath(args.root)
     journal, lessons = resolve_layout(root, args.journal, args.lessons)
     if not journal:
         print("ERROR: 找不到记录容器")
         return 1
-    entries = find_entries(journal, lessons_skip(lessons))
-    nums = sorted(entries)
-    root_nums = [n for n in nums if is_active_entry(journal, entries[n][0])]
-    print(f"# BRIEF  {rel(root, journal)}  ({len(nums)} entries #{nums[0] if nums else '-'}–#{nums[-1] if nums else '-'};"
-          f" active {len(root_nums)} / archive {len(nums) - len(root_nums)})")
+    recs = find_records(journal, lessons_skip(lessons))
+    active = [r for r in recs if is_active_entry(journal, r["path"])]
+    span = f"{display_of(recs[0])}–{display_of(recs[-1])}" if recs else "-"
+    print(f"# BRIEF  {rel(root, journal)}  ({len(recs)} entries {span};"
+          f" active {len(active)} / archive {len(recs) - len(active)})")
     sb = status_block_text(journal)
     if sb:
         lines = sb.splitlines()
@@ -956,7 +1545,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
         if len(lines) > cap:
             print(f"… (+{len(lines) - cap} lines, use `status`)")
     else:
-        print(f"\n(!) 索引里没有状态块")
+        print(f"\n(!) 台账里没有状态块（容器自选，不是错误）")
     open_items, _ = todo_items(journal)
     print(f"\n## {K_TODO}（未完成 {len(open_items)}）")
     for it in open_items[: args.max_todo]:
@@ -964,10 +1553,11 @@ def cmd_brief(args: argparse.Namespace) -> int:
     if len(open_items) > args.max_todo:
         print(f"… (+{len(open_items) - args.max_todo} more, use `todo`)")
     print(f"\n## 近期记录（{args.entries}）")
-    for n in sorted(nums, reverse=True)[: args.entries]:
-        m = meta_of(entries[n][0])
+    for rec in list(reversed(recs))[: args.entries]:
+        m = meta_of(rec["path"])
         it = f"迭代 {m['iter']}" if m["iter"] and m["iter"] != "-" else "不编号"
-        print(f"#{n:<4d} {m['date'] or '(无日期)':10s} [{it}] {'OK ' if m['has_verify'] else 'NO '} {m['title'][:52]}")
+        print(f"{display_of(rec):<10s} {m['date'] or '(无日期)':10s} [{it}] "
+              f"{'OK ' if m['has_verify'] else 'NO '} {m['title'][:52]}")
     return 0
 
 
@@ -977,26 +1567,50 @@ def cmd_outline(args: argparse.Namespace) -> int:
     if not journal:
         print("ERROR: 找不到记录容器")
         return 1
-    entries = find_entries(journal, lessons_skip(lessons))
-    for n in sorted(entries):
-        m = meta_of(entries[n][0])
+    # 第一列：编号式给篇号，日期式给日期。列宽按容器实际情况取——
+    # 纯编号容器保持 4 字符（老输出与老测试都按这个对齐），出现日期式才展宽到 10。
+    recs = find_records(journal, lessons_skip(lessons))
+    width = 10 if any(r["kind"] == "date" for r in recs) else 4
+    for rec in recs:
+        m = meta_of(rec["path"])
         tag = m["iter"] if m["iter"] and m["iter"] != "-" else "-"
-        print(f"{n:04d}\t{m['date'] or '-'}\t{tag}\t{m['lines']:4d}L\t{m['title'][:64]}")
+        print(f"{display_of(rec):<{width}s}\t{m['date'] or '-':10s}\t{tag}\t{m['lines']:4d}L\t{m['title'][:64]}")
     return 0
 
 
+def _find_record(journal: str, key: str) -> dict | None:
+    """按 `show` / `append` 给的身份找一篇记录：篇号、日期、或文件名。
+
+    编号式向后兼容（`show 42`）；日期式按日期或文件名找（`show 2026-09-06`）。
+    """
+    recs = find_records(journal)
+    key = key.strip()
+    if key.isdigit():
+        n = int(key)
+        for r in recs:
+            if r["kind"] == "num" and r["num"] == n:
+                return r
+    for r in recs:
+        if r["name"] == key or r["name"] == key + ".md":
+            return r
+    for r in recs:
+        if r["kind"] == "date" and r["date"] == key[:10]:
+            return r
+    return None
+
+
 def cmd_show(args: argparse.Namespace) -> int:
-    root_arg, num = _root_and_num(args.paths)
+    root_arg, key = _root_and_num(args.paths)
     root = os.path.abspath(root_arg)
     journal, lessons = resolve_layout(root, args.journal, args.lessons)
-    entries = find_entries(journal, lessons_skip(lessons)) if journal else {}
-    if num not in entries:
-        print(f"ERROR: 找不到记录 #{num}")
+    rec = _find_record(journal, key) if journal else None
+    if rec is None:
+        print(f"ERROR: 找不到记录 #{key}")
         return 1
-    path = entries[num][0]
+    path = rec["path"]
     m = meta_of(path)
     text = read(path)
-    print(f"#{num:04d}  {rel(root, path)}")
+    print(f"{display_of(rec)}  {rel(root, path)}")
     print(f"title : {m['title']}")
     print(f"date  : {m['date'] or '-'}   迭代: {m['iter'] or '-'}   {m['lines']} lines / {m['bytes']} B"
           f"   verify: {'yes' if m['has_verify'] else 'no'}")
@@ -1004,6 +1618,9 @@ def cmd_show(args: argparse.Namespace) -> int:
         mm = pat.search(text)
         if mm:
             print(f"{label:<6}: {mm.group(1).strip()[:100]}")
+    fields, _ = entry_block_of(text)
+    if fields:
+        print("入口  : " + entry_line(fields, (), 60))
     print("sections:")
     lines = text.splitlines()
     for i, line in enumerate(lines):
@@ -1220,8 +1837,8 @@ def cmd_index_compact(args: argparse.Namespace) -> int:
         if len(dirs) != 1:
             skipped.append((title, "跨多个归档目录"))
             continue
-        nums = [int(m.group(1)) for t in targets
-                if (m := ENTRY_RE.match(os.path.basename(t)))]
+        nums = [n for t in targets
+                if (n := name_number(os.path.basename(t))) is not None]
         common = dirs.pop()
         label = (f"{min(nums):04d}–{max(nums):04d}（{len(rows)} 篇，已归档）" if nums
                  else f"{len(rows)} 篇，已归档")
@@ -1385,7 +2002,7 @@ def cmd_mode(args: argparse.Namespace) -> int:
             print(f"（{tail}：当前取默认档 `{MODE_DEFAULT}`）")
         if why:
             print(f"原因：{why}")
-        print(f"切换：`journal.py mode --set {MODE_DEFAULT}|full|digest|milestone`")
+        print(f"切换：`journal.py mode --set full|session|digest|milestone`（当前 {MODE_DEFAULT}）")
         return 0
 
     # `--why` 不带 `--set` 时只补原因，档位不动（沿用现有原因；没有就新建）。
@@ -1469,14 +2086,14 @@ def cmd_todo(args: argparse.Namespace) -> int:
 
 
 def cmd_append(args: argparse.Namespace) -> int:
-    root_arg, num = _root_and_num(args.paths)
+    root_arg, key = _root_and_num(args.paths)
     root = os.path.abspath(root_arg)
     journal, lessons = resolve_layout(root, args.journal, args.lessons)
-    entries = find_entries(journal, lessons_skip(lessons)) if journal else {}
-    if num not in entries:
-        print(f"ERROR: 找不到记录 #{num}")
+    rec = _find_record(journal, key) if journal else None
+    if rec is None:
+        print(f"ERROR: 找不到记录 #{key}")
         return 1
-    path = entries[num][0]
+    path = rec["path"]
     text = read_raw(path)
     nl = nl_of(text)
     lines = text.splitlines(keepends=True)
@@ -1876,19 +2493,25 @@ def cmd_lesson(args: argparse.Namespace) -> int:
 def cmd_stats(args: argparse.Namespace) -> int:
     root = os.path.abspath(args.root)
     journal, lessons = resolve_layout(root, args.journal, args.lessons)
-    entries = find_entries(journal, lessons_skip(lessons)) if journal else {}
-    nums = sorted(entries)
-    if not nums:
+    recs = find_records(journal, lessons_skip(lessons)) if journal else []
+    if not recs:
         print("没有记录")
         return 0
-    metas = all_metas(entries)
-    root_nums = [n for n in nums if is_active_entry(journal, entries[n][0])]
-    dates = [max_date_in(read(entries[n][0])) for n in nums]
+    # **按路径**做键，不能按 rid：日期式容器里同一天有多篇（实测一天 18 篇），
+    # 按身份做键会让它们互相覆盖，合规率因此算少一大截。
+    metas = {r["path"]: meta_of(r["path"]) for r in recs}
+    active = [r for r in recs if is_active_entry(journal, r["path"])]
+    dates = [max_date_in(read(r["path"])) for r in recs]
     dates = [d for d in dates if d]
     total_bytes = sum(m["bytes"] for m in metas.values())
     total_lines = sum(m["lines"] for m in metas.values())
-    biggest = max(nums, key=lambda n: metas[n]["bytes"])
-    print(f"entries     : {len(nums)}  (#{nums[0]}–#{nums[-1]}; active {len(root_nums)} / archive {len(nums) - len(root_nums)})")
+    biggest = max(recs, key=lambda r: metas[r["path"]]["bytes"])
+    # 两种命名各自算一下，混用的容器一眼看得出来。
+    n_num = sum(1 for r in recs if r["kind"] == "num")
+    n_date = len(recs) - n_num
+    span = (f"{display_of(recs[0])}–{display_of(recs[-1])}")
+    print(f"entries     : {len(recs)}  ({span}; active {len(active)} / archive {len(recs) - len(active)})")
+    print(f"naming      : 编号式 {n_num} 篇 / 日期式 {n_date} 篇")
     if dates:
         span_days = (max(dates) - min(dates)).days + 1
         print(f"date span   : {min(dates)} .. {max(dates)}  ({span_days} days, {len(dates)} dated)")
@@ -1897,20 +2520,20 @@ def cmd_stats(args: argparse.Namespace) -> int:
             wk = f"{d.isocalendar()[0]}-W{d.isocalendar()[1]:02d}"
             buckets[wk] = buckets.get(wk, 0) + 1
         print("per week    : " + "  ".join(f"{k}:{v}" for k, v in sorted(buckets.items())))
-    print(f"compliance  : 日期 {sum(1 for m in metas.values() if m['has_date'])}/{len(nums)}"
-          f"   验证 {sum(1 for m in metas.values() if m['has_verify'])}/{len(nums)}")
+    print(f"compliance  : 日期 {sum(1 for m in metas.values() if m['has_date'])}/{len(recs)}"
+          f"   验证 {sum(1 for m in metas.values() if m['has_verify'])}/{len(recs)}")
     print(f"size        : {total_lines} lines / {total_bytes / 1024:.0f} KB"
-          f"   avg {total_lines // len(nums)} lines   largest #{biggest} ({metas[biggest]['bytes'] / 1024:.0f} KB)")
+          f"   avg {total_lines // len(recs)} lines   largest {display_of(biggest)}"
+          f" ({metas[biggest['path']]['bytes'] / 1024:.0f} KB)")
     iters = [m["iter"] for m in metas.values() if m["iter"] and m["iter"] != "-"]
-    print(f"迭代字段    : {len(iters)}/{len(nums)} 有值")
+    print(f"迭代字段    : {len(iters)}/{len(recs)} 有值（`变更集` 只是它的一个别名，可选）")
     if lessons:
         cites: dict[int, int] = {}
         for f in sorted(os.listdir(lessons)):
             if f.endswith(".md") and f != "README.md":
                 for c in CITE_RE.findall(read(os.path.join(lessons, f))):
                     cites[int(c)] = cites.get(int(c), 0) + 1
-        print(f"lessons     : {len([f for f in os.listdir(lessons) if f.endswith('.md') and f != 'README.md'])} volumes,"
-              f" {sum(cites.values())} citations → {len(cites)} sources")
+        print(f"lessons     : {len([f for f in os.listdir(lessons) if f.endswith('.md') and f != 'README.md'])} volumes,"              f" {sum(cites.values())} citations → {len(cites)} sources")
         top = sorted(cites.items(), key=lambda kv: -kv[1])[:8]
         print("top cited   : " + "  ".join(f"#{n}({c})" for n, c in top))
     return 0
@@ -1922,27 +2545,28 @@ TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.\-]{3,}")
 def cmd_topics(args: argparse.Namespace) -> int:
     root = os.path.abspath(args.root)
     journal, lessons = resolve_layout(root, args.journal, args.lessons)
-    entries = find_entries(journal, lessons_skip(lessons)) if journal else {}
-    nums = sorted(entries)
+    recs = find_records(journal, lessons_skip(lessons)) if journal else []
     if args.keywords:
         kws = [k.strip() for k in args.keywords.split(",") if k.strip()]
         for kw in kws:
-            hit = [n for n in nums if kw.lower() in read(entries[n][0]).lower()]
-            print(f"{kw}: " + (", ".join(f"#{n}" for n in hit) if hit else "(no hit)"))
+            hit = [r for r in recs if kw.lower() in read(r["path"]).lower()]
+            print(f"{kw}: " + (", ".join(entry_label(r) for r in hit) if hit else "(no hit)"))
         return 0
-    df: dict[str, set[int]] = {}
-    for n in nums:
-        for tok in set(TOKEN_RE.findall(read(entries[n][0]))):
+    df: dict[str, set[str]] = {}
+    for rec in recs:
+        for tok in set(TOKEN_RE.findall(read(rec["path"]))):
             t = tok.lower()
             if t in STOPWORDS or len(t) < 4:
                 continue
-            df.setdefault(t, set()).add(n)
+            df.setdefault(t, set()).add(rec["rid"])
     cand = [(t, ns) for t, ns in df.items() if 2 <= len(ns) <= args.max_df]
     cand.sort(key=lambda kv: (-len(kv[1]), kv[0]))
+    by_rid = {r["rid"]: r for r in recs}
     print(f"同主题簇建议（出现 2–{args.max_df} 篇的标识符；用 `--keywords` 可查中文词）\n")
     for t, ns in cand[: args.limit]:
         shown = sorted(ns)
-        print(f"{t:28s} {len(shown):2d} 篇  " + ", ".join(f"#{n}" for n in shown[:10])
+        print(f"{t:28s} {len(shown):2d} 篇  "
+              + ", ".join(entry_label(by_rid[r]) for r in shown[:10])
               + (" …" if len(shown) > 10 else ""))
     return 0
 
@@ -1950,12 +2574,15 @@ def cmd_topics(args: argparse.Namespace) -> int:
 def cmd_export(args: argparse.Namespace) -> int:
     root = os.path.abspath(args.root)
     journal, lessons = resolve_layout(root, args.journal, args.lessons)
-    entries = find_entries(journal, lessons_skip(lessons)) if journal else {}
+    recs = find_records(journal, lessons_skip(lessons)) if journal else []
     rows = []
-    for n in sorted(entries):
-        m = meta_of(entries[n][0])
-        rows.append({"num": n, "path": rel(root, entries[n][0]), **{k: m[k] for k in
-                     ("title", "date", "iter", "lines", "bytes", "has_date", "has_verify")}})
+    for rec in recs:
+        m = meta_of(rec["path"])
+        # `id` 是统一身份（编号式 `0007` / 日期式 `2026-09-06`），`num` 只在编号式有值。
+        rows.append({"id": display_of(rec), "num": rec["num"], "style": rec["kind"],
+                     "path": rel(root, rec["path"]),
+                     **{k: m[k] for k in
+                        ("title", "date", "iter", "lines", "bytes", "has_date", "has_verify")}})
     if args.csv and args.json:
         print("ERROR: `--csv` 与 `--json` 只能选一个（`--json` 本来就是默认）")
         return 2
@@ -1980,17 +2607,17 @@ def cmd_export(args: argparse.Namespace) -> int:
 def cmd_digest(args: argparse.Namespace) -> int:
     root = os.path.abspath(args.root)
     journal, lessons = resolve_layout(root, args.journal, args.lessons)
-    entries = find_entries(journal, lessons_skip(lessons)) if journal else {}
-    nums = sorted(entries)
+    recs = find_records(journal, lessons_skip(lessons)) if journal else []
     lines = [f"# 交接摘要（生成于 {today()}）", ""]
     sb = status_block_text(journal) if journal else ""
-    lines += ["## " + K_STATUS, "", sb or "(索引里没有状态块)", ""]
+    lines += ["## " + K_STATUS, "", sb or "(台账里没有状态块)", ""]
     open_items, _ = todo_items(journal) if journal else ([], [])
     lines += ["## " + K_TODO, ""] + (open_items or ["(无未完成项)"]) + [""]
-    lines += [f"## 近期记录（最近 {args.entries} 篇）", "", "| 篇号 | 日期 | 迭代 | 标题 |", "|---|---|---|---|"]
-    for n in sorted(nums, reverse=True)[: args.entries]:
-        m = meta_of(entries[n][0])
-        lines.append(f"| {n:04d} | {m['date'] or '-'} | {m['iter'] or '-'} | {m['title']} |")
+    lines += [f"## 近期记录（最近 {args.entries} 篇）", "",
+              "| 身份 | 日期 | 迭代 | 标题 |", "|---|---|---|---|"]
+    for rec in list(reversed(recs))[: args.entries]:
+        m = meta_of(rec["path"])
+        lines.append(f"| {display_of(rec)} | {m['date'] or '-'} | {m['iter'] or '-'} | {m['title']} |")
     lines.append("")
     if lessons:
         lines += ["## 经验要点", ""]
@@ -2013,9 +2640,17 @@ def cmd_digest(args: argparse.Namespace) -> int:
 def cmd_retro(args: argparse.Namespace) -> int:
     root = os.path.abspath(args.root)
     journal, lessons = resolve_layout(root, args.journal, args.lessons)
-    entries = find_entries(journal, lessons_skip(lessons)) if journal else {}
-    nums = [n for n in sorted(entries) if args.from_num <= n <= args.to_num]
-    if not nums:
+    # 区间按篇号给：编号式照旧，日期式整篇收进来（它没有篇号，只能按日期排）。
+    recs = find_records(journal, lessons_skip(lessons)) if journal else []
+    picked = [r for r in recs
+              if r["kind"] == "num" and args.from_num <= (r["num"] or 0) <= args.to_num]
+    if not picked:
+        # 日期式容器：区间给不出篇号，退回「按日期区间」——`--from` 传年份或日期前缀。
+        lo, hi = str(args.from_num), str(args.to_num)
+        dated = [r for r in recs if r["kind"] == "date"
+                 and lo <= r["date"].replace("-", "")[:len(lo)] <= hi]
+        picked = dated
+    if not picked:
         print("ERROR: 区间内没有记录")
         return 1
     stage = args.stage or "阶段"
@@ -2026,20 +2661,21 @@ def cmd_retro(args: argparse.Namespace) -> int:
 
     out = [f"# 99 · 阶段复盘", "", f"## 一、阶段表（{stage}）", "",
            "| 迭代 | 日期 | 记录 | 产出 |", "|---|---|---|---|"]
-    for n in nums:
-        m = meta_of(entries[n][0])
-        out.append(f"| {m['iter'] or '-'} | {m['date'] or '-'} | [wl/{n:04d}]({link_for(entries[n][0])}) | {m['title']} |")
+    for rec in picked:
+        m = meta_of(rec["path"])
+        out.append(f"| {m['iter'] or '-'} | {m['date'] or '-'} | "
+                   f"[{entry_label(rec)}]({link_for(rec['path'])}) | {m['title']} |")
     out += ["", "## 二、核心成果", "", "## 三、最有价值的可复用发现", ""]
     out += ["## 四、遗留事项", ""]
     leaves = 0
-    for n in nums:
-        text = read(entries[n][0])
+    for rec in picked:
+        text = read(rec["path"])
         for line in text.splitlines():
             if re.match(r"^\s*-\s*\[ \]", line):
                 # 固定切 5 个字符会在 `-  [ ] x`（多一个空格）或裸 `- [ ]` 上切错，
                 # 用正则把复选框前缀整段吃掉。
                 item = re.sub(r"^\s*-\s*\[ \]\s*", "", line).strip()
-                out.append(f"- {item}（`wl/{n:04d}`）")
+                out.append(f"- {item}（`{entry_label(rec).lstrip('#')}`）")
                 leaves += 1
     if not leaves:
         out.append("- （区间内记录没有未完成项）")
@@ -2047,7 +2683,7 @@ def cmd_retro(args: argparse.Namespace) -> int:
     body = "\n".join(out)
     if args.out:
         write_raw(os.path.abspath(args.out), body)
-        print(f"wrote {args.out} ({len(nums)} entries, {leaves} open items)")
+        print(f"wrote {args.out} ({len(picked)} entries, {leaves} open items)")
     else:
         print(body)
     return 0
@@ -2069,18 +2705,19 @@ def _add_root(p: argparse.ArgumentParser) -> None:
     p.add_argument("root", nargs="?", default=".", help="项目根，默认当前目录")
 
 
-def _root_and_num(paths: list[str]) -> tuple[str, int]:
-    """支持 `show 42` 与 `show <root> 42` 两种写法。"""
+def _root_and_num(paths: list[str]) -> tuple[str, str]:
+    """支持 `show 42` 与 `show <root> 42` 两种写法。
+
+    返回的第二个值**保持字符串**：编号式给篇号（`42`），日期式给日期或文件名
+    （`2026-09-06` / `2026-09-06-门控两段式.md`）——两种身份都由 `_find_record` 解析。
+    """
     if len(paths) == 1:
-        root, num = ".", paths[0]
+        root, key = ".", paths[0]
     elif len(paths) == 2:
-        root, num = paths[0], paths[1]
+        root, key = paths[0], paths[1]
     else:
-        raise SystemExit("用法：[ROOT] NUM（例如 `show 42` 或 `show ./proj 42`）")
-    try:
-        return root, int(num)
-    except ValueError:
-        raise SystemExit(f"NUM 必须是篇号（整数），收到：{num!r}")
+        raise SystemExit("用法：[ROOT] KEY（例如 `show 42` 或 `show 2026-09-06` 或 `show ./proj 42`）")
+    return root, key
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2110,12 +2747,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stage", default=None, help="配合 --insert 指定阶段小节")
     p.add_argument("--dry-run", action="store_true")
 
-    p = add("check", lambda a: _run(Report(a.strict), lambda: check(os.path.abspath(a.root), a.journal, a.lessons, a.strict), a), "结构门禁")
+    p = add("check", lambda a: _run(Report(a.strict),
+                                    lambda: check(os.path.abspath(a.root), a.journal, a.lessons,
+                                                  a.strict, a.legacy), a), "结构门禁")
     p.add_argument("--strict", action="store_true", help="把 WARN 当 ERROR")
+    p.add_argument("--legacy", default=None, metavar="GLOB[,GLOB…]",
+                   help="旧记录清单（逗号分隔的 glob / 文件名 / 相对路径）；命中的记录只报 info。"
+                        "不给则读容器根的 LEGACY.md，再不给默认全库都算旧记录。"
+                        "传空串 `--legacy \"\"` 表示没有旧记录（全部按新格式判）")
     p.add_argument("--quiet", action="store_true")
 
-    p = add("lint", lambda a: _run(Report(a.strict), lambda: lint(os.path.abspath(a.root), a.journal, a.lessons, a.strict), a), "内容质量门禁")
+    p = add("lint", lambda a: _run(Report(a.strict),
+                                   lambda: lint(os.path.abspath(a.root), a.journal, a.lessons,
+                                                a.strict, a.legacy), a), "内容质量门禁")
     p.add_argument("--strict", action="store_true")
+    p.add_argument("--legacy", default=None, metavar="GLOB[,GLOB…]",
+                   help="同 check：旧记录清单（逗号分隔）；不给则读 LEGACY.md，再不给默认全库")
     p.add_argument("--quiet", action="store_true")
 
     p = add("brief", cmd_brief, "压缩上下文快照")
@@ -2124,10 +2771,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-todo", type=int, default=10)
     p.add_argument("--width", type=int, default=200, help="每行截断宽度（默认 200 字符）")
 
+    p = add("snapshot", cmd_snapshot, "最近 N 篇的入口元信息汇总（只读）")
+    p.add_argument("--entries", type=int, default=12, help="汇总最近多少篇（默认 12）")
+    p.add_argument("--width", type=int, default=200, help="每行截断宽度（默认 200 字符）")
+    p.add_argument("--out", default=None, help="写到文件（不给就只打印；容器本身永不改动）")
+
     p = add("outline", cmd_outline, "全部记录一行表")
 
     p = add("show", cmd_show, "单篇记录大纲", root=False)
-    p.add_argument("paths", nargs="+", metavar="[ROOT] NUM")
+    p.add_argument("paths", nargs="+", metavar="[ROOT] KEY",
+                   help="KEY 是篇号（`42`）或日期 / 文件名（`2026-09-06`）")
 
     p = add("search", cmd_search, "定向检索")
     p.add_argument("pattern")
@@ -2154,8 +2807,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default=None)
 
     p = add("retro", cmd_retro, "阶段复盘骨架")
-    p.add_argument("--from", dest="from_num", type=int, required=True)
-    p.add_argument("--to", dest="to_num", type=int, required=True)
+    p.add_argument("--from", dest="from_num", type=int, required=True, help="起始篇号（编号式）/ 起始日期前缀（日期式，如 20260901）")
+    p.add_argument("--to", dest="to_num", type=int, required=True, help="结束篇号（编号式）/ 结束日期前缀（日期式）")
     p.add_argument("--stage", default=None)
     p.add_argument("--out", default=None)
 
@@ -2231,7 +2884,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_ladd.set_defaults(func=cmd_lesson)
 
     p = add("append", cmd_append, "向记录追加小节", root=False)
-    p.add_argument("paths", nargs="+", metavar="[ROOT] NUM")
+    p.add_argument("paths", nargs="+", metavar="[ROOT] KEY",
+                   help="KEY 是篇号（`42`）或日期 / 文件名（`2026-09-06`）")
     p.add_argument("--section", required=True)
     p.add_argument("--text", required=True)
     p.add_argument("--bullet", action="store_true", help="每行自动加 `- ` 前缀")
@@ -2242,7 +2896,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _run(rep: Report, fn, args: argparse.Namespace) -> int:
     rep = fn()
+    n = rep.prune_legacy()
     rep.print(getattr(args, "quiet", False))
+    if n and not getattr(args, "quiet", False):
+        # 明说降级了几条，免得用户以为「旧记录的问题消失了」。
+        print(f"（其中 {n} 条按渐进原则降为 info：命中的是旧记录，见 commands.md「渐进原则」）")
     return 1 if rep.errors() else 0
 
 

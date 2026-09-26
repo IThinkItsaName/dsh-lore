@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import re
 import shutil
@@ -23,6 +24,19 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL = os.path.join(HERE, "journal.py")
+
+
+def _load_journal():
+    """把 journal.py 当模块载进来：自测要断言它自己的常量（如 `MODE_DEFAULT`），
+    而不是从输出里倒推——输出可能恰好和常量不一致。"""
+    spec = importlib.util.spec_from_file_location("journal_selftest_subject", TOOL)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+JOURNAL = _load_journal()
+MODE_DEFAULT_CONST = JOURNAL.MODE_DEFAULT
 
 # 夹具用的容器名：默认名，正是新布局要求的 `work_log/`。
 CONTAINER = "work_log"
@@ -649,7 +663,7 @@ def doc_phase(tmp: str) -> None:
     r = run(root, "check", "--quiet")
     ok(r.returncode == 0, "a ledger built from templates.md passes a plain check",
        r.stdout + r.stderr)
-    r = run(root, "check", "--strict", "--quiet")
+    r = run(root, "check", "--strict", "--quiet", "--legacy", "")
     ok(r.returncode == 0, "and also passes check --strict", r.stdout + r.stderr)
 
     # 骨架里日期还是 `YYYY-MM-DD` 占位符时，也必须过得了 --strict
@@ -660,7 +674,7 @@ def doc_phase(tmp: str) -> None:
     write(os.path.join(fresh, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
     write(os.path.join(fresh, CONTAINER, "lessons", "01-topic.md"),
           "# 01 · 起步约定\n\n来源：初始化时建立，等第一篇记录收口后回填。\n\n## 子主题\n\n- 暂无条目。\n")
-    r = run(fresh, "check", "--strict", "--quiet")
+    r = run(fresh, "check", "--strict", "--quiet", "--legacy", "")
     ok(r.returncode == 0, "a brand-new skeleton with the YYYY-MM-DD placeholder passes --strict",
        r.stdout + r.stderr)
 
@@ -683,14 +697,18 @@ def mode_phase(parent: str) -> None:
     lidx = os.path.join(legacy, CONTAINER, "README.md")
 
     r = run(legacy, "mode")
-    ok(r.returncode == 0 and r.stdout.startswith("session"),
-       "mode: a ledger without 精细度 reports the default session", r.stdout + r.stderr)
+    ok(r.returncode == 0 and r.stdout.startswith("full"),
+       "mode: a ledger without 精细度 reports the default full", r.stdout + r.stderr)
     ok("默认" in r.stdout, "mode: the report says the value is the default", r.stdout)
     ok("精细度" not in read(lidx), "mode (read-only) writes nothing to the ledger")
+    # 默认档是 `full`，不是 `session`：实测原型有 34 篇落在同一天，`session` 会把它们
+    # 并成一篇、埋掉 34 个可独立查阅的单元（见 references/analysis.md 与 worklog 规格书 §十一）。
+    ok(MODE_DEFAULT_CONST == "full", "MODE_DEFAULT is full (one entry = one deliverable unit)",
+       MODE_DEFAULT_CONST)
 
-    r = run(legacy, "check", "--strict", "--quiet")
+    r = run(legacy, "check", "--strict", "--quiet", "--legacy", "")
     ok(r.returncode == 0, "a ledger without 精细度 still passes check --strict", r.stdout + r.stderr)
-    r = run(legacy, "lint", "--strict", "--quiet")
+    r = run(legacy, "lint", "--strict", "--quiet", "--legacy", "")
     ok(r.returncode == 0, "a ledger without 精细度 still passes lint --strict", r.stdout + r.stderr)
 
     # 切换：写入 / 读回 / 原因 ---------------------------------------------
@@ -786,10 +804,10 @@ def mode_phase(parent: str) -> None:
         write(os.path.join(probe, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
         write(os.path.join(probe, CONTAINER, "lessons", "01-topic.md"),
               "# 01 · T\n\n来源：wl/0001。\n\n## 子主题\n\n- **s**：a。根因：b。做法：c。（`wl/0001`）\n")
-        r = run(probe, "check", "--quiet")
-        ok("缺「验证」小节" in r.stdout,
+        r = run(probe, "check", "--quiet", "--legacy", "")
+        ok("缺验证类小节" in r.stdout,
            f"verify section is still required at mode={value}", r.stdout + r.stderr)
-        r = run(probe, "check", "--strict", "--quiet")
+        r = run(probe, "check", "--strict", "--quiet", "--legacy", "")
         ok(r.returncode != 0, f"and it still fails --strict at mode={value}", r.stdout + r.stderr)
 
     # ---- 粗档位的额外义务：写明「未记录」什么 ----------------------------
@@ -848,6 +866,393 @@ def mode_phase(parent: str) -> None:
         if m:
             ok(m.group(1) in ("full", "session", "digest", "milestone"),
                "templates.md: the template's 精细度 value is one of the four modes", m.group(1))
+
+
+# ---- 格式放宽与两种命名（本次规格改动的回归）-------------------------------
+# 两种命名实测并存：编号式 237 篇（原型 + comfy）、日期式 71 篇（embeding try）。
+# 这里每条断言都对应规格里的一条改动；夹具刻意做小，但**形状**取自真实语料。
+FMT_DATE_INDEX = """# D
+
+## 文件索引
+
+### A. 起步
+
+| 文件 | 方面 |
+|---|---|
+| [2026-09-02-迷你transformer实验.md](2026-09-02-迷你transformer实验.md) | 实验 |
+| [2026-09-06-R21-slot悬崖机制.md](2026-09-06-R21-slot悬崖机制.md) | 机制 |
+
+## 待办（滚动清单）
+
+- [ ] x
+
+## 当前状态（2026-09-06）
+
+- 阶段 / 版本：v1
+- 精细度：full
+"""
+
+# 日期式：日期在文件名与 H1 里，**没有** `日期：` 入口行，小节结构也是自由的。
+FMT_DATE_ENTRY = """# 2026-09-02 迷你 transformer 实验
+
+## 0. 总览
+
+手写注意力，对照基线。
+
+## 评测设置
+
+`mini_bert.py --variant 2`，4×256×8，MLM 10k。
+
+## 结果
+
+| 项 | ρ |
+|---|---|
+| 门控 | 0.4973 |
+| 双通路 | 0.5093 |
+"""
+
+# 日期式 + 行内实验号（`R21：`），H1 日期必须与文件名一致。
+FMT_DATE_TAG_ENTRY = """# 2026-09-06 R21：`slot` 悬崖的机制
+
+> 状态：**已完成**。两轮：6000 步筛 + 20000 步定论。
+> 工具：`code/diag_slot_cliff.py`
+> 产物：`exp/exp-sloteta-budget-*.json`
+
+## 判定
+
+ρ 从 0.4973 → 0.5093（+0.012），结论成立。
+"""
+
+# 自由结构 + **没有** `变更集` 字段：两者都不该报错。
+FMT_FREE_ENTRY = """# 0002 · 自由结构的一篇
+
+日期：2026-09-03
+触发：selftest
+范围：none
+结论：3 组对照全部通过
+
+## 我自己的第一节
+
+随内容长出来的结构，没有模板。
+
+## 复核
+
+- 方式：`true`
+- 结果：3 passed
+"""
+
+# 只有设置、没有结果的验证小节——规格 §十一 待确认项 1 的漏判，本次要报出来。
+FMT_THIN_ENTRY = """# 0003 · 只有设置
+
+日期：2026-09-04
+触发：selftest
+范围：none
+结论：见正文
+
+## 评测设置
+
+本次用 `mini_bert.py --variant 2` 跑一遍。
+"""
+
+# 编号式记录**完全没有日期**：文件名没有、H1 没有、入口行也没有 → 真该报缺日期。
+FMT_NODATE_ENTRY = """# 0004 · 没有日期
+
+迭代：4
+结论：1 项通过
+
+## 验证
+
+- 方式：`true`
+- 结果：1 passed
+"""
+
+# 台账**没有** `## 当前状态` 块（实测五条线里四条如此，第五条也没有状态块）。
+FMT_NOSTATUS_INDEX = """# N
+
+## 文件索引
+
+### A. 起步
+
+| 文件 | 方面 |
+|---|---|
+| [2026-09-02-迷你transformer实验.md](2026-09-02-迷你transformer实验.md) | 实验 |
+
+## 待办（滚动清单）
+
+- [ ] x
+"""
+
+FMT_NOENTRY_ENTRY = """# 2026-09-05 没有入口元信息块
+
+## 结果
+
+3 组对照全部通过（见 `exp/a.json`）。
+"""
+
+
+def fmt_ledger(files: list[str], status: str = "2026-09-06") -> str:
+    """按**实际存在的文件**生成一份自洽的台账（索引行 + 状态块）。
+
+    夹具里最容易犯的错是「索引列了一个不存在的文件」——那会判成死链，把用例
+    要测的东西盖掉。所以索引行由这一个函数统一生成，不手写。
+    """
+    nl = "\n"
+    rows = "".join(f"| [{f}]({f}) | 说明 |{nl}" for f in files)
+    head = (f"# D{nl}{nl}## 文件索引{nl}{nl}### A. 起步{nl}{nl}"
+            f"| 文件 | 方面 |{nl}|---|---|{nl}{rows}{nl}"
+            f"## 待办（滚动清单）{nl}{nl}- [ ] x{nl}")
+    if not status:
+        return head
+    return head + f"{nl}## 当前状态（{status}）{nl}{nl}- 阶段 / 版本：v1{nl}- 精细度：full{nl}"
+
+
+def format_phase(parent: str) -> None:
+    """两种命名 + 放宽后的格式 + 实质验证 + 渐进原则 + `snapshot`。
+
+    这一节把规格里那十条改动逐条钉住，尤其是那条**假错误**：
+    日期式文件名曾被 `^(\\d+)-` 半解析成「编号 2026」，于是同一容器里
+    11 个日期式文件互相重号、报出「编号 2026 重复」。
+    """
+    root = os.path.join(parent, "fmt")
+    os.makedirs(os.path.join(root, CONTAINER, "lessons"))
+    write(os.path.join(root, CONTAINER, "README.md"), FMT_DATE_INDEX)
+    write(os.path.join(root, CONTAINER, "2026-09-02-迷你transformer实验.md"), FMT_DATE_ENTRY)
+    write(os.path.join(root, CONTAINER, "2026-09-06-R21-slot悬崖机制.md"), FMT_DATE_TAG_ENTRY)
+    write(os.path.join(root, CONTAINER, "0002-自由结构.md"), FMT_FREE_ENTRY)
+    write(os.path.join(root, CONTAINER, "0003-只有设置.md"), FMT_THIN_ENTRY)
+    write(os.path.join(root, CONTAINER, "0004-没有日期.md"), FMT_NODATE_ENTRY)
+    write(os.path.join(root, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
+    write(os.path.join(root, CONTAINER, "lessons", "01-topic.md"),
+          "# 01 · T\n\n来源：wl/0002。\n\n## 子主题\n\n- **s**：a。根因：b。做法：c。（`wl/0002`）\n")
+    ipath = os.path.join(root, CONTAINER, "README.md")
+
+    # 1) 两种命名都被认出来 -------------------------------------------------
+    # 第一列：纯编号容器是 4 字符，出现日期式就展宽到 10（`2026-09-02` 的长度）。
+    r = run(root, "outline")
+    ok(re.search(r"^2026-09-02\t2026-09-02\t", r.stdout, re.M) is not None,
+       "a date-named file is recognised as a record (date style)", r.stdout)
+    ok(re.search(r"^0002\s+\t", r.stdout, re.M) is not None,
+       "a numbered file is still recognised (numbered style)", r.stdout)
+    ok(re.search(r"^2026-09-06\t2026-09-06\tR21\t", r.stdout, re.M) is not None,
+       "an inline experiment id (R21) becomes the iteration tag, date stays the identity", r.stdout)
+    r = run(root, "stats")
+    ok("编号式 3 篇 / 日期式 2 篇" in r.stdout,
+       "stats counts both naming styles separately", r.stdout)
+    # 日期式容器同一天有多篇（实测一天 18 篇）：合规率必须按**篇**数，不能被同一天的
+    # 记录互相覆盖（曾经按身份做键，11 篇只数成 4 篇）。
+    r = run(root, "stats")
+    ok("编号式 3 篇 / 日期式 2 篇" in r.stdout,
+       "stats counts both naming styles separately", r.stdout)
+    # 日期式容器同一天有多篇（实测一天 18 篇）：合规率必须按**篇**数，不能被同一天的
+    # 记录互相覆盖（曾经按身份做键，11 篇只数成 4 篇）。
+    sameday = os.path.join(parent, "fmtsameday")
+    os.makedirs(os.path.join(sameday, CONTAINER))
+    files = ["2026-09-01-alpha.md", "2026-09-01-beta.md", "2026-09-01-gamma.md"]
+    write(os.path.join(sameday, CONTAINER, "README.md"), fmt_ledger(files, status="2026-09-01"))
+    for f in files:
+        write(os.path.join(sameday, CONTAINER, f),
+              f"# 2026-09-01 {f[11:-3]}\n\n## 结果\n\n| 项 | ρ |\n|---|---|\n| A | 0.4973 |\n")
+    r = run(sameday, "stats")
+    ok("日期 3/3" in r.stdout and "验证 3/3" in r.stdout,
+       "stats counts every record on the same day, not one per day", r.stdout)
+    ok("entries     : 3" in r.stdout and "3 dated" in r.stdout,
+       "stats counts 3 entries on one day", r.stdout)
+    # 纯编号容器：第一列保持 4 字符（老输出与老脚本按这个对齐）。
+    numbered = os.path.join(parent, "fmtnumbered")
+    os.makedirs(os.path.join(numbered, CONTAINER))
+    write(os.path.join(numbered, CONTAINER, "README.md"), CANON_INDEX)
+    write(os.path.join(numbered, CONTAINER, "0002-自由结构.md"), FMT_FREE_ENTRY)
+    r = run(numbered, "outline")
+    ok(re.search(r"^0002\t2026-09-03\t", r.stdout, re.M) is not None,
+       "a numbered-only container keeps the 4-char first column", r.stdout)
+
+    # 2) 日期式文件不被半解析成「编号 2026」（本次要修的假错误）--------------
+    r = run(root, "check", "--quiet", "--legacy", "")
+    ok("编号 2026 重复" not in r.stdout and "编号 2026 重复" not in r.stderr,
+       "a date-named file is NOT misparsed as record number 2026", r.stdout + r.stderr)
+    ok("编号重复" not in r.stdout, "no bogus duplicate-number error at all", r.stdout)
+    ok("编号断档" not in r.stdout,
+       "date-style files do not create bogus numbering gaps either", r.stdout)
+
+    # 3) H1 必须与文件名一致（两种形制各自的口径）--------------------------
+    bad = os.path.join(parent, "fmtbad")
+    os.makedirs(os.path.join(bad, CONTAINER))
+    write(os.path.join(bad, CONTAINER, "README.md"), FMT_DATE_INDEX)
+    write(os.path.join(bad, CONTAINER, "2026-09-02-迷你transformer实验.md"),
+          FMT_DATE_ENTRY.replace("# 2026-09-02 ", "# 2026-09-09 "))
+    r = run(bad, "check", "--quiet", "--legacy", "")
+    ok("标题日期 2026-09-09 与文件名 2026-09-02 不一致" in r.stdout,
+       "a date-style H1 that disagrees with its filename is an ERROR", r.stdout)
+    ok(r.returncode != 0, "and it fails the gate", r.stdout)
+    bad2 = os.path.join(parent, "fmtbad2")
+    os.makedirs(os.path.join(bad2, CONTAINER))
+    write(os.path.join(bad2, CONTAINER, "README.md"), FMT_DATE_INDEX)
+    write(os.path.join(bad2, CONTAINER, "0007-x.md"), "# 0008 · 编号不对\n\n日期：2026-09-02\n\n## 验证\n\n- 结果：1 passed\n")
+    r = run(bad2, "check", "--quiet", "--legacy", "")
+    ok("标题篇号 0008 与文件名 7 不一致" in r.stdout,
+       "a numbered H1 that disagrees with its filename is an ERROR", r.stdout)
+    # 4) 一个容器里两种命名混用：允许，但要提示 -----------------------------
+    r = run(root, "check", "--legacy", "")
+    ok("[INFO]" in r.stdout and "两种命名混用" in r.stdout,
+       "mixing both styles is allowed, and only reported as info", r.stdout)
+
+    # 5) `日期：` 字段在日期式里可以没有；真正没有日期才报 -------------------
+    ok("迷你transformer实验.md: 缺" not in r.stdout,
+       "a date-style entry with no 日期： line is not flagged as missing a date", r.stdout)
+    ok("缺 `日期：YYYY-MM-DD` 入口行" in r.stdout and "0004-没有日期.md" in r.stdout,
+       "an entry with no date anywhere IS flagged", r.stdout)
+
+    # 6) 自由小节结构被接受（没有六段式也不报错）----------------------------
+    ok("缺验证类小节" not in r.stdout or "0002-自由结构.md" not in r.stdout,
+       "free section structure is accepted; only the verification section is required", r.stdout)
+
+    # 7) 验证小节要**实质**内容：只有设置不算 ---------------------------------
+    ok("0003-只有设置.md" in r.stdout and "验证小节" in r.stdout,
+       "a setup-only verification section is reported", r.stdout)
+    r1 = run(root, "check", "--quiet", "--legacy", "")
+    ok(r1.returncode == 0,
+       "and by default it is a WARN, not an ERROR (advisory heuristic)", r1.stdout)
+    r2 = run(root, "check", "--quiet", "--strict", "--legacy", "")
+    ok(r2.returncode != 0, "under --strict the same finding becomes an ERROR", r2.stdout)
+    # 有数字有表格的验证小节不该被误报：报的是「验证小节 `…` 只有…」，
+    # 而不是这一篇本身另有问题。
+    ok("验证小节" not in r2.stdout or "迷你transformer实验.md: 验证小节" not in r2.stdout,
+       "a table-with-numbers verification section is not flagged", r2.stdout)
+
+    # 8) `变更集` 缺省不算错（它只是迭代字段的一个别名，实测 146/162 篇写「无」）--
+    ok("变更集" not in r.stdout or "0002-自由结构.md" not in r.stdout,
+       "a record without any 变更集 field is not an error", r.stdout)
+    r = run(root, "show", "0002-自由结构.md")
+    ok(r.returncode == 0 and "迭代" in r.stdout, "show accepts a filename as the key", r.stdout)
+
+    # 9) 台账没有 `## 当前状态` 块：只报 info，不报错 ------------------------
+    ns = os.path.join(parent, "fmtnostatus")
+    os.makedirs(os.path.join(ns, CONTAINER))
+    write(os.path.join(ns, CONTAINER, "README.md"), FMT_NOSTATUS_INDEX)
+    write(os.path.join(ns, CONTAINER, "2026-09-02-迷你transformer实验.md"), FMT_DATE_ENTRY)
+    # 不要加 `--quiet`：这条断言要看的正是 INFO 行本身。
+    r = run(ns, "check", "--legacy", "")
+    ok(r.returncode == 0, "a ledger without a status block passes the gate", r.stdout + r.stderr)
+    ok("[INFO]" in r.stdout and "没有 `## 当前状态` 块" in r.stdout,
+       "and it is reported as info, not as an error", r.stdout)
+    r = run(ns, "check", "--strict", "--legacy", "")
+    ok(r.returncode == 0, "even --strict keeps the missing status block non-fatal", r.stdout)
+    # 有状态块的容器照旧校验新鲜度（两种形态都过得去）。
+    stale = os.path.join(parent, "fmtstale")
+    os.makedirs(os.path.join(stale, CONTAINER))
+    write(os.path.join(stale, CONTAINER, "README.md"),
+          fmt_ledger(["2026-09-02-迷你transformer实验.md"], status="2026-01-01"))
+    write(os.path.join(stale, CONTAINER, "2026-09-02-迷你transformer实验.md"), FMT_DATE_ENTRY)
+    r = run(stale, "check", "--legacy", "")
+    ok("早于最新记录" in r.stdout,
+       "a present status block is still checked for freshness", r.stdout)
+    # 10) 渐进原则：旧记录只报 info，新记录照报 error ------------------------
+    # `--legacy` 的显式清单与规模兜底要分开测：这里先**关掉兜底**（给显式清单），
+    # 把"清单怎么生效"单独钉住，规模兜底在第 10b 组。
+    lg = os.path.join(parent, "fmtlegacy")
+    os.makedirs(os.path.join(lg, CONTAINER))
+    write(os.path.join(lg, CONTAINER, "README.md"),
+          fmt_ledger(["2026-09-02-迷你transformer实验.md", "0003-只有设置.md"]))
+    write(os.path.join(lg, CONTAINER, "2026-09-02-迷你transformer实验.md"), FMT_DATE_ENTRY)
+    write(os.path.join(lg, CONTAINER, "0003-只有设置.md"), FMT_THIN_ENTRY)
+    r = run(lg, "check", "--strict", "--quiet", "--legacy", "")
+    ok(r.returncode != 0, "with no legacy declared, a new record's finding is an ERROR", r.stdout)
+    r = run(lg, "check", "--strict", "--legacy", "**")
+    ok(r.returncode == 0, "an explicit list covering everything turns old-format findings into info",
+       r.stdout)
+    ok("[INFO]" in r.stdout and "0003-只有设置.md" in r.stdout,
+       "the finding is still visible, just downgraded", r.stdout)
+    r = run(lg, "check", "--strict", "--quiet", "--legacy", "0003-*")
+    ok(r.returncode == 0, "--legacy accepts a glob", r.stdout)
+    r = run(lg, "check", "--strict", "--legacy", "2026-*")
+    ok(r.returncode != 0, "a glob that does not match leaves the finding an ERROR", r.stdout)
+    # 规模兜底：记录还少 ⇒ 当新项目（照报 error）；记录已多 ⇒ 整批当旧记录（只报 info）。
+    ok(JOURNAL.LEGACY_AUTO_MIN_RECORDS == 5, "the auto fallback threshold is 5 records",
+       str(JOURNAL.LEGACY_AUTO_MIN_RECORDS))
+    small = os.path.join(parent, "fmtsmall")
+    os.makedirs(os.path.join(small, CONTAINER))
+    write(os.path.join(small, CONTAINER, "README.md"), fmt_ledger(["0003-只有设置.md"]))
+    write(os.path.join(small, CONTAINER, "0003-只有设置.md"), FMT_THIN_ENTRY)
+    r = run(small, "check", "--strict", "--quiet")
+    ok(r.returncode != 0,
+       "a small container (looks new) reports the finding as an ERROR", r.stdout)
+    big = os.path.join(parent, "fmtbig")
+    os.makedirs(os.path.join(big, CONTAINER))
+    names = [f"000{i}-x.md" for i in range(1, 6)] + ["0006-只有设置.md"]
+    write(os.path.join(big, CONTAINER, "README.md"), fmt_ledger(names))
+    for f in [f"000{i}-x.md" for i in range(1, 6)]:
+        write(os.path.join(big, CONTAINER, f),
+              f"# {f[:4]} · X\n\n日期：2026-09-01\n\n## 验证\n\n- 结果：1 passed\n")
+    write(os.path.join(big, CONTAINER, "0006-只有设置.md"),
+          FMT_THIN_ENTRY.replace("# 0003 · ", "# 0006 · "))
+    r = run(big, "check", "--strict", "--quiet")
+    ok(r.returncode == 0,
+       "a container past the threshold (looks established) only reports info", r.stdout)
+    r = run(big, "check", "--strict", "--legacy", "")
+    ok(r.returncode != 0, "--legacy \"\" overrides the fallback: everything is judged as new",
+       r.stdout)
+    # 死链从来就有，**不**受渐进原则影响：旧记录也得照报。
+    dl = os.path.join(parent, "fmtdead")
+    os.makedirs(os.path.join(dl, CONTAINER))
+    write(os.path.join(dl, CONTAINER, "README.md"),
+          fmt_ledger(["2026-09-02-迷你transformer实验.md"]))
+    write(os.path.join(dl, CONTAINER, "2026-09-02-迷你transformer实验.md"),
+          FMT_DATE_ENTRY + "\n见 [没了](no-such-file.md)。\n")
+    r = run(dl, "check")
+    ok(r.returncode != 0 and "死链" in r.stdout,
+       "a dead link stays an ERROR even under the default opt-in list", r.stdout)
+
+    # 11) `LEGACY.md`：显式声明文件（跟着容器进版本控制，团队共用）-----------
+    dec = os.path.join(parent, "fmtdecl")
+    os.makedirs(os.path.join(dec, CONTAINER))
+    write(os.path.join(dec, CONTAINER, "README.md"),
+          fmt_ledger(["2026-09-02-迷你transformer实验.md", "0003-只有设置.md"]))
+    write(os.path.join(dec, CONTAINER, "2026-09-02-迷你transformer实验.md"), FMT_DATE_ENTRY)
+    write(os.path.join(dec, CONTAINER, "0003-只有设置.md"), FMT_THIN_ENTRY)
+    write(os.path.join(dec, CONTAINER, "LEGACY.md"), "# 旧记录\n\n- 0003-*\n")
+    r = run(dec, "check", "--strict", "--quiet")
+    ok(r.returncode == 0,
+       "a container-root LEGACY.md narrows the opt-in list (unlisted records are new)", r.stdout)
+    write(os.path.join(dec, CONTAINER, "LEGACY.md"), "# 旧记录\n\n- 2026-*\n")
+    r = run(dec, "check", "--strict", "--quiet")
+    ok(r.returncode != 0,
+       "the declaration is actually read: listing the other record flips the verdict", r.stdout)
+
+    # 12) `snapshot`：只读汇总最近 N 篇的入口元信息，缺入口块也不失败 --------
+    snap = os.path.join(parent, "fmtsnap")
+    os.makedirs(os.path.join(snap, CONTAINER))
+    # 纯编号的 `0001` 日期最老，`--entries 2` 时它应该被排除在外。
+    write(os.path.join(snap, CONTAINER, "README.md"),
+          fmt_ledger(["2026-09-02-迷你transformer实验.md", "2026-09-05-没有入口块.md",
+                      "0001-自由结构.md"]))
+    write(os.path.join(snap, CONTAINER, "2026-09-02-迷你transformer实验.md"), FMT_DATE_ENTRY)
+    write(os.path.join(snap, CONTAINER, "2026-09-05-没有入口块.md"), FMT_NOENTRY_ENTRY)
+    write(os.path.join(snap, CONTAINER, "0001-自由结构.md"),
+          FMT_FREE_ENTRY.replace("# 0002 · ", "# 0001 · ").replace("日期：2026-09-03", "日期：2026-09-01"))
+    before_state = sorted((f, read(os.path.join(snap, CONTAINER, f)))
+                          for f in os.listdir(os.path.join(snap, CONTAINER)))
+    r = run(snap, "snapshot", "--entries", "9")
+    ok(r.returncode == 0, "snapshot exits 0", r.stdout + r.stderr)
+    ok("SNAPSHOT" in r.stdout, "snapshot prints a header", r.stdout)
+    ok("没有入口元信息块" in r.stdout,
+       "a record with no entry block does not fail the command", r.stdout)
+    ok("日期：2026-09-01" in r.stdout and "结论：3 组对照全部通过" in r.stdout,
+       "the field-line style entry block is aggregated", r.stdout)
+    after_state = sorted((f, read(os.path.join(snap, CONTAINER, f)))
+                         for f in os.listdir(os.path.join(snap, CONTAINER)))
+    ok(before_state == after_state, "snapshot is READ-ONLY: it changed no file in the container")
+    r = run(snap, "snapshot", "--entries", "2")
+    ok("2026-09-05-没有入口块.md" in r.stdout and "2026-09-02-迷你transformer实验.md" in r.stdout
+       and "自由结构" not in r.stdout,
+       "snapshot honours --entries over the newest records", r.stdout)
+    r = run(snap, "snapshot", "--entries", "9", "--out", os.path.join(snap, "SNAP.md"))
+    ok(r.returncode == 0 and os.path.exists(os.path.join(snap, "SNAP.md")),
+       "snapshot --out writes where it is told", r.stdout)
+
+    # 13) 日期式容器里 `mode` 照常读默认档 -----------------------------------
+    r = run(root, "mode")
+    ok(r.returncode == 0 and r.stdout.startswith("full"),
+       "mode reads the default full on a date-style container", r.stdout)
 
 
 def main() -> int:
@@ -1060,6 +1465,9 @@ def main() -> int:
 
         # 记录精细度（默认档 / 切换 / 验证不变量 / 老台账不受影响）------------
         mode_phase(tmp)
+
+        # 两种命名 + 放宽后的格式 + 实质验证 + 渐进原则 + snapshot -------------
+        format_phase(tmp)
 
         # CRLF fidelity ----------------------------------------------------
         index_path = os.path.join(tmp, CONTAINER, "README.md")

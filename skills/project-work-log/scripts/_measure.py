@@ -19,14 +19,20 @@ import os
 import re
 
 DATE_KEYS = ("日期", "Date")
+# 与 journal.py 的 L_VERIFY 保持一致：`实验 / 判定 / 评测` 是给研究类项目的。
 VERIFY_WORDS = ("验证", "实测", "复核", "检查", "审查", "评审", "结果", "证据", "评估", "确认",
+                "实验", "判定", "评测",
                 "Verification", "Review", "Results", "Evidence", "Tests")
 STATUS_KEYS = ("当前状态", "Status", "Current Status")
 HISTORY_KEYS = ("历史状态", "Status History")
+# 两种记录命名（与 journal.py 一致）：编号式 `NNN-slug.md` / 日期式 `YYYY-MM-DD-slug.md`。
+# 顺序重要：日期式必须先判，否则 `^(\d+)-` 会把 `2026-09-02-x.md` 认成「编号 2026」。
+DATE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$", re.I)
+NUM_NAME_RE = re.compile(r"^(?:\d{1,4}(?:-[^/\\]*)?)\.md$", re.I)
 # 台账 `## 当前状态` 里的记录精细度字段（mode 命令写入）。规范值只有四个；
-# 老台账没有这一栏是正常的，按默认档 `session` 报。
+# 老台账没有这一栏是正常的，按默认档 `full` 报。
 MODE_FIELD = "精细度"
-MODE_DEFAULT = "session"
+MODE_DEFAULT = "full"
 MODE_VALUES = ("full", "session", "digest", "milestone")
 
 # 与 journal.py 保持一致：默认容器名 + 旧名回退顺序。
@@ -112,34 +118,52 @@ def main() -> int:
             yield dp, fn
 
     nums: dict[int, list[str]] = {}
+    dated: list[str] = []
     for dp, fn in walk_records(wl):
         for f in fn:
-            m = re.match(r"^(\d+)(?:-.*)?\.md$", f)
+            path = os.path.join(dp, f)
+            if DATE_NAME_RE.match(f):
+                dated.append(os.path.relpath(path, root).replace(os.sep, "/"))
+                continue
+            m = re.match(r"^(\d{1,4})(?:-.*)?\.md$", f)
             if m:
                 nums.setdefault(int(m.group(1)), []).append(
-                    os.path.relpath(os.path.join(dp, f), root).replace(os.sep, "/"))
+                    os.path.relpath(path, root).replace(os.sep, "/"))
     ks = sorted(nums)
     index = os.path.join(wl, "README.md")
     idx = read_text(index) if os.path.isfile(index) else ""
     # 精细度先报：它和「有没有记录」无关，早退的分支也要看得到。
     if idx:
         print(mode_line(idx))
-    if not ks:
-        print("没有找到编号记录。")
+    print(f"naming: 编号式 {len(ks)} 篇 / 日期式 {len(dated)} 篇"
+          + ("（两种混用）" if ks and dated else ""))
+    if dated:
+        ds = sorted(os.path.basename(d)[:10] for d in dated)
+        print("dated range:", ds[0], "-", ds[-1])
+        by_day: collections.Counter[str] = collections.Counter(ds)
+        top = by_day.most_common(3)
+        print("dated per day (top):", ", ".join(f"{d}:{c}" for d, c in top))
+        print("date-part missing:", sum(1 for d in dated if not DATE_NAME_RE.match(os.path.basename(d))))
+    if not ks and not dated:
+        print("没有找到记录（编号式或日期式）。")
         return 0
-    print("entries:", len(ks), "range", ks[0], "-", ks[-1])
-    print("duplicate numbers:", {k: v for k, v in nums.items() if len(v) > 1})
-    print("gaps:", [n for n in range(ks[0], ks[-1] + 1) if n not in nums])
+    if ks:
+        print("entries:", len(ks), "range", ks[0], "-", ks[-1])
+        print("duplicate numbers:", {k: v for k, v in nums.items() if len(v) > 1})
+        print("gaps:", [n for n in range(ks[0], ks[-1] + 1) if n not in nums])
 
     files = [f for f in glob.glob(os.path.join(wl, "*.md"))
-             if re.match(r"^\d+(?:-.*)?$", os.path.basename(f))]
-    print("root entries:", len(files))
+             if NUM_NAME_RE.match(os.path.basename(f)) and not DATE_NAME_RE.match(os.path.basename(f))]
+    dated_root = [f for f in glob.glob(os.path.join(wl, "*.md"))
+                  if DATE_NAME_RE.match(os.path.basename(f))]
+    print("root entries:", len(files), "+ dated", len(dated_root))
     with_date = with_sec = with_ver = 0
-    for f in files:
+    for f in files + dated_root:
         t = read_text(f)
         with_date += bool(re.search(rf"^(?:{_any(DATE_KEYS)})[：:]", t, re.M))
         with_sec += bool(re.search(r"^##\s", t, re.M))
-        with_ver += bool(re.search(rf"^##.*(?:{_any(VERIFY_WORDS)})", t, re.M))
+        # 标题级别 h2–h4 都算（与 journal.py 的 VERIFY_HEAD_RE 一致）。
+        with_ver += bool(re.search(rf"^#{{2,4}}\s*.*(?:{_any(VERIFY_WORDS)})", t, re.M))
     print("with date:", with_date, "with ## section:", with_sec, "with verify section:", with_ver)
 
     index = os.path.join(wl, "README.md")
@@ -173,7 +197,7 @@ def main() -> int:
     titled = 0
     for dp, fn in walk_records(wl):
         for f in fn:
-            if not re.match(r"^\d+(?:-.*)?\.md$", f):
+            if not NUM_NAME_RE.match(f) or DATE_NAME_RE.match(f):
                 continue
             head = re.search(r"^#\s+(.+)$", read_text(os.path.join(dp, f)), re.M)
             if head and re.search(r"(?:变更集|批次|迭代|阶段|版本|里程碑)\s*\d", head.group(1)):

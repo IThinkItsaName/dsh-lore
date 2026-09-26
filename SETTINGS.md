@@ -13,8 +13,10 @@
 | **插件设置页** | 插件自身的装载行为 | `<DSH_HOME>/worklog/settings.json` | 需重启 DSH |
 | **项目配置文件** | `journal.py` 的行为 | `<容器>/.config.json` | 立即生效 |
 
-唯一的例外是 `mode` 的"默认档"，靠语义而不是靠两处都读来避免冲突：
-设置页里的 `mode` 只是"**新项目**初始化的默认档"，`journal.py` **始终只读项目文件**。
+**这条规则现在是硬边界，没有例外。** 设置页曾经收集三个项目侧默认值
+（`container` / `lessons` / `mode`）并给它们标上「插件不读」；那一组已经整个撤掉 ——
+见下面的「项目侧默认值：存着，但不提供控件」。文档里仍留着这套键的名字，
+是因为节点半边仍然存它们、也仍然在路由里回报它们。
 
 ## 装/改之后要**硬刷新页面**
 
@@ -64,6 +66,8 @@
 
 插件行配置（`cordis.patch.yml` 的 `config`）与设置文件共用同一套键名。
 `skillFile` 只能在行配置里给：设置页没有它的控件，保存也不会把它删掉。
+表里其余每个键在设置页上都有控件 —— `verbose` / `modelInvocable` / `userInvocable`
+在「其他」页，另外四个在「技能」页。
 
 | 键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -76,11 +80,29 @@
 | `guidelinesDir` | string | `skills/reliability-guidelines` | 准则技能目录，解析规则同 `skillDir`。 |
 | `guidelinesLanguage` | `'zh'` / `'en'` | `'zh'` | 只影响准则那一份技能；`project-work-log` 本身固定是中文。 |
 
-设置页还收集三个**项目侧默认值** —— `container`（`work_log`）、
-`lessons`（`lessons`）、`mode`（`full`）。它们存在同一个设置文件里，但插件**不读**：
-它们是"新项目该叫什么、该用哪档"的初始值，由项目初始化写进
-`<容器>/.config.json`，之后以项目文件为准。**已经在跑的项目不会被追溯改变**，
-`journal.py` 也不会去问插件。
+设置页还收集过三个**项目侧默认值** —— `container`（`work_log`）、
+`lessons`（`lessons`）、`mode`（`full`）。**它们仍然存在设置文件里、路由也仍然回报
+它们，但设置页不再为它们提供控件** —— 见下一节。
+
+## 项目侧默认值：存着，但不提供控件
+
+`container` / `lessons` / `mode` 是**项目级**设置：它们描述的是某个项目自己的
+`<容器>/.config.json`，那个文件由 `journal.py` 读、由 `journal.py config` 改。
+
+- **仍然存着**：三个键留在插件设置文件里（`knownSettingsKeys()` 里仍然校验它们），
+  路由的 `GET` / `POST` 响应里也仍然有 `projectDefaults`，带
+  `appliedByPlugin: false`，与 `effective`（插件真正读的键）分开报告。
+  这样任何读这层接口的人都无法把它们当成"插件会这么做"。
+- **不再提供控件**：设置页既不显示它们，也不把它们发回服务端（请求体只有七个
+  装载键）。路由按补丁合并（`sanitizeSettings` 把请求体并进磁盘上的文档），
+  所以文件里已有的值原样保留，一次保存不会抹掉它们。
+- **为什么不提供**：它们归项目的 `.config.json` 管。让插件设置页也能改同一件事，
+  正是上面那条「两个设置面不许管同一件事」要避免的。曾经的做法是显示它们、
+  标一句「插件不读」—— 那仍然是把项目级的东西摆在插件设置页上。
+- **已经在跑的项目不会被追溯改变**：`journal.py` 始终只读项目文件，不去问插件。
+
+设置页底部留了一句兼容性说明，把这些键指到 `journal.py config`，但页面上没有
+任何控件与它们对应（`tests/audit-client-runtime.mjs` 按结构断言这一点）。
 
 ## 设置页
 
@@ -92,9 +114,27 @@
 GET  /plugins/dsh-worklog/settings.json   读；回报三组东西：`settings`（磁盘上的文档）、
                                           `effective`（插件真正读取的键）、
                                           `projectDefaults`（只存不读的项目默认值，
-                                          带 `appliedByPlugin: false`）
+                                          带 `appliedByPlugin: false`；页面**忽略**它）
 POST /plugins/dsh-worklog/settings.json   写；整份表单，逐字段校验，返回同一组字段
 ```
+
+### 两个分页：技能 / 其他
+
+界面用宿主的 `SegmentedTabs`（`@deepseek-ai/dsh-client-ui-primitives`）分两页，
+默认停在「技能」。它**只渲染标签栏，面板由页面自己给** —— 所以面板那边自己带
+`role="tabpanel"`、自己的 `id`，以及指回对应标签页的 `aria-labelledby`；
+一次只渲染被选中的那一个。
+
+| 分页 | 装什么 |
+|---|---|
+| **技能** | `guidelinesEnabled`（开关）、`guidelinesLanguage`（中文 / English 分段控件），以及收在「路径」折叠区里的 `skillDir` 与 `guidelinesDir` |
+| **其他** | `verbose`、`modelInvocable`、`userInvocable` —— 三个开关 |
+
+后三个键一直由 `effectiveSettings()` 读取，但在此之前设置页**没有任何控件**能设它们；
+现在每个都配了一句说明。
+
+「路径」用 `DisclosureRow`（默认收起）：两个技能目录是装载参数，只是不常改。
+收起时那两行**不在 DOM 里**（该组件只在 `open` 时渲染 children）。
 
 中文文案是完整的；英文词典也已就位（键集与中文一致，
 `tests/audit-client.mjs` 会核对）。

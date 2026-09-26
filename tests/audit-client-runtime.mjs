@@ -14,8 +14,16 @@
 //      registration shape the settings shell reads (`settings.section`,
 //      id, label thunk, locale namespace);
 //   4. it MOUNTS the panel component with a minimal React hook runtime and a
-//      stubbed `fetch`, then clicks the Switch and types into an Input to prove
-//      the load → change → POST → re-read loop actually closes.
+//      stubbed `fetch`, then clicks the Switch, switches tabs, expands the
+//      disclosure and types into an Input to prove the load → change → POST →
+//      re-read loop actually closes;
+//   5. it asserts STRUCTURALLY that the page offers no control for the
+//      project-side keys (`container` / `lessons` / `mode`). Those are stored by
+//      the node half and reported as `projectDefaults`, but they belong to a
+//      project's own `.config.json` and are changed with `journal.py config` —
+//      so the page must not manage them, in either tab. Text is the wrong test
+//      for that (the page's own compatibility note names them), hence: no marked
+//      row, no input, no segment.
 //
 // That is not "the page renders correctly" — layout, styling and the shell's own
 // behaviour still need a browser. It IS everything up to the point where only a
@@ -126,12 +134,38 @@ function createHookRuntime() {
  * Yields text children too (a `{ type, props, children }` node's children are a
  * mix of elements and strings), so a text assertion can read the rendered copy
  * without re-implementing the traversal.
+ *
+ * Arrays are flattened because a component that forwards `props.children`
+ * verbatim hands one through; without this everything inside such a node would be
+ * invisible — the same class of silent zero this file has already been bitten by.
  */
 function* walk(node) {
   if (node === null || node === undefined || node === false) return
+  if (Array.isArray(node)) {
+    for (const child of node) yield* walk(child)
+    return
+  }
   if (typeof node !== 'object') { yield node; return }
   yield node
-  for (const child of node.children ?? []) yield* walk(child)
+  for (const child of childrenOf(node)) yield* walk(child)
+}
+
+/**
+ * The children a node really renders.
+ *
+ * **This runtime expands only the top-level component**, so the marker functions
+ * above are never CALLED — they exist so the tree can be identified by type
+ * (`node.type === SwitchMarker`), and nothing more. A nested component's own
+ * render logic therefore has to be modelled here when an assertion depends on it.
+ *
+ * `DisclosureRow` is the one that does: the host component renders `open &&
+ * children`, and a panel that put its rows beside the disclosure instead of
+ * inside it would show a "collapsed" section with every row still on screen.
+ * Ignoring `open` here would hide exactly that defect.
+ */
+function childrenOf(node) {
+  if (node.type === DisclosureRowMarker && node.props.open !== true) return []
+  return node.children ?? []
 }
 
 /** First element in the tree for which `predicate` holds. */
@@ -147,21 +181,30 @@ function find(tree, predicate) {
  * two entries the bundle uses supplied by this file. Anything the bundle asks
  * for beyond that throws, the way the real loader's table miss does.
  *
- * The four primitives are marker components: the test reads the element tree, so
+ * The five primitives are marker components: the test reads the element tree, so
  * a component only has to exist and be identifiable by its function identity —
  * the same identity the bundle receives, because both sides share these. */
 function SwitchMarker(props) { return { type: 'Switch', props, children: [] } }
 function InputMarker(props) { return { type: 'Input', props, children: [] } }
 function SegmentedControlMarker(props) { return { type: 'SegmentedControl', props, children: [] } }
-function DisclosureRowMarker(props) {
-  return { type: 'DisclosureRow', props, children: props.children ? [props.children] : [] }
-}
+/**
+ * `SegmentedTabs` renders the tab list ONLY and owns no panels, so its items are
+ * data rather than children — the marker keeps them in props, where an assertion
+ * can read the values, the labels and the tab/panel id pair.
+ */
+function SegmentedTabsMarker(props) { return { type: 'SegmentedTabs', props, children: [] } }
+/**
+ * The disclosure header. Its `open && children` behaviour is modelled in
+ * `childrenOf`, because this runtime never calls a nested component — see there.
+ */
+function DisclosureRowMarker(props) { return { type: 'DisclosureRow', props, children: props.children ?? [] } }
 
 function createRequire(hooks) {
   const primitives = {
     Switch: SwitchMarker,
     Input: InputMarker,
     SegmentedControl: SegmentedControlMarker,
+    SegmentedTabs: SegmentedTabsMarker,
     DisclosureRow: DisclosureRowMarker,
   }
   const table = new Map([
@@ -301,6 +344,10 @@ let SettingsPanel = null
      * The two groups the route reports, kept in the same shape as the node half:
      * `effective` carries ONLY what apply() reads, and the project-side keys are
      * reported apart from it under the not-applied marker.
+     *
+     * The page must IGNORE `projectDefaults` now — it neither renders a control
+     * for it nor sends it back — so the stub keeps reporting it. A stub that
+     * dropped the field would make "the page ignores it" untestable.
      */
     const report = () => ({
       effective: {
@@ -309,6 +356,9 @@ let SettingsPanel = null
         guidelinesDir: state.document.guidelinesDir || 'skills/reliability-guidelines',
         guidelinesEnabled: state.document.guidelinesEnabled !== false,
         guidelinesLanguage: state.document.guidelinesLanguage === 'en' ? 'en' : 'zh',
+        verbose: state.document.verbose === true,
+        modelInvocable: state.document.modelInvocable !== false,
+        userInvocable: state.document.userInvocable !== false,
       },
       projectDefaults: {
         appliedByPlugin: false,
@@ -334,6 +384,8 @@ let SettingsPanel = null
       const body = JSON.parse(init.body)
       state.posts.push(body)
       if (failPost) return json({ error: 'could not write the settings file: EACCES' }, 500)
+      // The route treats the body as a PATCH (`sanitizeSettings` merges it into
+      // the stored document), so a key the page no longer sends keeps its value.
       state.document = { ...state.document, ...body }
       return json({
         path: '/home/.dsh/worklog/settings.json',
@@ -345,23 +397,67 @@ let SettingsPanel = null
   }
 
   const getSwitch = (tree) => find(tree, (node) => node.type === SwitchMarker)
+  const getSwitches = (tree) => [...walk(tree)].filter((node) => node.type === SwitchMarker)
   const getSegment = (tree, id) => find(tree, (node) =>
     node.type === SegmentedControlMarker && node.props.id === id)
+  const getSegments = (tree) => [...walk(tree)].filter((node) => node.type === SegmentedControlMarker)
   const getInputs = (tree) => [...walk(tree)].filter((node) => node.type === InputMarker)
+  const getTabs = (tree) => find(tree, (node) => node.type === SegmentedTabsMarker)
+  const getDisclosure = (tree) => find(tree, (node) => node.type === DisclosureRowMarker)
+  const tabPanels = (tree) => [...walk(tree)].filter((node) => node.props?.role === 'tabpanel')
+  const markedRows = (tree) => [...walk(tree)].filter((node) => node.props?.['data-mark'] !== undefined)
+  /** Every control's accessible name — how a removed field is checked structurally. */
+  const controlNames = (tree) => [...walk(tree)]
+    .filter((node) => node.type === InputMarker
+      || node.type === SegmentedControlMarker
+      || node.type === SwitchMarker)
+    .map((node) => String(node.props['aria-label'] ?? node.props.label ?? ''))
+  const idsOf = (tree) => [...walk(tree)]
+    .map((node) => node.props?.id)
+    .filter((id) => id !== undefined)
   const textOf = (node) => [...walk(node)]
     .filter((child) => typeof child === 'string')
     .join('')
 
+  /**
+   * Words that name the removed project-side settings. A control named for one of
+   * them means the group came back, in some tab.
+   */
+  const REMOVED_CONTROLS = ['容器', '经验目录', '精细度']
+  const projectKeyControls = (tree) => controlNames(tree)
+    .filter((name) => REMOVED_CONTROLS.some((word) => name.includes(word)))
+  const PROJECT_KEYS = ['container', 'lessons', 'mode']
+
+  /** Select a tab the way the tab list does; returns the settled tree. */
+  const selectTab = async (value) => {
+    const tabs = getTabs(runtime.tree)
+    if (tabs !== null && tabs.props.value !== value) {
+      tabs.props.onChange(value)
+      await settle()
+    }
+    return runtime.tree
+  }
+
+  /** Expand the 路径 disclosure if it is collapsed; returns the settled tree. */
+  const openPaths = async () => {
+    const disclosure = getDisclosure(runtime.tree)
+    if (disclosure !== null && disclosure.props.open !== true) {
+      disclosure.props.onToggle()
+      await settle()
+    }
+    return runtime.tree
+  }
+
   /* ---- 3a. the initial load populates the form from the server ---- */
   {
-    // The document mirrors what the settings file holds after the page has been saved
-    // once: the two path keys are present but blank, which is exactly the state that
-    // shows the "（默认）" marker. Spelling them out matters — this case used to pass
-    // only because the developer's real settings file happened to be read here, so the
-    // assertion depended on the machine rather than on the panel.
+    // The document deliberately STATES the three project-side keys as well: they
+    // are on disk, the route still reports them, and the page must neither render
+    // a control for them nor send them back. A document that omitted them could
+    // not tell "the page ignores them" from "there was nothing to ignore".
     const server = createServer({
-      guidelinesEnabled: false, guidelinesLanguage: 'en', mode: 'digest',
+      guidelinesEnabled: false, guidelinesLanguage: 'en',
       skillDir: '', guidelinesDir: '',
+      container: 'notes', lessons: 'kb', mode: 'digest',
     })
     globalThis.fetch = server.fetchStub
 
@@ -393,73 +489,141 @@ let SettingsPanel = null
     ok(typeof language.props.label === 'string' && language.props.label !== '',
       'the language control carries an accessible name (the primitive requires one)')
 
-    const mode = getSegment(loaded, 'dsh-worklog-mode')
-    ok(mode !== null, 'the advanced area contributes the mode SegmentedControl')
-    ok(mode.props.value === 'digest', 'the mode control reflects the loaded value', String(mode.props.value))
-    ok(mode.props.options.length === 4, 'the mode control has four options')
-    ok(mode.props.options.map((option) => option.value).join(',') === 'full,session,digest,milestone',
-      'the mode options are the four documented modes',
-      mode.props.options.map((option) => option.value).join(','))
-
     ok(textOf(loaded).includes('重启'), 'the panel says a restart is required')
     ok(textOf(loaded).includes('/home/.dsh/worklog/settings.json'),
       'the panel shows the settings file path it read')
 
-    const advanced = find(loaded, (node) => node.type === DisclosureRowMarker)
-    ok(advanced !== null, 'the advanced area is a DisclosureRow')
-    ok(advanced.props.open === false, 'the advanced area starts collapsed')
-    ok(advanced.props.expandable === true, 'the advanced area is expandable')
+    /* ---- the two-tab structure ------------------------------------------ */
+    const tabs = getTabs(loaded)
+    ok(tabs !== null, 'the panel renders the host SegmentedTabs')
+    ok(tabs.props.value === 'skills', 'the selected tab defaults to 技能', String(tabs.props.value))
+    ok(typeof tabs.props.label === 'string' && tabs.props.label !== '',
+      'the tab list carries a localized accessible name', String(tabs.props.label))
+    const items = tabs.props.items
+    ok(Array.isArray(items) && items.length === 2, 'there are exactly two tabs',
+      JSON.stringify(items?.map((item) => item.value)))
+    ok(items.map((item) => item.value).join(',') === 'skills,others',
+      'the tab values are skills and others', items.map((item) => item.value).join(','))
+    ok(items.map((item) => item.label).join(',') === '技能,其他',
+      'the tab labels are 技能 and 其他', items.map((item) => item.label).join(','))
+    ok(items.every((item) => typeof item.id === 'string' && item.id !== ''
+      && typeof item.panelId === 'string' && item.panelId !== '' && item.id !== item.panelId),
+      'each tab declares its own id and panelId',
+      JSON.stringify(items.map((item) => [item.id, item.panelId])))
+    ok(new Set(items.map((item) => item.id)).size === 2
+      && new Set(items.map((item) => item.panelId)).size === 2,
+      'the tab ids and the panel ids are each unique (the primitive validates this)')
 
-    const inputs = getInputs(loaded)
-    ok(inputs.length === 4, 'the advanced area holds four text inputs', String(inputs.length))
+    /* ---- the panel wiring: the selected panel, and only it -------------- */
+    const panels = tabPanels(loaded)
+    ok(panels.length === 1, 'exactly one tabpanel is rendered', String(panels.length))
+    ok(panels[0].props.id === 'dsh-worklog-panel-skills',
+      'the rendered panel is the one the selected tab controls', String(panels[0].props.id))
+    ok(panels[0].props['aria-labelledby'] === 'dsh-worklog-tab-skills',
+      'the panel points back at its tab with aria-labelledby',
+      String(panels[0].props['aria-labelledby']))
+    ok(items[0].panelId === panels[0].props.id && items[0].id === panels[0].props['aria-labelledby'],
+      'the tab\'s id/panelId and the panel\'s id/aria-labelledby are the same pair',
+      `${items[0].id}/${items[0].panelId} vs ${panels[0].props['aria-labelledby']}/${panels[0].props.id}`)
+
+    /* ---- the 路径 disclosure, and that it really HOLDS the two rows ----- */
+    const disclosure = getDisclosure(loaded)
+    ok(disclosure !== null, 'the 技能 panel renders the 路径 DisclosureRow')
+    ok(disclosure.props.open === false, 'the 路径 area starts collapsed')
+    ok(disclosure.props.expandable === true, 'the 路径 area is expandable')
+    ok(getInputs(loaded).length === 0,
+      'a collapsed 路径 area renders no input at all (its rows are children, not siblings)',
+      String(getInputs(loaded).length))
+    ok(markedRows(loaded).length === 0,
+      'a collapsed 路径 area exposes no mark slot either', String(markedRows(loaded).length))
+
+    await openPaths()
+    const opened = runtime.tree
+    const inputs = getInputs(opened)
+    ok(inputs.length === 2, 'opening 路径 shows exactly two text inputs', String(inputs.length))
     ok(inputs[0].props.placeholder === 'skills/project-work-log',
       'a blank field shows the effective value as its placeholder',
       String(inputs[0].props.placeholder))
+    ok(inputs[1].props.placeholder === 'skills/reliability-guidelines',
+      'the guidelines directory does too', String(inputs[1].props.placeholder))
 
-    /* ---- the project-side group must not read as plugin effect ---- */
-    const panelText = textOf(loaded)
-    ok(panelText.includes('插件不读'),
-      'the project-defaults group says the plugin does not read them', panelText.slice(-320))
-    ok(panelText.includes('journal.py'),
-      'the group hint names what does read them: `journal.py`')
-    ok(inputs[2].props.placeholder === 'work_log' && inputs[3].props.placeholder === 'lessons',
-      'the project-default fields take their placeholders from projectDefaults.values',
-      `${String(inputs[2].props.placeholder)} / ${String(inputs[3].props.placeholder)}`)
-    // The right-hand "in effect" mark belongs to load-time options only; leaving it
-    // on a stored-but-unread field is the same false claim in a smaller font.
-    //
-    // Read from the row's own attribute rather than from the rendered text. This
-    // runtime expands only the top-level component, so anything inside a nested
-    // component is invisible to `textOf` — the previous version of this assertion read
-    // a count of 0 and passed anyway, because the developer's real settings file
-    // happened to be loaded. Asserting structurally removes both problems.
-    const rows = [...walk(loaded)].filter((node) => node.props?.['data-mark'] !== undefined)
-    const marked = rows.filter((node) => node.props['data-mark'] !== 'none')
-    ok(rows.length === 4, 'the four advanced text rows expose a mark slot', String(rows.length))
-    ok(marked.length === 2,
-      'only two of them carry an "in effect (default)" mark',
-      `${marked.length} of ${rows.length}`)
-    ok(marked.every((node) => node.props['data-mark'].includes('（默认）')),
+    // The right-hand "in effect" mark belongs to load-time options only. Read from
+    // the row's own attribute rather than from the rendered text: this runtime
+    // expands only the top-level component, so anything inside a nested component
+    // is invisible to `textOf` — an earlier version of this assertion read a count
+    // of 0 and passed anyway.
+    const rows = markedRows(opened)
+    ok(rows.length === 2, 'the two 路径 rows expose a mark slot', String(rows.length))
+    ok(rows.every((node) => node.props['data-mark'] !== 'none'),
+      'both carry an "in effect (default)" mark',
+      rows.map((node) => node.props['data-mark']).join(' | '))
+    ok(rows.every((node) => node.props['data-mark'].includes('（默认）')),
       'a carried mark says it is the default',
-      marked.map((node) => node.props['data-mark']).join(' | '))
-    // Indices 0 and 1 are the two load-time path fields; 2 and 3 are the project-side
-    // pair, which the plugin does not read and therefore must not mark as in effect.
-    ok(rows[0].props['data-mark'] !== 'none' && rows[1].props['data-mark'] !== 'none',
-      'the two load-time path fields are the marked ones',
-      `${rows[0].props['data-mark']} | ${rows[1].props['data-mark']}`)
-    ok(rows[2].props['data-mark'] === 'none' && rows[3].props['data-mark'] === 'none',
-      'the two stored-but-unread fields carry no in-effect mark',
-      `${rows[2].props['data-mark']} | ${rows[3].props['data-mark']}`)
+      rows.map((node) => node.props['data-mark']).join(' | '))
+
+    /* ---- change 1: no control for the project-side keys, in EITHER tab -- */
+    // Structural, not textual: the page's own compatibility note names these keys,
+    // so text is exactly the wrong test. What must not come back is a CONTROL.
+    ok(getSegment(loaded, 'dsh-worklog-mode') === null,
+      'the 技能 tab has no mode SegmentedControl (it was removed)')
+    ok(getSegments(loaded).length === 1,
+      'the 技能 tab carries exactly one SegmentedControl — the language one',
+      getSegments(loaded).map((node) => node.props.id).join(','))
+    ok(projectKeyControls(loaded).length === 0,
+      'no control in the 技能 tab is named for container / lessons / mode',
+      projectKeyControls(loaded).join(' | '))
+    ok(!idsOf(loaded).includes('dsh-worklog-mode'),
+      'no node carries the removed mode control id',
+      idsOf(loaded).join(','))
+    ok(inputs.map((node) => node.props['aria-label']).join('|') === '工作记录技能目录|准则技能目录',
+      'the only two inputs are the two load-time path fields',
+      inputs.map((node) => node.props['aria-label']).join('|'))
+
+    await selectTab('others')
+    const others = runtime.tree
+    ok(getTabs(others).props.value === 'others', 'the 其他 tab can be selected')
+    const othersPanels = tabPanels(others)
+    ok(othersPanels.length === 1 && othersPanels[0].props.id === 'dsh-worklog-panel-others',
+      'selecting 其他 renders its panel and only its panel',
+      othersPanels.map((node) => node.props.id).join(','))
+    ok(othersPanels[0].props['aria-labelledby'] === 'dsh-worklog-tab-others',
+      'the 其他 panel points back at its own tab',
+      String(othersPanels[0].props['aria-labelledby']))
+    const otherSwitches = getSwitches(others)
+    ok(otherSwitches.length === 3, 'the 其他 tab holds three switches', String(otherSwitches.length))
+    ok(otherSwitches.map((node) => node.props.label).join(',') === '装载时打日志,允许模型自动调用,允许手动调用',
+      'the three switches are verbose / modelInvocable / userInvocable, in order',
+      otherSwitches.map((node) => node.props.label).join(','))
+    ok(otherSwitches.map((node) => node.props.checked).join(',') === 'false,true,true',
+      'they reflect the loaded values (documented defaults when the file is silent)',
+      otherSwitches.map((node) => node.props.checked).join(','))
+    ok(otherSwitches.every((node) => typeof node.props.onChange === 'function'),
+      'each of the three switches is controlled')
+    ok(getInputs(others).length === 0, 'the 其他 tab holds no text input')
+    ok(getSegments(others).length === 0, 'the 其他 tab holds no segmented control')
+    ok(markedRows(others).length === 0, 'the 其他 tab exposes no mark slot')
+    ok(projectKeyControls(others).length === 0,
+      'no control in the 其他 tab is named for container / lessons / mode',
+      projectKeyControls(others).join(' | '))
+    ok(!idsOf(others).includes('dsh-worklog-mode'),
+      'the 其他 tab carries no removed mode control id')
+    ok(getDisclosure(others) === null, 'the 路径 disclosure belongs to the 技能 tab only')
+
+    await selectTab('skills')
+    ok(getTabs(runtime.tree).props.value === 'skills', 'the 技能 tab can be selected again')
   }
 
   /* ---- 3b. clicking the Switch posts the whole form, serially ---- */
   {
-    const server = createServer({ guidelinesEnabled: true, guidelinesLanguage: 'zh' })
+    const server = createServer({
+      guidelinesEnabled: true, guidelinesLanguage: 'zh', container: 'notes',
+    })
     globalThis.fetch = server.fetchStub
 
     api.mount(SettingsPanel, {})
     api.flushEffects()
     await settle()
+    await selectTab('skills')
     ok(getSwitch(runtime.tree) !== null, 'the panel re-rendered after loading')
 
     const toggle = getSwitch(runtime.tree)
@@ -479,6 +643,17 @@ let SettingsPanel = null
     ok(server.state.posts[1]?.guidelinesLanguage === 'zh',
       'each POST carries the whole form (the route treats it as a document)',
       JSON.stringify(server.state.posts[1]))
+    const postedKeys = Object.keys(server.state.posts[1] ?? {}).sort()
+    ok(postedKeys.join(',')
+      === 'guidelinesDir,guidelinesEnabled,guidelinesLanguage,modelInvocable,skillDir,userInvocable,verbose',
+      'the body is exactly the seven load-time keys — no project-side key is sent',
+      postedKeys.join(','))
+    ok(PROJECT_KEYS.every((key) => !(key in (server.state.posts[1] ?? {}))),
+      'the page never posts container / lessons / mode back',
+      JSON.stringify(server.state.posts[1]))
+    ok(server.state.document.container === 'notes',
+      'a project-side value already on disk survives the page\'s save (the route patches)',
+      JSON.stringify(server.state.document))
     ok(server.state.document.guidelinesEnabled === true, 'the server state ended at the last value')
     ok(getSwitch(runtime.tree).props.checked === true,
       'the Switch shows the value the server confirmed')
@@ -487,7 +662,7 @@ let SettingsPanel = null
     ok(texts.includes('已保存'), 'the panel reports the save as done')
   }
 
-  /* ---- 3c. the segmented control and a text input ---- */
+  /* ---- 3c. the segmented control, a text input, and the disclosure ---- */
   {
     const server = createServer({ guidelinesEnabled: true, guidelinesLanguage: 'zh' })
     globalThis.fetch = server.fetchStub
@@ -495,6 +670,7 @@ let SettingsPanel = null
     api.mount(SettingsPanel, {})
     api.flushEffects()
     await settle()
+    await selectTab('skills')
 
     const language = getSegment(runtime.tree, 'dsh-worklog-guidelines-language')
     language.props.onChange('en')
@@ -503,6 +679,9 @@ let SettingsPanel = null
       'choosing English persists guidelinesLanguage=en',
       JSON.stringify(server.state.document))
 
+    // The paths are collapsed by default now, so they have to be revealed before
+    // they can be typed into — that is the point of the disclosure.
+    await openPaths()
     const skillDirInput = getInputs(runtime.tree)[0]
     skillDirInput.props.onChange({ target: { value: '/opt/bundles/worklog' } })
     await settle(12)
@@ -510,11 +689,13 @@ let SettingsPanel = null
       'typing a path persists it',
       JSON.stringify(server.state.document.skillDir))
 
-    const advanced = find(runtime.tree, (node) => node.type === DisclosureRowMarker)
+    const advanced = getDisclosure(runtime.tree)
     advanced.props.onToggle()
     await settle()
-    ok(find(runtime.tree, (node) => node.type === DisclosureRowMarker).props.open === true,
-      'toggling the DisclosureRow opens the advanced area')
+    ok(getDisclosure(runtime.tree).props.open === false,
+      'toggling the DisclosureRow collapses the 路径 area again')
+    ok(getInputs(runtime.tree).length === 0,
+      'a collapsed 路径 area takes its rows out of the tree')
   }
 
   /* ---- 3d. a failed save is reported, not swallowed ---- */
@@ -525,6 +706,7 @@ let SettingsPanel = null
     api.mount(SettingsPanel, {})
     api.flushEffects()
     await settle()
+    await selectTab('skills')
     getSwitch(runtime.tree).props.onChange(false)
     await settle(12)
 
@@ -544,6 +726,50 @@ let SettingsPanel = null
     ok(getSwitch(runtime.tree) === null, 'a load failure does not render an editable form')
     ok(textOf(runtime.tree).includes('读取设置失败'), 'a load failure says so')
     ok(textOf(runtime.tree).includes('503'), 'a load failure names the HTTP status')
+  }
+
+  /* ---- 3f. the 其他 tab: the three switches that had no control before ---- */
+  {
+    const server = createServer({ guidelinesEnabled: true, guidelinesLanguage: 'zh' })
+    globalThis.fetch = server.fetchStub
+
+    api.mount(SettingsPanel, {})
+    api.flushEffects()
+    await settle()
+    await selectTab('others')
+
+    const switches = getSwitches(runtime.tree)
+    ok(switches.length === 3, 'the 其他 tab holds the three load-time switches', String(switches.length))
+    ok(switches.map((node) => node.props.checked).join(',') === 'false,true,true',
+      'absent keys fall back to the documented defaults (off, on, on)',
+      switches.map((node) => node.props.checked).join(','))
+
+    switches[0].props.onChange(true)
+    await settle(20)
+    ok(server.state.document.verbose === true,
+      'toggling verbose persists it (this key had no control before)',
+      JSON.stringify(server.state.document))
+
+    getSwitches(runtime.tree)[1].props.onChange(false)
+    await settle(20)
+    ok(server.state.document.modelInvocable === false,
+      'toggling modelInvocable persists it', JSON.stringify(server.state.document))
+
+    getSwitches(runtime.tree)[2].props.onChange(false)
+    await settle(20)
+    ok(server.state.document.userInvocable === false,
+      'toggling userInvocable persists it', JSON.stringify(server.state.document))
+
+    ok(server.state.posts.length === 3, 'three changes produced three POSTs',
+      String(server.state.posts.length))
+    ok(PROJECT_KEYS.every((key) => server.state.posts.every((post) => !(key in post))),
+      'no POST from this tab mentions a project-side key either')
+    ok(getSwitches(runtime.tree).map((node) => node.props.checked).join(',') === 'true,false,false',
+      'the three switches show what the server confirmed',
+      getSwitches(runtime.tree).map((node) => node.props.checked).join(','))
+
+    await selectTab('skills')
+    ok(getTabs(runtime.tree).props.value === 'skills', 'the 技能 tab is still reachable afterwards')
   }
 }
 

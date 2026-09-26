@@ -96,7 +96,8 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 ## 记录精细度（一篇 = 什么）
 
 默认档是 `full`：**一段可交付的子单元就是一篇**，一次会话可能开出 2–3 篇。
-档位存在台账 `## 当前状态` 的 `精细度` 字段里。字段随容器走、进版本控制，不需要新配置文件。
+档位存在台账 `## 当前状态` 的 `精细度` 字段里。字段随容器走、进版本控制。
+新项目的初始档位写在项目配置文件 `<容器>/.config.json` 的 `mode` 里（可选）；台账一旦有 `精细度`，台账说了算。
 
 | 档位 | 一篇 = | 一次会话的预期产出 |
 |---|---|---|
@@ -122,7 +123,7 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 - **改台账**（持久）：`python scripts/journal.py mode --set digest --why "阶段收口"`。
   之后所有会话都按新档位走，`brief` 里直接看得到。
 
-查看当前档位：`python scripts/journal.py mode`。台账里没有 `精细度` 字段的老项目按默认档 `full` 处理，不会报错。
+查看当前档位：`python scripts/journal.py mode`。台账里没有 `精细度` 字段的老项目取配置文件的 `mode`，配置也没有就按内置默认 `full`，都不会报错。
 
 ## 工作流 A · 初始化（项目第一次用）
 
@@ -134,6 +135,8 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
    - `work_log/STATE-HISTORY.md`、`work_log/ARCHIVE.md`
    - 有日志/运行产物的项目同时建 `work_log/logs/<来源>/`（见下「日志归位」）
    - 在项目根 `README.md` 加一行指向 `work_log/README.md`
+   - **可选**：`work_log/.config.json` —— 项目配置文件，写默认档位与旧记录清单。
+     不想写就不写：缺它等于全部用内置默认。要写就用 `config --write`，别手抄。
 3. 跑一次 `journal.py check --strict` 确认骨架自洽（此时 0 篇记录也应通过）。
    台账模板里的**示例索引行**要先删掉或换成真实文件名，否则被判死链。
 
@@ -233,6 +236,9 @@ python scripts/journal.py new --title "…" --iter 154 --insert --stage "A. 起�
 python scripts/journal.py status --set "迭代=154" --set "核对=抽样 30 条全部通过" --date   # 改状态块（--roll 归档旧块）
 python scripts/journal.py mode                                                                  # 当前精细度（默认 full）
 python scripts/journal.py mode --set digest --why "阶段收口"                                      # 切档位，附一行原因
+python scripts/journal.py config                     # 项目配置文件：每个字段的生效值与来源（命令行/配置文件/内置默认）
+python scripts/journal.py config --write             # 按当前生效值写出 <容器>/.config.json
+python scripts/journal.py config --set mode=digest   # 改一项，保留其余字段与换行风格
 python scripts/journal.py todo --add "…" | --done "子串" | --drop-done
 python scripts/journal.py index sync --stage "B. 迭代"            # 补漏掉的索引行
 python scripts/journal.py lesson add --volume 04-verification-and-safety.md --source 152 --text "…"
@@ -257,7 +263,7 @@ python scripts/journal.py retro --from 100 --to 151 --out r.md  # 阶段复盘�
 python scripts/journal.py export --csv --out work_log.csv   # 机器可读导出
 ```
 
-自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全 + 新/旧布局 + 精细度档位 + 两种命名 + 渐进原则 + snapshot；**断言数以脚本实际输出为准**，全绿即通过）。
+自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全 + 新/旧布局 + 精细度档位 + 两种命名 + 渐进原则 + snapshot + 项目配置文件；**断言数以脚本实际输出为准**，全绿即通过）。
 
 > 典型接手动作：`brief` → `snapshot` → `search` → `show` → 需要细节才 `read` 那一个文件。
 > 典型收尾动作：`new --insert` → 补正文 → `status` → `lesson add` → `check --strict` && `lint --strict`。
@@ -267,6 +273,7 @@ python scripts/journal.py export --csv --out work_log.csv   # 机器可读导出
 **本技能的核心是约定，脚本只是加速器。** 环境里没有 Python 也能完整使用，只是费手：
 
 1. **建结构**：按 [references/templates.md](references/templates.md) 手工落这四个文件：`work_log/README.md`、`work_log/ARCHIVE.md`、`work_log/STATE-HISTORY.md`、`work_log/lessons/README.md`。（已有旧体系就沿用旧名，见「目录布局」的回退顺序。）
+   项目配置文件 `work_log/.config.json` 也是手写一个 JSON 就行；**不写就等于全部内置默认**。
 2. **写记录**：按记录模板写入口字段，加一个验证类小节；标题按容器选定的一种约定写
    （编号式 `# NNN · 标题` / 日期式 `# YYYY-MM-DD 标题`）。
 3. **收尾**：把「工作流 C 收尾清单」当人工检查表逐条走；把 `check` / `lint` 的判据（见 [references/commands.md](references/commands.md)）当核对清单。

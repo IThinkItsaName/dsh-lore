@@ -15,6 +15,15 @@
         LEGACY.md            旧记录声明（可选，见「渐进原则」）
         lessons/             经验层（分册），是容器的子目录
         logs/<来源>/         日志与运行产物（见 conventions.md「日志归位要求」）
+        .config.json         项目配置文件（可选）：默认档位 / 容器名 / 经验目录名 / 旧记录清单 / 快照篇数
+
+项目配置文件（`<容器>/.config.json`，可选）
+------------------------------------------
+优先级只有三层：**命令行 > `<容器>/.config.json` > 内置默认**。
+缺这个文件不是错误，它等于"全部取内置默认"。
+两个**名字**字段（`container` / `lessons`）是例外：它们命名的正是配置文件自己所在的目录，
+所以读配置文件之前就得先知道它们——只能按目录发现，配置里的值只当"新项目该叫什么"的备注。
+`mode`（配置里的）只提供**新项目的初始档位**；项目里显式切过档之后，台账的 `精细度` 才是权威。
 
 两种记录命名**都认**（实测 237 篇编号式 + 71 篇日期式）：
 - 编号式 `NNN-<slug>.md`，H1 必须 `# NNN · <标题>`；编号永不复用、归档不改号。
@@ -39,6 +48,7 @@
     new       生成下一篇记录（--insert 自动补索引行）
     status    当前状态块：show / set / date / roll
     mode      记录精细度（一篇 = 什么）：show / --set / --why
+    config    项目配置文件（<容器>/.config.json）：show / --write / --set
     todo      待办清单：list / add / done / drop-done
     index     索引：sync 补漏行
     lesson    经验：add 追加带来源的条目
@@ -64,6 +74,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 import zipfile
 
 try:  # Windows 控制台默认码页可能不是 UTF-8
@@ -214,6 +225,33 @@ RULE_VERIFY = "验证小节"       # 旧技能要求六段式里的验证小节
 
 LEGACY_RULES = (RULE_TITLE, RULE_ENTRY_DATE, RULE_VERIFY)
 
+# ---- 项目配置文件（`<容器>/.config.json`，见 references/conventions.md「项目配置文件」）----
+# 优先级只有三层，不重叠：命令行 > <容器>/.config.json > 内置默认。
+# 两个**名字**字段（container / lessons）是例外，见 load_project_config 的说明。
+CONFIG_NAME = ".config.json"
+CFG_MODE = "mode"
+CFG_CONTAINER = "container"
+CFG_LESSONS = "lessons"
+CFG_LEGACY = "legacy"
+CFG_SNAPSHOT_ENTRIES = "snapshotEntries"
+# 配置文件的字段顺序（写文件时按它排，读文件时不要求）
+CONFIG_FIELDS = (CFG_MODE, CFG_CONTAINER, CFG_LESSONS, CFG_LEGACY, CFG_SNAPSHOT_ENTRIES)
+# `snapshot --entries` 的内置默认（配置文件里叫 snapshotEntries）
+SNAPSHOT_ENTRIES_DEFAULT = 12
+# 每个值的来源标签，`config` 逐字段打印
+SRC_CLI = "命令行"
+SRC_FILE = ".config.json"
+SRC_DEFAULT = "内置默认"
+
+# 每个字段的取值说明（`config --set` 的报错与 `config --show` 都引用它）
+CONFIG_FIELD_HELP = {
+    CFG_MODE: "full / session / digest / milestone（也认中文别名）",
+    CFG_CONTAINER: "目录名，如 work_log",
+    CFG_LESSONS: "目录名，如 lessons",
+    CFG_LEGACY: "逗号分隔的 glob 清单，如 0007-*,archive/**（留空 = 没有旧记录）",
+    CFG_SNAPSHOT_ENTRIES: "正整数",
+}
+
 
 def _status_key_parts(key: str) -> list[str]:
     """把字段名切成可比较的片段：先按 `/`，再按 `与`（`交付物与指纹` 的两种写法）。"""
@@ -361,15 +399,215 @@ def resolve_dir(root: str, name: str | None, fallbacks: tuple[str, ...]) -> str 
     return None
 
 
-def resolve_lessons(root: str, container: str | None, name: str | None) -> str | None:
-    """经验目录：先看容器内（新布局 `<容器>/lessons/`），再看项目根（旧布局 `<根>/lessons/`）。"""
+def resolve_lessons(root: str, container: str | None, name: str | None,
+                    extra: tuple[str, ...] = ()) -> str | None:
+    """经验目录：先看容器内（新布局 `<容器>/lessons/`），再看项目根（旧布局 `<根>/lessons/`）。
+
+    `extra` 是 `.config.json` 里 `lessons` 字段给的候选名（见 load_project_config）：
+    它排在命令行之后、内置默认之前。**只有目录真的存在才算数**，所以配置里的名字
+    只是"上哪儿找"的提示，不是"就把目录叫这个"的命令。
+    """
+    seq: list[str] = []
+    for c in (*([name] if name else ()), *extra, LESSONS_DEFAULT):
+        if c and c not in seq:
+            seq.append(c)
     for base in (container, root):
         if not base:
             continue
-        found = resolve_dir(base, name, (LESSONS_DEFAULT,))
-        if found:
-            return found
+        for c in seq:
+            if os.path.isdir(os.path.join(base, c)):
+                return os.path.join(base, c)
     return None
+
+
+# --------------------------------------------------------------------------- #
+# 项目配置文件（`<容器>/.config.json`）：生效值 + 每个值的来源
+# --------------------------------------------------------------------------- #
+class Config:
+    """一次解析出来的项目配置：生效值、每个值的来源、以及读配置时发现的问题。
+
+    三个来源标签只有三个（`命令行` / `.config.json` / `内置默认`）。容器的 `LEGACY.md`
+    是第四处**声明**（它本来就是这套体系的一部分，不是这次新增的），它的来源照实打印。
+    `notes` 放"字段与实际不符"的提示，`problems` 放"配置文件读不动 / 值非法"——
+    两者都**不改生效值**，只让 `config` 把话说清楚。
+    """
+
+    def __init__(self) -> None:
+        self.mode = MODE_DEFAULT
+        self.container = CONTAINER_DEFAULT
+        self.lessons = LESSONS_DEFAULT
+        self.legacy: list[str] = []
+        self.legacy_declared = False          # 有没有显式清单（命令行 / 配置 / LEGACY.md）
+        self.snapshot_entries = SNAPSHOT_ENTRIES_DEFAULT
+        self.src = {k: SRC_DEFAULT for k in CONFIG_FIELDS}
+        self.path = ""                        # 配置文件的绝对路径（不存在时也给）
+        self.exists = False
+        self.problems: list[str] = []
+        self.notes: list[str] = []
+
+    def value_text(self, key: str) -> str:
+        """字段值的一行显示。"""
+        if key == CFG_LEGACY:
+            return "、".join(self.legacy) if self.legacy else "（空）"
+        if key == CFG_SNAPSHOT_ENTRIES:
+            return str(self.snapshot_entries)
+        return str({CFG_MODE: self.mode, CFG_CONTAINER: self.container,
+                    CFG_LESSONS: self.lessons}[key])
+
+    def as_data(self) -> dict:
+        """按配置文件的字段顺序给出当前生效值（`config --write` 用）。"""
+        return {CFG_MODE: self.mode, CFG_CONTAINER: self.container, CFG_LESSONS: self.lessons,
+                CFG_LEGACY: list(self.legacy), CFG_SNAPSHOT_ENTRIES: self.snapshot_entries}
+
+
+def is_dir_name(name: object) -> bool:
+    """是不是一个合法的目录名（非空、不含路径分隔符、不是 `.` / `..`）。"""
+    return (isinstance(name, str) and bool(name.strip())
+            and not re.search(r"[/\\]", name) and name.strip() not in (".", ".."))
+
+
+def _pad(text: str, width: int) -> str:
+    """按**显示宽度**补空格：中文一个字占两列，按字符数补会让整张表歪掉。"""
+    w = sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+    return text + " " * max(0, width - w)
+
+
+def _read_config_file(cfg: Config) -> dict:
+    """读配置文件填进 cfg，返回解析结果（不存在或读不动时给空 dict）。
+
+    读不动**不是致命错误**：整个文件按"没写"处理，理由记进 `cfg.problems`，
+    由 `config` / `check` 报出来。别的命令照常跑——一个坏配置文件不该让工具没法用。
+    说明文字里**不带路径**：`config` 的表头与 `check` 的发现位置都已经写明是哪个文件。
+    """
+    if not os.path.isfile(cfg.path):
+        return {}
+    cfg.exists = True
+    try:
+        data = json.loads(read_raw(cfg.path))
+    except ValueError as exc:
+        cfg.problems.append(f"不是合法 JSON（{exc}）；本次全部按内置默认")
+        return {}
+    if not isinstance(data, dict):
+        cfg.problems.append("顶层必须是对象（`{…}`）；本次全部按内置默认")
+        return {}
+    for key in data:
+        if key not in CONFIG_FIELDS:
+            cfg.problems.append(f"有认不出的字段 `{key}`；只认 {' / '.join(CONFIG_FIELDS)}"
+                                f"（忽略它，不影响生效值）")
+    return data
+
+
+def load_project_config(root: str, container_arg: str | None = None, lessons_arg: str | None = None,
+                        legacy_arg: str | None = None) -> tuple[str | None, str | None, Config]:
+    """一次解析出（容器目录, 经验目录, 配置）。
+
+    容器**只按目录发现**（`--work-log` → `work_log/` → `journal/` → `work-log/`）：
+    配置文件就住在容器里，读它之前先得找到容器。所以配置里的 `container` 字段
+    **改不了生效值**——它连自己所在的目录都指不动，只说明"新项目该叫什么"。
+    发现到的容器名也不等于配置说的名字时，照实际目录走，并在 `config` 里报出来。
+    """
+    cfg = Config()
+    container = resolve_dir(root, container_arg, CONTAINER_FALLBACKS)
+    if container is None:
+        if container_arg:
+            cfg.container = container_arg
+            cfg.src[CFG_CONTAINER] = SRC_CLI
+        return None, None, cfg
+    cfg.container = os.path.basename(os.path.normpath(container))
+    cfg.src[CFG_CONTAINER] = SRC_CLI if container_arg else SRC_DEFAULT
+    cfg.path = os.path.join(container, CONFIG_NAME)
+    data = _read_config_file(cfg)
+
+    # container：备注字段，绝不改生效值
+    if CFG_CONTAINER in data:
+        want = data[CFG_CONTAINER]
+        if not is_dir_name(want):
+            cfg.problems.append(f"`{CFG_CONTAINER}` 必须是目录名：{want!r}")
+        elif want.strip() != cfg.container:
+            cfg.notes.append(f"配置里的 `{CFG_CONTAINER}` 是 `{want.strip()}`，但它所在的目录是 "
+                             f"`{cfg.container}/`——配置文件管不了自己所在的目录，按实际目录走")
+
+    # mode：只提供**新项目的初始档位**（台账有 `精细度` 时以台账为准，见 _mode_and_why）
+    if CFG_MODE in data:
+        raw = data[CFG_MODE]
+        canon = MODE_ALIASES.get(raw.strip().lower()) if isinstance(raw, str) else None
+        if canon is None:
+            cfg.problems.append(f"`{CFG_MODE}` 只认 full / session / digest / milestone：{raw!r}")
+        else:
+            cfg.mode = canon
+            cfg.src[CFG_MODE] = SRC_FILE
+
+    # snapshotEntries：`snapshot` 的默认篇数
+    if CFG_SNAPSHOT_ENTRIES in data:
+        raw = data[CFG_SNAPSHOT_ENTRIES]
+        n = raw if isinstance(raw, int) and not isinstance(raw, bool) else None
+        if n is None or n < 1:
+            cfg.problems.append(f"`{CFG_SNAPSHOT_ENTRIES}` 必须是正整数：{raw!r}")
+        else:
+            cfg.snapshot_entries = n
+            cfg.src[CFG_SNAPSHOT_ENTRIES] = SRC_FILE
+
+    # lessons：文件里的值只作候选名（见 resolve_lessons 的 extra）
+    file_lessons = None
+    if CFG_LESSONS in data:
+        raw = data[CFG_LESSONS]
+        if is_dir_name(raw):
+            file_lessons = raw.strip()
+        else:
+            cfg.problems.append(f"`{CFG_LESSONS}` 必须是目录名：{raw!r}")
+
+    # legacy：命令行 > 配置 > LEGACY.md > 规模兜底
+    if CFG_LEGACY in data:
+        raw = data[CFG_LEGACY]
+        if isinstance(raw, list) and all(isinstance(x, str) for x in raw):
+            cfg.legacy = [x.strip() for x in raw if x.strip()]
+            cfg.legacy_declared = True
+            cfg.src[CFG_LEGACY] = SRC_FILE
+        else:
+            cfg.problems.append(f"`{CFG_LEGACY}` 必须是字符串数组"
+                                f"（如 [\"0007-*\", \"archive/**\"]）：{raw!r}")
+    if legacy_arg is not None:
+        cfg.legacy = [p.strip() for p in legacy_arg.split(",") if p.strip()]
+        cfg.legacy_declared = True
+        cfg.src[CFG_LEGACY] = SRC_CLI
+    elif not cfg.legacy_declared and os.path.isfile(legacy_decl_path(container)):
+        cfg.legacy = legacy_decl_patterns(container)
+        cfg.legacy_declared = True
+        cfg.src[CFG_LEGACY] = LEGACY_DECL
+
+    extra = (file_lessons,) if file_lessons else ()
+    lessons = resolve_lessons(root, container, lessons_arg, extra)
+    if lessons is None:
+        cfg.lessons = lessons_arg or file_lessons or LESSONS_DEFAULT
+        cfg.src[CFG_LESSONS] = (SRC_CLI if lessons_arg
+                                else (SRC_FILE if file_lessons else SRC_DEFAULT))
+    else:
+        found = os.path.basename(os.path.normpath(lessons))
+        cfg.lessons = found
+        if lessons_arg and found == lessons_arg:
+            cfg.src[CFG_LESSONS] = SRC_CLI
+        elif file_lessons and found == file_lessons:
+            cfg.src[CFG_LESSONS] = SRC_FILE
+        else:
+            cfg.src[CFG_LESSONS] = SRC_DEFAULT
+        if file_lessons and found != file_lessons and not lessons_arg:
+            cfg.notes.append(f"配置里的 `{CFG_LESSONS}` 是 `{file_lessons}/`，但 `<容器>/` 下"
+                             f"实际存在的是 `{found}/`——按实际目录走")
+    return container, lessons, cfg
+
+
+def config_notes_for_report(cfg: Config) -> list[tuple[str, str]]:
+    """把配置的问题与提示转成 (级别, 文字) 供 `check` 报出来。没有配置文件就什么都不报。
+
+    一律 **INFO**：配置文件是输入提示，不是记录本身。它坏了，工具照旧按内置默认跑，
+    `check` 只提醒一句、不进退出码——否则一个手滑的字段会让 CI 红，而根因不在记录里。
+    真正要拍板的是 `config` 命令：它把问题逐条打印，并以退出码 2 收场。
+    """
+    if not cfg.exists:
+        return []
+    rows = [("INFO", p) for p in cfg.problems]
+    rows.extend(("INFO", n) for n in cfg.notes)
+    return rows
 
 
 # --------------------------------------------------------------------------- #
@@ -411,25 +649,46 @@ def legacy_decl_path(container: str) -> str:
     return os.path.join(container, LEGACY_DECL)
 
 
-def legacy_explicit(container: str, cli: str | None) -> tuple[bool, list[str]]:
+def legacy_decl_patterns(container: str) -> list[str]:
+    """读容器根 `LEGACY.md` 里的旧记录清单：一行一条 glob。
+
+    跳过空行与 `#` 注释，容忍列表符号与反引号（手写时很常见）。
+    文件不存在返回空列表；**文件存在但一条都没有**也算"有声明"（见 legacy_explicit），
+    那等于说"没有旧记录"，不是"没声明"。
+    """
+    path = legacy_decl_path(container)
+    if not os.path.isfile(path):
+        return []
+    pats = []
+    for line in read(path).splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        s = re.sub(r"^[-*+]\s*", "", s).strip().strip("`")
+        if s:
+            pats.append(s)
+    return pats
+
+
+def legacy_explicit(container: str, cli: str | None, cfg: "Config | None" = None
+                    ) -> tuple[bool, list[str]]:
     """返回 (是否用了显式清单, 清单)。
 
-    显式清单的两个来源：命令行 `--legacy`、容器根的 `LEGACY.md`。
-    两者都没有时返回 `(False, [])`——调用方使用**兜底判据**（见 `LEGACY_AUTO_MIN_RECORDS`）。
+    显式清单的四个来源，优先级从高到低：命令行 `--legacy`、`.config.json` 的 `legacy`、
+    容器根的 `LEGACY.md`。都没有时返回 `(False, [])`——调用方使用**兜底判据**
+    （见 `LEGACY_AUTO_MIN_RECORDS`）。
+
+    `cfg` 是 `load_project_config` 的结果：给了就用它（前三处来源在那边已经合并好），
+    没给就照旧只读 `LEGACY.md` —— 那条路留着，是为"只装了脚本、没走配置解析"的调用方。
     """
+    if cfg is not None:
+        if cli is not None:
+            return True, [p.strip() for p in cli.split(",") if p.strip()]
+        return (True, list(cfg.legacy)) if cfg.legacy_declared else (False, [])
     if cli is not None:
         return True, [p.strip() for p in cli.split(",") if p.strip()]
-    path = legacy_decl_path(container)
-    if os.path.isfile(path):
-        pats = []
-        for line in read(path).splitlines():
-            s = line.strip()
-            if not s or s.startswith("#"):
-                continue
-            s = re.sub(r"^[-*+]\s*", "", s).strip().strip("`")
-            if s:
-                pats.append(s)
-        return True, pats
+    if os.path.isfile(legacy_decl_path(container)):
+        return True, legacy_decl_patterns(container)
     return False, []
 
 
@@ -504,9 +763,10 @@ def resolve_layout(root: str, container_arg: str | None, lessons_arg: str | None
 
     容器回退顺序 `work_log/` → `journal/` → `work-log/`：新项目用 `work_log/`；
     旧项目只要还在用旧名就照旧被认出来，**不迁移、不改名、不警告**。
+    要拿生效配置（来源、`mode`、`legacy`、`snapshotEntries`）就用 `load_project_config`。
     """
-    container = resolve_dir(root, container_arg, CONTAINER_FALLBACKS)
-    return container, resolve_lessons(root, container, lessons_arg)
+    container, lessons, _cfg = load_project_config(root, container_arg, lessons_arg)
+    return container, lessons
 
 
 def lessons_skip(lessons: str | None) -> tuple[str, ...]:
@@ -1148,18 +1408,21 @@ def _check_links(root: str, path: str, rep: Report) -> None:
 def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bool,
           legacy: str | None = None) -> Report:
     rep = Report(strict)
-    journal, lessons = resolve_layout(root, journal_arg, lessons_arg)
+    journal, lessons, cfg = load_project_config(root, journal_arg, lessons_arg, legacy)
     if not journal:
         rep.add("ERROR", root, "找不到记录容器（work_log/；旧名 journal/、work-log/ 也认）；先按 templates.md 初始化")
         return rep
     jname = rel(root, journal)
+    # 配置文件的问题与提示只在这里报一次（不改退出码：提示是 INFO，值非法是 WARN）。
+    for lv, msg in config_notes_for_report(cfg):
+        rep.add(lv, rel(root, cfg.path) if cfg.path else jname, msg)
     index = os.path.join(journal, "README.md")
     if not os.path.isfile(index):
         # 台账是**建议**不是门槛：实测五条线里有四条根本没有台账文件，记录照样在写。
         # 缺它只报 info（索引层缺位），不像以前那样一上来就一条 ERROR。
         rep.add("INFO", jname, f"没有台账 `{os.path.basename(index)}`（索引层可选；"
                                f"要导航与状态就按 templates.md 补一份）")
-    explicit, pats = legacy_explicit(journal, legacy)
+    explicit, pats = legacy_explicit(journal, legacy, cfg)
 
     entries = find_entries(journal, lessons_skip(lessons))
     recs = find_records(journal, lessons_skip(lessons))
@@ -1325,14 +1588,15 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
 def lint(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bool,
          legacy: str | None = None) -> Report:
     rep = Report(strict)
-    journal, lessons = resolve_layout(root, journal_arg, lessons_arg)
+    journal, lessons, cfg = load_project_config(root, journal_arg, lessons_arg, legacy)
     if not journal:
         rep.add("ERROR", root, "找不到记录容器（work_log/；旧名 journal/、work-log/ 也认）")
         return rep
-    # 档位只在台账里读一次：粗档位的额外义务按它判（默认档不加要求）。
-    mode, _mode_why, _mode_default = _mode_and_why(journal)
+    # 档位只在台账里读一次（台账没有 `精细度` 时退回配置文件的 `mode`）：
+    # 粗档位的额外义务按它判（默认档不加要求）。
+    mode, _mode_why, _mode_default = _mode_and_why(journal, cfg.mode)
     recs = find_records(journal, lessons_skip(lessons))
-    explicit, pats = legacy_explicit(journal, legacy)
+    explicit, pats = legacy_explicit(journal, legacy, cfg)
     auto_paths = set() if explicit else auto_legacy_paths(recs)
     for rec in recs:
         path = rec["path"]
@@ -1432,10 +1696,19 @@ def mode_value(mode: str, why: str = "") -> str:
     return f"{mode}（原因：{why}）" if why else mode
 
 
-def _mode_and_why(journal: str) -> tuple[str, str, bool]:
-    """返回 (生效档位, 原因, 是否来自默认值)。缺字段或值认不出来都算默认值。"""
+def _mode_and_why(journal: str, cfg_mode: str | None = None) -> tuple[str, str, bool]:
+    """返回 (生效档位, 原因, 是否来自默认值)。
+
+    档位有**两个不同的问题**，不要混：
+    - 「这个项目当前用哪档」= 台账 `## 当前状态` 的 `精细度` 字段，台账说了算；
+    - 「新项目默认用哪档」= `.config.json` 的 `mode`，只在台账**没有**这一栏时兜底。
+
+    所以这里的顺序是：台账 → `cfg_mode` → `MODE_DEFAULT`。缺字段或值认不出来都算默认值。
+    """
     mode, why = mode_of(read(os.path.join(journal, "README.md")))
-    return (mode, why, False) if mode else (MODE_DEFAULT, "", True)
+    if mode:
+        return mode, why, False
+    return (cfg_mode or MODE_DEFAULT), "", True
 
 
 # --------------------------------------------------------------------------- #
@@ -1493,7 +1766,7 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
     `--out` 是给调用方自己落盘用的，路径由调用方给。
     """
     root = os.path.abspath(args.root)
-    journal, lessons = resolve_layout(root, args.journal, args.lessons)
+    journal, lessons, cfg = load_project_config(root, args.journal, args.lessons)
     if not journal:
         print("ERROR: 找不到记录容器")
         return 1
@@ -1501,7 +1774,9 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
     if not recs:
         print("没有记录")
         return 0
-    picked = list(reversed(recs))[: args.entries]
+    # `--entries` 不给时用配置文件的 `snapshotEntries`（再不给是内置默认 12）。
+    entries = args.entries if args.entries is not None else cfg.snapshot_entries
+    picked = list(reversed(recs))[: entries]
     out = [f"# SNAPSHOT  {rel(root, journal)}"
            f"  （最近 {len(picked)} / 共 {len(recs)} 篇；只读快照，不改任何文件）", ""]
     without = 0
@@ -1982,7 +2257,7 @@ def cmd_mode(args: argparse.Namespace) -> int:
     那条已经测过的外科式路径，不另造写文件逻辑。
     """
     root = os.path.abspath(args.root)
-    journal, lessons = resolve_layout(root, args.journal, args.lessons)
+    journal, lessons, cfg = load_project_config(root, args.journal, args.lessons)
     if not journal:
         print("ERROR: 找不到记录容器（work_log/；旧名 journal/、work-log/ 也认），"
               "先按 templates.md 初始化")
@@ -1991,7 +2266,7 @@ def cmd_mode(args: argparse.Namespace) -> int:
     if not find_labeled_section(lines, 2, L_STATUS):
         print(f"ERROR: 索引里没有 `## {K_STATUS}` 块")
         return 1
-    cur, why, is_default = _mode_and_why(journal)
+    cur, why, is_default = _mode_and_why(journal, cfg.mode)
 
     if args.set is None and not args.why:
         print(f"{cur}    {MODE_MEANING[cur]}")
@@ -1999,7 +2274,8 @@ def cmd_mode(args: argparse.Namespace) -> int:
             cell = mode_cell(text)
             tail = (f"认不出 `{cell}`（只认 full/session/digest/milestone），按默认档处理"
                     if cell else "台账里没有 `精细度` 字段")
-            print(f"（{tail}：当前取默认档 `{MODE_DEFAULT}`）")
+            where = ("配置文件的 `mode`" if cfg.src[CFG_MODE] == SRC_FILE else "内置默认")
+            print(f"（{tail}：当前取{where} `{cfg.mode}`）")
         if why:
             print(f"原因：{why}")
         print(f"切换：`journal.py mode --set full|session|digest|milestone`（当前 {MODE_DEFAULT}）")
@@ -2026,6 +2302,195 @@ def cmd_mode(args: argparse.Namespace) -> int:
     if rc == 0:
         print(f"精细度：{value}    {MODE_MEANING[mode]}")
     return rc
+
+
+# --------------------------------------------------------------------------- #
+# config：项目配置文件（`<容器>/.config.json`）
+# --------------------------------------------------------------------------- #
+def _set_in_text(text: str, key: str, value_json: str) -> str | None:
+    """只改 `"key": <值>` 那一处，其余字节原样不动；改不动返回 None。
+
+    值的结束位置交给 `json.JSONDecoder.raw_decode`，比自己写扫描器可靠。
+    匹配要求键**独占行首**（`--write` 写出的是缩进两格、一字段一行），
+    所以不会误伤嵌套对象里同名的键。
+    """
+    m = re.search(rf'^([ \t]*"{re.escape(key)}"[ \t]*:[ \t]*)', text, re.M)
+    if not m:
+        return None
+    start = m.end()
+    try:
+        _obj, end = json.JSONDecoder().raw_decode(text, start)
+    except ValueError:
+        return None
+    return text[:start] + value_json + text[end:]
+
+
+def _set_field_surgical(text: str, key: str, value: object) -> str | None:
+    """就地把一个字段改成 value；改完解析回来对不上就返回 None（调用方改用整体重排）。
+
+    对不上时**绝不写出去**：宁可重排全文，也不能把一份序列化失败的值留在磁盘上。
+    """
+    edited = _set_in_text(text, key, json.dumps(value, ensure_ascii=False))
+    if edited is None:
+        return None
+    try:
+        return edited if json.loads(edited).get(key) == value else None
+    except ValueError:
+        return None
+
+
+def _dump_config_text(data: dict, nl: str, trailing: bool) -> str:
+    """把配置对象编回 JSON 文本：字段按固定顺序，未知字段附在后面，换行风格照传入的。"""
+    ordered = {k: data[k] for k in CONFIG_FIELDS if k in data}
+    ordered.update({k: v for k, v in data.items() if k not in ordered})
+    body = json.dumps(ordered, ensure_ascii=False, indent=2)
+    if nl != "\n":
+        body = body.replace("\n", nl)
+    return body + (nl if trailing else "")
+
+
+def parse_config_sets(pairs: list[str]) -> tuple[list[tuple[str, object]], int]:
+    """解析并校验 `--set key=value`，返回 ([(字段, 规范值)], 退出码)。
+
+    取值一律在这里手工校验（与 `mode --set` 同一套口径），不用 argparse 的 choices：
+    choices 会把别名表原样倒进报错里，既长又难读。
+    """
+    out: list[tuple[str, object]] = []
+    for pair in pairs:
+        if "=" not in pair:
+            print(f"ERROR: 认不出的 --set `{pair}`（应写成 key=value）")
+            return [], 2
+        key, raw = pair.split("=", 1)
+        key, raw = key.strip(), raw.strip()
+        if key not in CONFIG_FIELDS:
+            print(f"ERROR: 认不出的字段 `{key}`；只认 {' / '.join(CONFIG_FIELDS)}：")
+            for k in CONFIG_FIELDS:
+                print(f"       {k}：{CONFIG_FIELD_HELP[k]}")
+            return [], 2
+        if key == CFG_MODE:
+            canon = MODE_ALIASES.get(raw.lower())
+            if canon is None:
+                print(f"ERROR: 认不出的精细度 `{raw}`；只认 full / session / digest / milestone"
+                      f"（也认中文：{'、'.join(MODES[m][1] for m in MODES)}）")
+                return [], 2
+            out.append((key, canon))
+        elif key in (CFG_CONTAINER, CFG_LESSONS):
+            if not is_dir_name(raw):
+                print(f"ERROR: `{key}` 必须是目录名（非空、不含 / 与 \\）：`{raw}`")
+                return [], 2
+            out.append((key, raw))
+        elif key == CFG_LEGACY:
+            out.append((key, [p.strip() for p in raw.split(",") if p.strip()]))
+        else:
+            try:
+                n = int(raw)
+            except ValueError:
+                n = 0
+            if n < 1:
+                print(f"ERROR: `{CFG_SNAPSHOT_ENTRIES}` 必须是正整数：`{raw}`")
+                return [], 2
+            out.append((key, n))
+    return out, 0
+
+
+def _print_config_view(root: str, cfg: Config, container: str | None) -> None:
+    """只读视图：逐字段打印生效值与来源。"""
+    shown = rel(root, cfg.path) if cfg.path else CONFIG_NAME
+    if container is None:
+        state = "找不到容器：全部取内置默认"
+    else:
+        state = "存在" if cfg.exists else "不存在：全部取内置默认"
+    print(f"# CONFIG  {shown}  （{state}）")
+    width = max(len(k) for k in CONFIG_FIELDS)
+    for key in CONFIG_FIELDS:
+        print(f"{key:<{width}} = {_pad(cfg.value_text(key), 16)} ← {cfg.src[key]}")
+    if cfg.src[CFG_LEGACY] == SRC_DEFAULT and not cfg.legacy_declared:
+        print(f"{'':<{width}}   （没有显式清单时按规模兜底：记录 ≥ "
+              f"{LEGACY_AUTO_MIN_RECORDS} 篇的容器整批算旧记录）")
+    notes = list(cfg.problems) + list(cfg.notes)
+    if notes:
+        print("\n提示：")
+        for n in notes:
+            print(f"! {n}")
+    if container is None:
+        print("\n提示：找不到记录容器，全部按内置默认；`--write` / `--set` 需要先有容器。")
+    print("\n（`config --write` 按当前生效值写出配置文件；`config --set key=value` 改一项。）")
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    """项目配置文件：查看生效值与来源 / 写出 / 改一项。
+
+    这个命令存在的理由只有一个：**让解析看得见**。同一个值可能来自命令行、配置文件或
+    内置默认，光看行为分不出来——改了命令行参数却没生效，很可能是因为配置文件把它定死了。
+    """
+    root = os.path.abspath(args.root)
+    container, _lessons, cfg = load_project_config(root, args.journal, args.lessons, args.legacy)
+
+    if args.set:
+        pairs, rc = parse_config_sets(args.set)
+        if rc:
+            return rc
+        if container is None:
+            print("ERROR: 找不到记录容器（work_log/；旧名 journal/、work-log/ 也认）——"
+                  "配置文件住在容器里，先按 templates.md 建容器")
+            return 1
+        if not cfg.exists:
+            print(f"ERROR: {rel(root, cfg.path)} 还不存在；先跑 `config --write` 建它，再 `--set`")
+            return 1
+        text = read_raw(cfg.path)
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            print(f"ERROR: {rel(root, cfg.path)} 读不出来（不是合法 JSON 对象）；"
+                  f"先修好它，或者删掉它重新 `config --write`。")
+            return 2
+        nl = nl_of(text)
+        trailing = text.endswith(("\n", "\r"))
+        for key, value in pairs:
+            data[key] = value
+        if args.dry_run:
+            print("[dry-run] 将写入：" + "、".join(f"{k}={v}" for k, v in pairs))
+            return 0
+        # 首选"只改那一行"：其余字节（含 CRLF、缩进、排版）原样保留。
+        # 改不动（键不在一行行首、值跨多行且对不上）才整体重排——重排仍保留换行风格与其余字段。
+        new_text = text
+        for key, value in pairs:
+            edited = _set_field_surgical(new_text, key, value)
+            new_text = edited if edited is not None else _dump_config_text(data, nl, trailing)
+        write_raw(cfg.path, new_text)
+        print(f"config 已更新：{rel(root, cfg.path)}：" + "、".join(f"{k}={v}" for k, v in pairs))
+        _after = load_project_config(root, args.journal, args.lessons, args.legacy)[2]
+        for n in _after.problems:
+            print(f"WARN: {n}")
+        for n in _after.notes:
+            print(f"! {n}")
+        return 0
+
+    if args.write:
+        if container is None:
+            print("ERROR: 找不到记录容器（work_log/；旧名 journal/、work-log/ 也认）——"
+                  "配置文件住在容器里，先按 templates.md 建容器")
+            return 1
+        if cfg.exists and not args.force:
+            print(f"ERROR: {rel(root, cfg.path)} 已存在；要覆盖就加 `--force`")
+            print("       改一个字段用 `config --set key=value`（会保留其余字段）。")
+            return 1
+        text = read_raw(cfg.path) if cfg.exists else ""
+        nl = nl_of(text) if text else "\n"
+        body = _dump_config_text(cfg.as_data(), nl, True)
+        if args.dry_run:
+            print(f"[dry-run] 将写入 {rel(root, cfg.path)}：")
+            print(body.rstrip("\r\n"))
+            return 0
+        write_raw(cfg.path, body)
+        print(f"config 已写出：{rel(root, cfg.path)}")
+        return 0
+
+    # 只读视图：`--show` 与"什么标志都不给"是同一个行为。
+    _print_config_view(root, cfg, container)
+    return 2 if cfg.problems else 0
 
 
 def cmd_todo(args: argparse.Namespace) -> int:
@@ -2694,11 +3159,21 @@ def cmd_retro(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--work-log", dest="work_log", default=None,
-                   help="工作记录容器目录名，默认 work_log/（回退旧名 journal/、work-log/）")
+                   help="工作记录容器目录名；默认按目录回退发现 work_log/ → journal/ → work-log/"
+                        "（配置文件里的 container 字段改不了这里，它管不了自己所在的目录）")
     p.add_argument("--journal", default=None,
                    help="已弃用：--work-log 的旧名，等价（现在它命名的是**容器**）")
     p.add_argument("--lessons", default=None,
-                   help="容器内的经验目录名，默认 lessons/（旧布局也认 <根>/lessons/）")
+                   help="容器内的经验目录名，默认 lessons/（也认配置文件里的 lessons；"
+                        "目录实际存在才作数，顺序：命令行 → 配置 → <容器>/lessons/ → <根>/lessons/）")
+
+
+def _add_legacy(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--legacy", default=None, metavar="GLOB[,GLOB…]",
+                   help="旧记录清单（逗号分隔的 glob / 文件名 / 相对路径）；命中的记录只报 info。"
+                        "不给则读 `.config.json` 的 legacy，再读容器根的 LEGACY.md，"
+                        "再不给默认按规模兜底（记录 ≥ 5 篇整批算旧记录）。"
+                        "传空串 `--legacy \"\"` 表示没有旧记录（全部按新格式判）")
 
 
 def _add_root(p: argparse.ArgumentParser) -> None:
@@ -2729,8 +3204,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    def add(name: str, func, help_text: str, root: bool = True):
-        p = sub.add_parser(name, help=help_text)
+    def add(name: str, func, help_text: str, root: bool = True, epilog: str | None = None):
+        kw = {"epilog": epilog, "formatter_class": argparse.RawDescriptionHelpFormatter} if epilog else {}
+        p = sub.add_parser(name, help=help_text, **kw)
         _add_common(p)
         if root:
             _add_root(p)
@@ -2751,18 +3227,14 @@ def build_parser() -> argparse.ArgumentParser:
                                     lambda: check(os.path.abspath(a.root), a.journal, a.lessons,
                                                   a.strict, a.legacy), a), "结构门禁")
     p.add_argument("--strict", action="store_true", help="把 WARN 当 ERROR")
-    p.add_argument("--legacy", default=None, metavar="GLOB[,GLOB…]",
-                   help="旧记录清单（逗号分隔的 glob / 文件名 / 相对路径）；命中的记录只报 info。"
-                        "不给则读容器根的 LEGACY.md，再不给默认全库都算旧记录。"
-                        "传空串 `--legacy \"\"` 表示没有旧记录（全部按新格式判）")
+    _add_legacy(p)
     p.add_argument("--quiet", action="store_true")
 
     p = add("lint", lambda a: _run(Report(a.strict),
                                    lambda: lint(os.path.abspath(a.root), a.journal, a.lessons,
                                                 a.strict, a.legacy), a), "内容质量门禁")
     p.add_argument("--strict", action="store_true")
-    p.add_argument("--legacy", default=None, metavar="GLOB[,GLOB…]",
-                   help="同 check：旧记录清单（逗号分隔）；不给则读 LEGACY.md，再不给默认全库")
+    _add_legacy(p)
     p.add_argument("--quiet", action="store_true")
 
     p = add("brief", cmd_brief, "压缩上下文快照")
@@ -2772,7 +3244,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--width", type=int, default=200, help="每行截断宽度（默认 200 字符）")
 
     p = add("snapshot", cmd_snapshot, "最近 N 篇的入口元信息汇总（只读）")
-    p.add_argument("--entries", type=int, default=12, help="汇总最近多少篇（默认 12）")
+    p.add_argument("--entries", type=int, default=None,
+                   help=f"汇总最近多少篇（默认取配置文件的 snapshotEntries，"
+                        f"再不给是内置默认 {SNAPSHOT_ENTRIES_DEFAULT}）")
     p.add_argument("--width", type=int, default=200, help="每行截断宽度（默认 200 字符）")
     p.add_argument("--out", default=None, help="写到文件（不给就只打印；容器本身永不改动）")
 
@@ -2824,6 +3298,37 @@ def build_parser() -> argparse.ArgumentParser:
                         "（也认中文别名：完整 / 会话 / 摘要 / 里程碑，写入时一律规范化）")
     p.add_argument("--why", default=None,
                    help="附一行切换原因（写进 `精细度` 字段：`session（原因：…）`）")
+    p.add_argument("--dry-run", action="store_true")
+
+    p = add("config", cmd_config,
+            "项目配置文件（<容器>/.config.json）：查看生效值与来源 / 写出 / 改一项",
+            epilog="""\
+优先级只有三层，不重叠：
+    命令行参数  >  <容器>/.config.json  >  内置默认
+缺这个文件**不是错误**，它等于「全部取内置默认」。
+
+两个名字字段（container / lessons）与其他字段不一样，要单独理解：
+它们命名的正是配置文件**自己所在的目录**，所以读配置文件之前就得先知道它们——
+只能按目录发现。于是配置文件里的值只是「新项目该叫什么」的备注，
+**写进去不代表这次生效**：目录实际存在才作数，不一致时以实际目录为准并报出来。
+这也正是插件在项目初始化时把这两个名字写进配置文件的原因。
+
+mode 同样只提供**新项目的初始档位**：台账 `## 当前状态` 有 `精细度` 字段时，
+一切以台账为准（`mode` 命令读写的一直是台账那一栏）。
+
+例：
+    python scripts/journal.py config                     # 看生效值与来源
+    python scripts/journal.py config --write             # 按当前生效值写出配置文件
+    python scripts/journal.py config --set mode=digest   # 只改一个字段（保留其余）
+    python scripts/journal.py config --set legacy=0007-*,archive/**
+""")
+    p.add_argument("--show", action="store_true", help="只读视图（默认行为）")
+    p.add_argument("--write", action="store_true",
+                   help="按当前生效值写出配置文件；已存在时拒绝覆盖（除非 --force）")
+    p.add_argument("--force", action="store_true", help="配合 --write：覆盖已存在的文件")
+    p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                   help=f"就地改一个字段（可重复）；字段只认 {' / '.join(CONFIG_FIELDS)}")
+    _add_legacy(p)
     p.add_argument("--dry-run", action="store_true")
 
     p = add("todo", cmd_todo, "待办清单")

@@ -5,13 +5,16 @@
 
 | 参数 | 含义 | 默认与回退 |
 |---|---|---|
-| `--work-log NAME` | **容器目录**名（台账 + 记录 + 经验 + 日志都收在它下面） | 默认 `work_log/`；回退旧名 `journal/`、`work-log/` |
+| `--work-log NAME` | **容器目录**名（台账 + 记录 + 经验 + 日志都收在它下面） | 默认 `work_log/`；回退旧名 `journal/`、`work-log/`。配置文件里的 `container` 改不了它 |
 | `--journal NAME` | 上一个参数的旧名，**等价**（已弃用但保留） | 同上 |
-| `--lessons NAME` | 容器内的**经验目录**名 | 默认 `lessons/`；先找 `<容器>/lessons/`，再找 `<根>/lessons/`（旧布局） |
+| `--lessons NAME` | 容器内的**经验目录**名 | 默认 `lessons/`；再认配置文件里的 `lessons`；顺序 `命令行 → 配置 → <容器>/lessons/ → <根>/lessons/` |
 
 > 旧项目（`journal/` + 顶层 `lessons/`）**不改名、不迁移、不警告**，直接就能用；
 > 解析顺序见 [conventions.md](conventions.md)「旧布局的读取回退」。
 > **只读命令**不修改任何文件；**写入命令**都支持 `--dry-run`，做外科式行级编辑（保留 CRLF 与其余字节）。
+
+**优先级只有三层**：`命令行参数 > <容器>/.config.json > 内置默认`。
+缺 `.config.json` 不是错误，它等于"全部取内置默认"。逐字段看生效值与来源用 `config`（见下）。
 
 ```bash
 python scripts/journal.py --help          # 命令总览
@@ -52,6 +55,7 @@ python scripts/journal.py snapshot --entries 20 --out SNAP.md
   也认 `### 入口` / `### 元信息` 小节式。只输出确实有值的字段，缺的不占位。
 - **没有入口块不是错误**：那一行显示「（没有入口元信息块）」，末尾统计几篇没写，命令照常退出 0。
 - `--entries`（默认 12）按**身份降序**取最近 N 篇：日期式容器按日期、编号式容器按篇号。
+  默认值可以被 `.config.json` 的 `snapshotEntries` 改掉；命令行给了 `--entries` 就以命令行为准。
 
 输出样例（实测 `embeding try/3_param_block`，去掉了一部分）：
 
@@ -72,6 +76,7 @@ python scripts/journal.py snapshot --entries 20 --out SNAP.md
 |---|---|---|
 | `new` | 生成下一篇记录，可选自动进索引 | `new --title "…" --iter 154 --insert --stage "A. 起步"` |
 | `mode` | **记录精细度**（一篇 = 什么）：查看 / 切换档位 | `mode` / `mode --set digest --why "阶段收口"` |
+| `config` | **项目配置文件**（`<容器>/.config.json`）：看生效值与来源 / 写出 / 改一项 | `config` / `config --write` / `config --set mode=digest` |
 | `status` | 当前状态块：查看 / 改字段 / 改日期 / 归档旧块 | `status --set "核对=抽样 30 条全部通过" --date` / `status --roll` |
 | `todo` | 滚动待办：加 / 勾选 / 清理已完成 | `todo --add "…"` / `todo --done "子串"` / `todo --drop-done` |
 | `index sync` | 把漏进索引的根目录记录补成表行（方面取自「结论：」，可用 `--aspect` 覆盖） | `index sync --stage "B. 迭代" --aspect 验证` |
@@ -110,13 +115,15 @@ python scripts/journal.py mode --set full --dry-run
 
 ```
 full   一段可交付的子单元就是一篇，一次会话可能开出 2–3 篇。
-（台账里没有 `精细度` 字段：当前取默认档 `full`）
+（台账里没有 `精细度` 字段：当前取内置默认 `full`）
 切换：`journal.py mode --set full|session|digest|milestone`（当前 full）
 ```
 
 要点：
 
-- **没有 `精细度` 字段不算错**：报默认档 `full` 并明说它是默认。这次改动之前写下的台账照样能跑。
+- **没有 `精细度` 字段不算错**：报默认档并明说它的来源。来源是 `.config.json` 的 `mode`（有就取），
+  否则是内置默认 `full`。这次改动之前写下的台账照样能跑。
+- **配置的 `mode` 只是初始值**：台账有 `精细度` 时一切以台账为准（`mode` 读写的一直是台账那一栏）。
 - **默认档为什么是 `full`**：实测原型 111 篇带日期的记录分布在 12 个日期上（平均 9.2 篇/天，
   最多一天 **34 篇**）。`session` 会把那 34 篇压成一篇，埋掉 34 个可独立查阅的单元。
   粗档位用于确实低强度、以阶段为单位的项目（写作、调研、运维）。
@@ -127,6 +134,63 @@ full   一段可交付的子单元就是一篇，一次会话可能开出 2–3 
 - 没有容器时报「找不到记录容器」并退出 1，与 `status` / `todo` 一致。
 - **档位不放宽验证**：任何档位下 `check` 都照报验证类小节的问题。`digest` / `milestone` 另有一条义务——
   写明这一轮**刻意没记什么**（`未记录：…`），缺了由 `lint` 报 WARN（**不是** ERROR，老项目不会因此变红）。
+  档位来自台账或配置文件的 `mode` 时，这条义务一样成立。
+
+### config：项目配置文件（`<容器>/.config.json`）
+
+```bash
+python scripts/journal.py config                       # 看每个字段的生效值与来源
+python scripts/journal.py config --write               # 按当前生效值写出配置文件
+python scripts/journal.py config --write --force       # 覆盖已存在的那份
+python scripts/journal.py config --set mode=digest     # 只改一个字段，保留其余字段与换行风格
+python scripts/journal.py config --set legacy=0007-*,archive/**
+python scripts/journal.py config --legacy "0007-*"     # 看命令行把 legacy 压成了什么
+```
+
+配置文件的字段（都可以缺；缺就是内置默认）：
+
+| 字段 | 类型 | 内置默认 | 生效在 |
+|---|---|---|---|
+| `mode` | `full` / `session` / `digest` / `milestone` | `full` | 台账**没有** `精细度` 字段时的默认档 |
+| `container` | string | `work_log` | **只是备注**，见下 |
+| `lessons` | string | `lessons` | 经验目录的候选名（目录存在才作数） |
+| `legacy` | string[] | `[]` | 同 `--legacy`（渐进原则的旧记录清单） |
+| `snapshotEntries` | number | `12` | `snapshot` 的默认 `--entries` |
+
+**优先级只有三层**：`命令行参数 > <容器>/.config.json > 内置默认`。
+每一层都能单独压过下一层，`config` 会把每个字段实际来自哪一层打出来：
+
+```
+# CONFIG  work_log/.config.json  （存在）
+mode            = digest           ← .config.json
+container       = work_log         ← 内置默认
+lessons         = lessons          ← .config.json
+legacy          = （空）           ← 内置默认
+snapshotEntries = 12               ← .config.json
+```
+
+**两个名字字段要单独理解。** `container` 与 `lessons` 命名的正是配置文件**自己所在的目录**，
+所以读配置文件之前就得先知道它们——只能按目录发现。于是：
+
+- `container`：按目录发现（`--work-log` → `work_log/` → `journal/` → `work-log/`）。配置文件里写的
+  `container` **改不了生效值**，它连自己所在的目录都指不动。**只报，不用，也不报错**。
+- `lessons`：顺序是 `--lessons` → 配置里的 `lessons` → `<容器>/lessons/` → `<根>/lessons/`。
+  配置里的名字只是"上哪儿找"的提示，**目录真的存在才算数**；不一致时以实际目录为准并报出来。
+
+所以这两个字段最好理解成"**新项目该叫什么**"——这也正是插件在项目初始化时把它们写进配置文件的原因。
+已建好的项目改名不会被追认：真正决定读哪儿的一直是目录本身。
+
+要点：
+
+- **缺配置文件不是错误**：全部取内置默认，`config` 照常退出 0。
+- `container` / `lessons` 的值必须是目录名（非空、不含 `/` 与 `\`）。
+- `--set` **就地改一行**：保留 CRLF 与其余字段（含工具不认识的字段）。改不动时才整体重排，重排也保留换行风格。
+- `--set` 的取值手工校验：**未知档位 / 未知字段 / 非正整数各自退出码 2**，不改任何文件。
+  未知字段会把 5 个合法字段连取值说明一起列出来。
+- 配置文件**不存在**时 `--set` 拒绝（先 `config --write`）；`--write` 对已存在的文件拒绝覆盖（除非 `--force`）。
+- 配置**读不动**（不是合法 JSON、值非法、字段名认不出）时：其它命令一律按内置默认继续跑，
+  `config` 逐条打印并以退出码 2 收场，`check` 也提一句（INFO，不进退出码）。
+- 没有容器时：只读视图照常打印（等于全部内置默认），`--write` / `--set` 报「找不到记录容器」退出 1。
 
 ## 三、整理与清理（记录量增长后）
 
@@ -196,8 +260,9 @@ full   一段可交付的子单元就是一篇，一次会话可能开出 2–3 
 
 新写的记录按新规格判 error；**改动之前写下的记录只报 info**，避免"第一次跑就是一片红、然后学会忽略它"。
 
-判定依据是**显式清单**，不是日期启发式（日期不可靠）。三处来源，**优先级从高到低**——
-命令行给了就以它为准（连空串也算给了），否则看 `LEGACY.md`，都没有才用规模兜底：
+判定依据是**显式清单**，不是日期启发式（日期不可靠）。四处来源，**优先级从高到低**——
+命令行给了就以它为准（连空串也算给了），否则看 `.config.json` 的 `legacy`，再看 `LEGACY.md`，
+都没有才用规模兜底：
 
 ```bash
 # 1) 命令行（最高优先级；显式给了就以它为准，连空串也算显式）
@@ -206,15 +271,20 @@ python scripts/journal.py check --legacy ""          # 没有旧记录：全部�
 python scripts/journal.py lint  --legacy "comfy-*"   # lint 同样支持
 ```
 
+```jsonc
+// 2) <容器>/.config.json 的 legacy（跟着项目进版本控制；--legacy 仍可压过它）
+{ "legacy": ["0007-*", "archive/**"] }
+```
+
 ```markdown
-<!-- 2) 容器根的 LEGACY.md（中等优先级；跟着容器进版本控制，团队共用） -->
+<!-- 3) 容器根的 LEGACY.md（跟着容器进版本控制，团队共用） -->
 # 旧记录
 
 - 0001-*
 - archive/**
 ```
 
-3. **规模兜底**（最低优先级）：前两者都没有时，**记录 ≥ 5 篇**的容器整批算旧记录，
+4. **规模兜底**（最低优先级）：前三者都没有时，**记录 ≥ 5 篇**的容器整批算旧记录，
    **少于 5 篇**的容器算新项目。所以老项目零配置也是干净输出，而新项目里写坏的记录照报 error。
    这条兜底**宁可多报也不放过新记录**：体量小的老项目会被当成新项目，用 `LEGACY.md` 收准即可。
 
@@ -243,6 +313,11 @@ Summary: 7 error / 0 warn / 130 info  (--strict)
 ## 六、组合套路（省上下文的标准动作）
 
 ```bash
+# 0. 新项目（可选）：把默认档与旧记录清单写进项目配置文件，之后每次执行都立即生效
+python scripts/journal.py config --write                  # 先按当前生效值落盘
+python scripts/journal.py config --set mode=digest        # 再改要改的那一项
+python scripts/journal.py config                         # 随时确认每个值来自哪一层
+
 # 1. 接手：一屏拿到坐标
 python scripts/journal.py brief
 
@@ -272,7 +347,7 @@ python scripts/journal.py digest --out HANDOFF.md
 
 | 文件 | 用途 |
 |---|---|
-| `_selftest.py` | 自测全部命令（临时目录，含 CRLF 保真、"只改目标行"、非编程场景、非 UTF-8 拒写、新布局与旧布局回退、精细度档位与"验证不随档位放宽"、**两种命名约定、渐进原则、实质验证、snapshot 只读**等断言）。`--root DIR` 指定夹具父目录（写入受限的沙箱里用），`--keep` 保留夹具排查 |
+| `_selftest.py` | 自测全部命令（临时目录，含 CRLF 保真、"只改目标行"、非编程场景、非 UTF-8 拒写、新布局与旧布局回退、精细度档位与"验证不随档位放宽"、**两种命名约定、渐进原则、实质验证、snapshot 只读、项目配置文件与其三层优先级**等断言）。`--root DIR` 指定夹具父目录（写入受限的沙箱里用），`--keep` 保留夹具排查 |
 | `_package.py` | 把 skill 源目录同步进可发布仓库（开发工作区专用，不随包发布）；`--check` 兼作漂移与插件文件完整性门禁 |
 | `_measure.py` | 对现成 `work_log/`（或旧 `work-log/`）+ `lessons/` 做一次性测量，`references/analysis.md` 的数字由它复现；同时报出台账的 `精细度`（缺字段则报默认档） |
 
@@ -285,3 +360,4 @@ python scripts/journal.py digest --out HANDOFF.md
 | `ARCHIVE.md` | `archive --stage` | 归档索引，每次归档补一行 |
 | `COLD-STORE.md` | `prune --zip --apply` | 冷存清单 |
 | `LEGACY.md` | **人**（工具只读） | 旧记录声明（见「渐进原则」）；工具**从不写**它 |
+| `.config.json` | `config --write` / `config --set` | 项目配置文件（见 §二「config」）；**缺它等于全部内置默认** |

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -990,11 +991,14 @@ FMT_NOENTRY_ENTRY = """# 2026-09-05 没有入口元信息块
 """
 
 
-def fmt_ledger(files: list[str], status: str = "2026-09-06") -> str:
+def fmt_ledger(files: list[str], status: str = "2026-09-06", mode: str | None = "full") -> str:
     """按**实际存在的文件**生成一份自洽的台账（索引行 + 状态块）。
 
     夹具里最容易犯的错是「索引列了一个不存在的文件」——那会判成死链，把用例
     要测的东西盖掉。所以索引行由这一个函数统一生成，不手写。
+
+    `mode=None` 时**不写** `精细度` 字段：那是「改动之前写下的台账」，
+    也正是验证「配置文件的 mode 只是初始值」所需要的形状。
     """
     nl = "\n"
     rows = "".join(f"| [{f}]({f}) | 说明 |{nl}" for f in files)
@@ -1003,7 +1007,8 @@ def fmt_ledger(files: list[str], status: str = "2026-09-06") -> str:
             f"## 待办（滚动清单）{nl}{nl}- [ ] x{nl}")
     if not status:
         return head
-    return head + f"{nl}## 当前状态（{status}）{nl}{nl}- 阶段 / 版本：v1{nl}- 精细度：full{nl}"
+    fields = f"- 阶段 / 版本：v1{nl}" + (f"- 精细度：{mode}{nl}" if mode else "")
+    return head + f"{nl}## 当前状态（{status}）{nl}{nl}{fields}"
 
 
 def format_phase(parent: str) -> None:
@@ -1255,6 +1260,255 @@ def format_phase(parent: str) -> None:
        "mode reads the default full on a date-style container", r.stdout)
 
 
+# ---- 项目配置文件（`<容器>/.config.json`）-----------------------------------
+# 优先级只有三层：命令行 > <容器>/.config.json > 内置默认。
+# 两个名字字段（container / lessons）是例外：它们命名的正是配置文件自己所在的目录，
+# 所以读配置之前就得先知道它们——只能按目录发现，配置里的值只作备注。
+def config_phase(parent: str) -> None:
+    """项目配置文件：三层优先级、来源可见、`--write` / `--set`、名字字段的不对称。"""
+
+    def cfg_line(out: str, key: str) -> str:
+        """取 `config` 视图里某个字段那一行。"""
+        return next((l for l in out.splitlines() if l.startswith(key)), "")
+
+    def dump(data: dict, nl: str = "\n") -> str:
+        body = json.dumps(data, ensure_ascii=False, indent=2)
+        return body.replace("\n", nl) + nl
+
+    proj = os.path.join(parent, "configproj")
+    os.makedirs(os.path.join(proj, CONTAINER, "lessons"))
+    # 台账**没有** `精细度` 字段：正好验证「配置的 mode 只提供初始值」。
+    # 0003 是「只有设置、没有结果」的旧格式记录，用来验证配置里的 legacy 真的参与判定。
+    write(os.path.join(proj, CONTAINER, "README.md"),
+          fmt_ledger(["0001-work.md", "0002-more.md", "0003-只有设置.md"],
+                     status="2026-09-14", mode=None))
+    write(os.path.join(proj, CONTAINER, "0001-work.md"), MODE_WORK)
+    write(os.path.join(proj, CONTAINER, "0002-more.md"), MODE_ROLL_ENTRY)
+    write(os.path.join(proj, CONTAINER, "0003-只有设置.md"), FMT_THIN_ENTRY)
+    write(os.path.join(proj, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
+    write(os.path.join(proj, CONTAINER, "lessons", "01-topic.md"),
+          "# 01 · T\n\n来源：wl/0001。\n\n## 子主题\n\n- **s**：a。根因：b。做法：c。（`wl/0001`）\n")
+    cfg_path = os.path.join(proj, CONTAINER, ".config.json")
+    ledger = os.path.join(proj, CONTAINER, "README.md")
+
+    # 1) 没有配置文件 = 全部内置默认，而且只读视图什么都不建 ------------------
+    r = run(proj, "config")
+    ok(r.returncode == 0, "config: a missing config file is not an error", r.stdout + r.stderr)
+    ok("不存在" in r.stdout and not os.path.exists(cfg_path),
+       "config: the read-only view says the file is absent and creates nothing",
+       r.stdout + str(os.path.exists(cfg_path)))
+    ok(r.stdout.count("← 内置默认") == 5,
+       "config: every field reports the built-in default without a config file", r.stdout)
+    ok(cfg_line(r.stdout, "mode").split("=")[1].split("←")[0].strip() == "full",
+       "config: the effective mode falls back to the built-in full", r.stdout)
+
+    # 没有配置文件时，`mode` 的默认档也一样是内置的 `full`
+    r = run(proj, "mode")
+    ok(r.stdout.startswith("full") and "内置默认" in r.stdout,
+       "mode: without 精细度 and without a config the default is the built-in full", r.stdout)
+
+    # 2) `--write`：按当前生效值落盘，已存在时拒绝覆盖 ------------------------
+    r = run(proj, "config", "--write")
+    ok(r.returncode == 0 and os.path.isfile(cfg_path),
+       "config --write creates <container>/.config.json", r.stdout + r.stderr)
+    ok(json.loads(read(cfg_path)) == {"mode": "full", "container": CONTAINER,
+                                      "lessons": "lessons", "legacy": [], "snapshotEntries": 12},
+       "config --write records the current effective values", read(cfg_path))
+    before_bytes = read_bytes(cfg_path)
+    r = run(proj, "config", "--write")
+    ok(r.returncode != 0 and "已存在" in r.stdout,
+       "config --write refuses to clobber an existing file", r.stdout)
+    ok(read_bytes(cfg_path) == before_bytes,
+       "config --write (refused) leaves the file byte-identical")
+    r = run(proj, "config", "--write", "--force")
+    ok(r.returncode == 0, "config --write --force overwrites", r.stdout + r.stderr)
+
+    # 3) 逐字段来源：配置文件里写了的字段来自文件，容器/经验目录仍来自目录发现
+    r = run(proj, "config")
+    ok(r.returncode == 0, "config: a config file with default values reads clean",
+       r.stdout + r.stderr)
+    ok("← .config.json" in cfg_line(r.stdout, "mode"), "config: mode comes from the file", r.stdout)
+    ok("← .config.json" in cfg_line(r.stdout, "snapshotEntries"),
+       "config: snapshotEntries comes from the file", r.stdout)
+    # `container` 永远来自目录发现：配置文件管不了自己所在的目录（这正是不对称之处）。
+    ok("← 内置默认" in cfg_line(r.stdout, "container"),
+       "config: container still comes from directory discovery, never from the file", r.stdout)
+    ok(cfg_line(r.stdout, "legacy").split("=")[1].split("←")[0].strip() == "（空）",
+       "config: an empty legacy list is shown as empty, not as a fallback", r.stdout)
+
+    # 4) 配置文件压过内置默认：mode / snapshotEntries / legacy -----------------
+    write(cfg_path, dump({"mode": "digest", "container": CONTAINER, "lessons": "lessons",
+                          "snapshotEntries": 2, "legacy": ["0001-*"]}))
+    r = run(proj, "mode")
+    ok(r.stdout.startswith("digest") and "配置文件的 `mode`" in r.stdout,
+       "mode: without a 精细度 field the config's mode is the initial tier", r.stdout)
+    r = run(proj, "snapshot")
+    ok("最近 2 / 共 3 篇" in r.stdout,
+       "snapshot: the entries default comes from the config's snapshotEntries", r.stdout)
+    r = run(proj, "config")
+    ok("0001-*" in cfg_line(r.stdout, "legacy") and "← .config.json" in cfg_line(r.stdout, "legacy"),
+       "config: legacy comes from the file", r.stdout)
+
+    # 5) 命令行压过配置文件 --------------------------------------------------
+    r = run(proj, "snapshot", "--entries", "1")
+    ok("最近 1 / 共 3 篇" in r.stdout, "snapshot --entries beats the config's snapshotEntries",
+       r.stdout)
+    r = run(proj, "config", "--legacy", "0002-*")
+    ok("0002-*" in cfg_line(r.stdout, "legacy") and "← 命令行" in cfg_line(r.stdout, "legacy"),
+       "config --legacy beats the config file and says so", r.stdout)
+    write(cfg_path, dump({"legacy": []}))
+    r = run(proj, "check", "--strict", "--quiet", "--legacy", "0003-*")
+    ok(r.returncode == 0, "check --legacy beats the config's legacy list", r.stdout + r.stderr)
+
+    # 配置文件里的 legacy 真的参与判定：显式空清单 = 没有旧记录 = 照新格式判
+    write(cfg_path, dump({"legacy": ["0003-*"]}))
+    r = run(proj, "check", "--strict", "--quiet")
+    ok(r.returncode == 0, "config: the config's legacy list really narrows the opt-in",
+       r.stdout + r.stderr)
+    write(cfg_path, dump({"legacy": []}))
+    r = run(proj, "check", "--strict", "--quiet")
+    ok(r.returncode != 0,
+       "config: an explicit empty legacy list means every record is judged as new", r.stdout)
+    os.remove(cfg_path)
+    r = run(proj, "check", "--strict", "--quiet")
+    ok(r.returncode != 0 and os.path.isfile(cfg_path) is False,
+       "config: without a config file the small container is judged as a new project (unchanged)",
+       r.stdout)
+
+    # 6) `config --set`：只改目标行，CRLF 与其余字段都不动 --------------------
+    write(cfg_path, dump({"mode": "full", "container": CONTAINER, "lessons": "lessons",
+                          "legacy": ["0003-*"], "snapshotEntries": 2}, nl="\r\n"))
+    before_bytes = read_bytes(cfg_path)
+    r = run(proj, "config", "--set", "mode=摘要")
+    ok(r.returncode == 0, "config --set exits 0", r.stdout + r.stderr)
+    after_bytes = read_bytes(cfg_path)
+    ok(b"\r\n" in after_bytes and after_bytes.replace(b"\r\n", b"").count(b"\n") == 0,
+       "config --set preserves CRLF")
+    changed = [i for i, (a, b) in enumerate(zip(before_bytes.split(b"\r\n"),
+                                               after_bytes.split(b"\r\n"))) if a != b]
+    ok(len(changed) == 1 and b'"digest"' in after_bytes.split(b"\r\n")[changed[0]],
+       "config --set changes only the target line", f"changed lines={changed}")
+    data = json.loads(read(cfg_path))
+    ok(data["mode"] == "digest" and data["legacy"] == ["0003-*"] and data["snapshotEntries"] == 2
+       and data["lessons"] == "lessons",
+       "config --set keeps every other field (and normalises 摘要 to digest)", str(data))
+    ok("mode=digest" in r.stdout, "config --set reports what it wrote", r.stdout)
+
+    # 一次改两个字段也认
+    r = run(proj, "config", "--set", "snapshotEntries=5", "--set", "legacy=0001-*,0002-*")
+    data = json.loads(read(cfg_path))
+    ok(r.returncode == 0 and data["snapshotEntries"] == 5 and data["legacy"] == ["0001-*", "0002-*"],
+       "config --set accepts several fields at once", read(cfg_path))
+
+    # 7) 校验：未知值 / 未知字段 / 非正整数 各自非零退出，且不改文件 --------------
+    before_bytes = read_bytes(cfg_path)
+    r = run(proj, "config", "--set", "mode=详细点")
+    ok(r.returncode == 2 and "认不出的精细度" in r.stdout and "milestone" in r.stdout,
+       "config --set rejects an unknown mode with exit 2 and lists the values", r.stdout)
+    r = run(proj, "config", "--set", "没那么个字段=x")
+    ok(r.returncode == 2 and "认不出的字段" in r.stdout and "snapshotEntries" in r.stdout,
+       "config --set rejects an unknown field and lists the valid ones", r.stdout)
+    r = run(proj, "config", "--set", "snapshotEntries=0")
+    ok(r.returncode == 2 and "正整数" in r.stdout,
+       "config --set rejects a non-positive snapshotEntries", r.stdout)
+    r = run(proj, "config", "--set", "snapshotEntries=abc")
+    ok(r.returncode == 2, "config --set rejects a non-numeric snapshotEntries", r.stdout)
+    r = run(proj, "config", "--set", "lessons=a/b")
+    ok(r.returncode == 2, "config --set rejects a lessons value that is not a directory name",
+       r.stdout)
+    r = run(proj, "config", "--set", "mode=session", "--dry-run")
+    ok(r.returncode == 0 and "[dry-run]" in r.stdout,
+       "config --set --dry-run writes nothing", r.stdout)
+    ok(read_bytes(cfg_path) == before_bytes,
+       "every rejected (or dry-run) --set leaves the file byte-identical")
+
+    # 8) 名字字段的不对称：不一致时**报出来**，但以实际目录为准，且不失败 ----------
+    write(cfg_path, dump({"container": "archive_log", "lessons": "nosuch"}))
+    r = run(proj, "config")
+    ok(r.returncode == 0, "a config whose name fields disagree is reported, not fatal",
+       r.stdout + r.stderr)
+    ok("archive_log" in r.stdout and "管不了自己所在的目录" in r.stdout,
+       "config: a container field that disagrees with its own directory is reported", r.stdout)
+    ok("nosuch" in r.stdout and "按实际目录走" in r.stdout,
+       "config: a lessons field that disagrees with the existing directory is reported", r.stdout)
+    ok(cfg_line(r.stdout, "container").split("=")[1].split("←")[0].strip() == CONTAINER,
+       "config: the disagreeing container field is NOT obeyed", r.stdout)
+    ok(cfg_line(r.stdout, "lessons").split("=")[1].split("←")[0].strip() == "lessons",
+       "config: the discovered lessons directory wins over the disagreeing field", r.stdout)
+    r = run(proj, "check", "--legacy", "0003-*")
+    ok(r.returncode == 0 and "[ERROR]" not in r.stdout,
+       "the advisory mismatch does not raise check's level (info at most)", r.stdout + r.stderr)
+    ok("[INFO] work_log/.config.json" in r.stdout,
+       "check surfaces the advisory mismatch as info", r.stdout)
+
+    # 9) 台账的 `精细度` 压过配置的 `mode` ------------------------------------
+    write(cfg_path, dump({"mode": "digest"}))
+    write(ledger, fmt_ledger(["0001-work.md", "0002-more.md", "0003-只有设置.md"],
+                             status="2026-09-14", mode="session"))
+    r = run(proj, "mode")
+    ok(r.stdout.startswith("session"),
+       "the ledger's 精细度 wins over the config's mode", r.stdout)
+    ok("配置文件的 `mode`" not in r.stdout,
+       "and the config's mode is not reported once the ledger carries the field", r.stdout)
+
+    # 台账没有那一栏时，粗档位（来自配置）照样担它的额外义务
+    write(ledger, fmt_ledger(["0001-work.md", "0002-more.md", "0003-只有设置.md"],
+                             status="2026-09-14", mode=None))
+    r = run(proj, "lint", "--legacy", "")
+    ok("未记录" in r.stdout,
+       "lint: a coarse mode coming from the config carries the 未记录 obligation", r.stdout)
+    ok(r.returncode == 0, "lint: that obligation is a WARN, not an ERROR", r.stdout)
+
+    # 10) `--set` 没有配置文件时拒绝，并指路 `--write` --------------------------
+    os.remove(cfg_path)
+    r = run(proj, "config", "--set", "mode=full")
+    ok(r.returncode != 0 and "--write" in r.stdout,
+       "config --set refuses when there is no config file and points at --write",
+       r.stdout + r.stderr)
+    ok(not os.path.exists(cfg_path), "the refused --set created nothing")
+
+    # 11) 配置文件跟着容器走：命令行指定哪个容器，读的就是哪一份 ----------------
+    alt = os.path.join(parent, "configalt")
+    os.makedirs(os.path.join(alt, "work_log"))
+    os.makedirs(os.path.join(alt, "journal"))
+    # 空容器的台账：没有记录，只为让容器被发现（`config` 只看目录与配置文件）。
+    for name, mode in (("work_log", "session"), ("journal", "milestone")):
+        write(os.path.join(alt, name, "README.md"), fmt_ledger([], status="2026-09-14"))
+        write(os.path.join(alt, name, ".config.json"), dump({"mode": mode}))
+    r = run(alt, "config")
+    ok("session" in cfg_line(r.stdout, "mode") and "work_log" in r.stdout,
+       "config: the default container's config is the one that is read", r.stdout)
+    r = run(alt, "config", "--work-log", "journal")
+    ok("milestone" in cfg_line(r.stdout, "mode"),
+       "--work-log selects the container, and that container's config is read", r.stdout)
+
+    # 12) 坏配置文件：不致命，但报清楚（`config` 退出码 2，`check` 报 INFO 不进退出码）----
+    write(cfg_path, "{ 这不是 JSON\n")
+    r = run(proj, "config")
+    ok(r.returncode == 2 and "不是合法 JSON" in r.stdout,
+       "config: a malformed config file is reported with a non-zero exit", r.stdout)
+    ok(r.stdout.count("← 内置默认") == 5,
+       "config: a malformed config file falls back to the built-in defaults", r.stdout)
+    r = run(proj, "outline")
+    ok(r.returncode == 0, "a malformed config file does not break the other commands",
+       r.stdout + r.stderr)
+    r = run(proj, "check", "--legacy", "0003-*")
+    ok("[INFO] work_log/.config.json" in r.stdout and r.returncode == 0,
+       "check surfaces a malformed config file as info, without failing", r.stdout)
+    r = run(proj, "check", "--strict", "--quiet", "--legacy", "0003-*")
+    ok(r.returncode == 0, "a malformed config file never fails check --strict", r.stdout + r.stderr)
+    r = run(proj, "config", "--set", "mode=full")
+    ok(r.returncode != 0, "config --set refuses to edit a malformed config file", r.stdout)
+
+    # 认不出的字段名：文件里多一个键，`config` 报出来（退出码 2），但不影响生效值
+    write(cfg_path, dump({"mode": "full", "typo": 1}))
+    r = run(proj, "config")
+    ok(r.returncode == 2 and "认不出的字段 `typo`" in r.stdout,
+       "config: an unknown field in the file is reported with the valid field list", r.stdout)
+    ok("full" in cfg_line(r.stdout, "mode"),
+       "config: the known fields still take effect next to an unknown one", r.stdout)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="journal.py 自测")
     ap.add_argument("--root", default=None,
@@ -1468,6 +1722,9 @@ def main() -> int:
 
         # 两种命名 + 放宽后的格式 + 实质验证 + 渐进原则 + snapshot -------------
         format_phase(tmp)
+
+        # 项目配置文件（<容器>/.config.json）---------------------------------
+        config_phase(tmp)
 
         # CRLF fidelity ----------------------------------------------------
         index_path = os.path.join(tmp, CONTAINER, "README.md")

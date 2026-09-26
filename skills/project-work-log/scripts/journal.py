@@ -13,6 +13,7 @@
         STATE-HISTORY.md     被替换下来的旧「当前状态」块
         ARCHIVE.md           归档索引
         LEGACY.md            旧记录声明（可选，见「渐进原则」）
+        目标.md              长期目标 → 阶段的两层表（可选，见 references/conventions.md「目标」）
         lessons/             经验层（分册），是容器的子目录
         logs/<来源>/         日志与运行产物（见 conventions.md「日志归位要求」）
         .config.json         项目配置文件（可选）：默认档位 / 容器名 / 经验目录名 / 旧记录清单 / 快照篇数
@@ -55,7 +56,7 @@
     append    向某篇记录追加小节（更正 / 遗留）
 
 读写 · 分析与生成
-    check     结构门禁（编号/标题、验证、死链、漏索引、状态、来源；旧记录只报 info）
+    check     结构门禁（编号/标题、验证、死链、漏索引、状态、来源、目标表；旧记录只报 info）
     lint      内容质量（占位符残留、空小节、含糊措辞、结论缺数字、验证小节只有设置）
     stats     语料统计（节奏、长度、合规率、引用覆盖）
     topics    同主题簇建议（关键词共现 / --keywords 指定）
@@ -195,6 +196,16 @@ STATUS_HISTORY = "STATE-HISTORY.md"
 COLD_STORE = "COLD-STORE.md"
 # 旧记录声明（可选）：容器里已有的记录写在里面，逐条列出，只有它列到的记录才降级。
 LEGACY_DECL = "LEGACY.md"
+# 目标表（可选，见 references/conventions.md「目标」）：容器根的一个文件，两张表合一。
+# 落点是**既有容器里的一个文件**，不是新目录、也不是新容器：再开一个容器会破坏
+# 「一个项目一个容器」这条告诉 journal.py 去哪找东西的约定，还会把目标的进展与
+# 作为证据的记录劈成两处——同一件事两个答案，正是本项目反复在修的那类缺陷。
+GOALS_FILE = "目标.md"
+# 四个状态**人工维护**，不从引用的记录推导：推导规则一旦复杂就会算错，
+# 而算错的目标表比手写的更不可信。
+GOALS_STATUSES = ("未开始", "进行中", "已完成", "已放弃")
+# 目标表的列。表头认得出哪几列就校验哪几列（见 parse_goals）。
+GOALS_COLUMNS = ("目标", "阶段", "状态", "相关记录")
 
 # ---- 渐进原则（老记录只报不拦）----
 # 依据是**显式清单**，不是日期启发式：日期不可靠（实测同一份语料里日期字段只覆盖一半），
@@ -647,6 +658,11 @@ def name_date(name: str) -> str:
 def legacy_decl_path(container: str) -> str:
     """容器根的 `LEGACY.md` 落点。"""
     return os.path.join(container, LEGACY_DECL)
+
+
+def goals_path(container: str) -> str:
+    """容器根的 `目标.md` 落点。**缺它是正常的**——三个真实语料里一个都没有。"""
+    return os.path.join(container, GOALS_FILE)
 
 
 def legacy_decl_patterns(container: str) -> list[str]:
@@ -1328,6 +1344,120 @@ def _checkable(text: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# 目标文件（`<容器>/目标.md`，可选）：长期目标 → 阶段的两层表
+# --------------------------------------------------------------------------- #
+# 三层分工写清楚，免得又出现"同一件事两处维护"：
+#   - 目标表：**多个并行长期目标**各自的阶段与状态（现有体系只有状态块里一个
+#     `阶段 / 版本` 字段，装不下并行目标）；
+#   - 记录：证据，目标表靠「相关记录」指过去；
+#   - 台账：容器当前坐标，与目标表无关。
+# 缺这个文件是正常的，一个发现都不报；它**不进任何必填清单**。
+def _split_table_row(line: str) -> list[str]:
+    """切一行 markdown 表：去掉首尾竖线后按 `|` 分格，逐格去空白。"""
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def _is_table_sep(cells: list[str]) -> bool:
+    """是不是 `|---|---|` 那行分隔行。"""
+    return bool(cells) and all(re.fullmatch(r":?-{1,}:?", c) for c in cells if c != "")
+
+
+def parse_goals(text: str) -> list[tuple[int, dict[str, str]]]:
+    """解析目标表，返回 `[(行号, {列名: 单元格}), …]`，行号从 1 起。
+
+    表头行决定各列的位置，所以**列序可以不一样**；四个列名认得出哪几列就校验哪几列。
+    认不出表头（没有同时含「目标」与「状态」的一行）就当这份文件没有可校验的表——
+    缺文件是正常的，认不出的文件同样不报：校验只覆盖那三条机械规则，不给它加义务。
+    """
+    header: dict[str, int] | None = None
+    rows: list[tuple[int, dict[str, str]]] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if not line.lstrip().startswith("|"):
+            if header is not None and rows:
+                break          # 表格在第一个非表格行结束
+            continue
+        cells = _split_table_row(line)
+        if header is None:
+            found = {c: j for j, c in enumerate(cells) if c in GOALS_COLUMNS}
+            if "目标" in found and "状态" in found:
+                header = found
+            continue
+        if _is_table_sep(cells):
+            continue
+        rows.append((lineno, {name: (cells[j] if j < len(cells) else "")
+                              for name, j in header.items()}))
+    return rows
+
+
+# 「相关记录」里的一格就是一篇号（可带本体系通用的 `wl/` 回指前缀）。
+GOALS_CITE_RE = re.compile(r"^(?:wl/)?(\d{1,4})$")
+
+
+def _cited_numbers(cell: str) -> list[tuple[str, int]]:
+    """相关记录单元格里的篇号，返回 `[(原始写法, 篇号), …]`。
+
+    只认**整格就是一篇号**的 token；`—`、空、自由文字一律跳过。这是刻意的保守：
+    日期式容器会在这儿写文件名（`2026-09-06-x.md`），若改成"抠出数字"来判，
+    就会被误报成「篇号 2026 不存在」——误报比漏报贵。
+    """
+    out: list[tuple[str, int]] = []
+    for tok in re.split(r"[,，、;；\s]+", cell.strip()):
+        m = GOALS_CITE_RE.match(tok.strip().strip("`*").strip())
+        if m:
+            out.append((tok.strip(), int(m.group(1))))
+    return out
+
+
+def check_goals(root: str, container: str, entries: dict[int, list[str]], rep: "Report") -> None:
+    """校验目标表的**三条机械规则**（见 references/conventions.md「目标」）。
+
+    1. 「相关记录」引用的篇号必须真实存在——这是核心价值：否则目标表会悄悄腐化成
+       一张写着不存在篇号的清单；
+    2. 「状态」必须是 `未开始` / `进行中` / `已完成` / `已放弃` 之一；
+    3. 一个目标的第一行必须写出目标名（空目标名 = 续行跑到了没有父行的地方）。
+
+    **明确不校验**：阶段名与索引里的 `### <阶段名>` 是否一致、状态与记录内容是否相符、
+    目标是否重复。前两条判定不了，第三条校验了只会教人忽略告警。
+    """
+    path = goals_path(container)
+    if not os.path.isfile(path):
+        return                 # 缺这个文件是正常的：一个发现都不报
+    where = rel(root, path)
+    # `seen_goal`：这张表里出现没出现过目标名。续行的「目标」为空是正常写法（两层表），
+    # 前提是它前面已经有行写出了目标名；在第一个目标名之前出现空行，那一行就没有父行。
+    # 这个标志**只往前、不重置**：一个目标的第二、第三行续行都算合法续行。
+    seen_goal = False
+    for lineno, row in parse_goals(read(path)):
+        goal = row.get("目标", "")
+        status = row.get("状态", "")
+        if "目标" in row:
+            if goal:
+                seen_goal = True
+            elif not seen_goal:
+                rep.add("ERROR", where,
+                        f"第 {lineno} 行：「目标」为空，而它前面没有一行写出过目标名"
+                        f"（一个目标的第一行必须写目标名，续行只能跟在这种行后面）")
+        if "状态" in row and status not in GOALS_STATUSES:
+            if status:
+                rep.add("ERROR", where,
+                        f"第 {lineno} 行：状态「{status}」认不出，"
+                        f"只能是 未开始 / 进行中 / 已完成 / 已放弃")
+            else:
+                rep.add("ERROR", where,
+                        f"第 {lineno} 行：状态为空，必须是 未开始 / 进行中 / 已完成 / 已放弃 之一")
+        if "相关记录" in row:
+            for raw, num in _cited_numbers(row["相关记录"]):
+                if num not in entries:
+                    rep.add("ERROR", where,
+                            f"第 {lineno} 行：相关记录 `{raw}` 指向的篇号在记录目录里不存在")
+
+
+# --------------------------------------------------------------------------- #
 # check：结构门禁
 # --------------------------------------------------------------------------- #
 class Report:
@@ -1516,6 +1646,9 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
     elif recs:
         rep.add("INFO", jname, f"台账没有「{K_INDEX}」一节——索引层缺位，"
                                f"{len(recs)} 篇记录都没有索引行（要导航就补一节 `## {K_INDEX}`）")
+
+    # 目标表（`<容器>/目标.md`，可选）：缺它是正常的，报 0 个问题。三条机械规则见 check_goals。
+    check_goals(root, journal, entries, rep)
 
     if os.path.isfile(index):
         idx_text = read(index)

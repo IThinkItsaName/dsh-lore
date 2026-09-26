@@ -1509,6 +1509,114 @@ def config_phase(parent: str) -> None:
        "config: the known fields still take effect next to an unknown one", r.stdout)
 
 
+# ---- 目标文件（`<容器>/目标.md`，可选）-------------------------------------
+# 只校验三条机械规则：引用的篇号必须存在、状态是那四个之一、一个目标的第一行必须写目标名。
+# **缺这个文件是正常的**（三个真实语料里一个都没有），缺它必须报 0 个问题；
+# 它也**不进任何必填清单**（不进索引、不改 `is_record_name`）。
+GOALS_HEAD = """# 目标
+
+| 目标 | 阶段 | 状态 | 相关记录 |
+|---|---|---|---|
+"""
+
+
+def goals_file(*rows: str) -> str:
+    """目标文件的正文；`rows` 逐行给数据行（行号因此可预期：首行数据在第 5 行）。"""
+    return GOALS_HEAD + "".join(r + "\n" for r in rows)
+
+
+def goals_phase(parent: str) -> None:
+    """目标表：三条机械规则各自报什么、什么不报、缺文件零发现。"""
+
+    proj = os.path.join(parent, "goalsproj")
+    os.makedirs(os.path.join(proj, CONTAINER))
+    files = ["0001-work.md", "0002-more.md", "0003-third.md"]
+    for i, fname in enumerate(files, 1):
+        write(os.path.join(proj, CONTAINER, fname), entry(f"{i:04d}", f"第 {i} 篇", "2026-09-20"))
+    write(os.path.join(proj, CONTAINER, "README.md"), fmt_ledger(files, status="2026-09-20"))
+    gpath = os.path.join(proj, CONTAINER, "目标.md")
+
+    def gfind() -> str:
+        """只取目标文件那几条发现：夹具里别的问题（断档之类）不该混进断言。"""
+        r = run(proj, "check", "--strict", "--quiet")
+        return "\n".join(l for l in r.stdout.splitlines() if "目标.md" in l)
+
+    def clean() -> tuple[bool, str]:
+        """整份 `check --strict --quiet` 是否 0 发现（`--quiet` 只留 ERROR/WARN 与汇总行）。"""
+        r = run(proj, "check", "--strict", "--quiet")
+        return (r.returncode == 0 and "[ERROR]" not in r.stdout and "[WARN]" not in r.stdout,
+                r.stdout + r.stderr)
+
+    # 0) 四个状态就是约定的那四个（断言常量本身，不从输出倒推）
+    ok(JOURNAL.GOALS_STATUSES == ("未开始", "进行中", "已完成", "已放弃"),
+       "goals: 状态 is exactly the documented four-value set", str(JOURNAL.GOALS_STATUSES))
+    # `目标.md` 不是记录：判据只有 `is_record_name` 一处，不用给常量加名字。
+    ok(not JOURNAL.is_record_name(JOURNAL.GOALS_FILE),
+       "goals: 目标.md is not a record name (no constant needs changing)",
+       JOURNAL.GOALS_FILE)
+
+    # 1) 没有这个文件：0 个发现，整份 check --strict 也干净
+    ok(not os.path.exists(gpath), "goals: the fixture starts without a goals file")
+    okay, detail = clean()
+    ok(okay, "goals: a missing 目标.md produces no findings at all", detail)
+    ok(gfind() == "", "goals: and nothing is reported about the absent file", gfind())
+
+    # 2) 合法两层表：续行为空、单阶段写 `—`、四个状态各出现一次 → 0 个发现
+    write(gpath, goals_file("| 让 worklog 可公开发布 | 规范重写 | 已完成 | 0001, 0002 |",
+                            "|  | 设置页 | 进行中 | 0003 |",
+                            "|  | 文档收尾 | 未开始 | — |",
+                            "| 支持多语言 | — | 进行中 | 0001 |",
+                            "| 已经放弃的旧目标 | 第一版 | 已放弃 | — |"))
+    ok(gfind() == "", "goals: a valid two-level table produces no findings", gfind())
+    okay, detail = clean()
+    ok(okay, "goals: a valid goals file keeps check --strict clean", detail)
+
+    # 3) 引用的篇号必须真实存在——这是这三条规则的核心价值
+    write(gpath, goals_file("| 目标甲 | 阶段一 | 进行中 | 0001, 0099 |"))
+    ok("`0099`" in gfind() and "不存在" in gfind() and "[ERROR]" in gfind(),
+       "goals: a cited record that does not exist is reported as an ERROR", gfind())
+    ok("`0001`" not in gfind(),
+       "goals: the citations that do exist are not reported", gfind())
+    # 整格不是篇号的 token（`—`、自由文字、日期式文件名）一律跳过——误报比漏报贵
+    write(gpath, goals_file("| 目标甲 | 阶段一 | 进行中 | — |",
+                            "| 目标乙 | — | 未开始 | 2026-09-06-门控两段式.md |",
+                            "| 目标丙 | — | 未开始 | 待定 |"))
+    ok(gfind() == "",
+       "goals: cells that are not a bare 篇号 (—, a date-style filename, prose) are skipped",
+       gfind())
+
+    # 4) 四个状态逐个接受，第五个（拼错）报出来
+    for st in ("未开始", "进行中", "已完成", "已放弃"):
+        write(gpath, goals_file(f"| 目标甲 | 阶段一 | {st} | 0001 |"))
+        ok(gfind() == "", f"goals: 状态 {st} is accepted", gfind())
+    write(gpath, goals_file("| 目标甲 | 阶段一 | 进行重 | 0001 |"))
+    ok("进行重" in gfind() and "认不出" in gfind(),
+       "goals: an invalid 状态 is reported", gfind())
+    write(gpath, goals_file("| 目标甲 | 阶段一 |  | 0001 |"))
+    ok("状态为空" in gfind(), "goals: an empty 状态 is reported as such", gfind())
+
+    # 5) 首行为空 = 续行没有父行 → 报；同名表格里紧跟其后的续行不重复报
+    write(gpath, goals_file("|  | 阶段一 | 进行中 | 0001 |",
+                            "|  | 阶段二 | 未开始 | — |",
+                            "| 目标乙 | — | 进行中 | — |"))
+    ok("第 5 行" in gfind() and "第 6 行" in gfind(),
+       "goals: goal cells that are empty before any goal name are reported", gfind())
+    ok("第 7 行" not in gfind(),
+       "goals: a goal name anywhere above keeps a later empty cell legal", gfind())
+
+    # 6) 目标文件**不需要**进索引：索引覆盖只遍历真记录，不该刷出「未出现在索引中」
+    write(gpath, goals_file("| 目标甲 | 阶段一 | 进行中 | 0001 |"))
+    r = run(proj, "check", "--strict", "--quiet")
+    ok(r.returncode == 0 and "未出现在索引中" not in r.stdout,
+       "goals: 目标.md is never required to appear in the index", r.stdout + r.stderr)
+
+    # 7) 认不出表头 = 没有可校验的表 → 不报（校验只覆盖那三条，不给文件加第四条义务）
+    write(gpath, "# 目标\n\n还没写成表，先记一句。\n")
+    ok(gfind() == "", "goals: a file without a recognisable table header produces no findings",
+       gfind())
+
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="journal.py 自测")
     ap.add_argument("--root", default=None,
@@ -1725,6 +1833,9 @@ def main() -> int:
 
         # 项目配置文件（<容器>/.config.json）---------------------------------
         config_phase(tmp)
+
+        # 目标文件（<容器>/目标.md，可选）------------------------------------
+        goals_phase(tmp)
 
         # CRLF fidelity ----------------------------------------------------
         index_path = os.path.join(tmp, CONTAINER, "README.md")

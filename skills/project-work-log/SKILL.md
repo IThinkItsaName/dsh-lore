@@ -161,6 +161,8 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 1. 记录补齐：入口字段按需要写 + **一个验证类小节（含结果，不只是设置）**。
    档位是 `digest` / `milestone` 时，再加一句「未记录：…」（见上「记录精细度」）。
 2. 台账（有台账时）：索引表加一行；涉及跨篇主题就更新「同主题簇」；滚动待办增删。
+   有 `work_log/目标.md`（**可选，多个长期目标并行推进时才建**，见 [references/conventions.md](references/conventions.md)「目标」）
+   就顺带更新那一行的「状态」——状态人工维护，不从记录推导。
 3. **状态**：台账里**有** `## 当前状态` 就更新它（8 个字段：`阶段 / 版本`、`迭代`、`产出`、
    `核对 / 验证`、`交付物与指纹`、`环境`、`阻塞 / 等待`、`精细度`），并让日期不早于最新一篇记录。
    台账里**没有**状态块不算错——状态也可以写在每篇开头的引用块里（`> 状态：… ｜ 工具：… ｜ 产物：…`）。
@@ -251,7 +253,7 @@ python scripts/journal.py split --by-year --dry-run                       # 按�
 python scripts/journal.py prune                                           # 冷存候选（只报告）
 
 # —— 可校验：两道门禁（有 ERROR 退出码 1）——
-python scripts/journal.py check --strict        # 结构：标题/日期/验证/死链/漏索引/状态/来源
+python scripts/journal.py check --strict        # 结构：标题/日期/验证/死链/漏索引/状态/来源/目标表（可选文件）
 python scripts/journal.py lint --strict         # 内容：占位符/空小节/结论无可核对信息/含糊措辞
 python scripts/journal.py check --legacy ""     # 全按新格式判（不给就是宽松起步：旧记录只报 info）
 
@@ -263,7 +265,7 @@ python scripts/journal.py retro --from 100 --to 151 --out r.md  # 阶段复盘�
 python scripts/journal.py export --csv --out work_log.csv   # 机器可读导出
 ```
 
-自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全 + 新/旧布局 + 精细度档位 + 两种命名 + 渐进原则 + snapshot + 项目配置文件；**断言数以脚本实际输出为准**，全绿即通过）。
+自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全 + 新/旧布局 + 精细度档位 + 两种命名 + 渐进原则 + snapshot + 项目配置文件 + 目标表；**断言数以脚本实际输出为准**，全绿即通过）。
 
 > 典型接手动作：`brief` → `snapshot` → `search` → `show` → 需要细节才 `read` 那一个文件。
 > 典型收尾动作：`new --insert` → 补正文 → `status` → `lesson add` → `check --strict` && `lint --strict`。

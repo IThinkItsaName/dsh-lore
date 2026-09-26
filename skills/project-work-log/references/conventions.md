@@ -4,26 +4,56 @@
 
 ## 目录布局
 
+记录体系收在**一个**容器目录里：过程记录、台账、经验层、日志都在它下面。
+
 ```
 <项目根>/
-├── journal/
-│   ├── README.md             ← 唯一台账：索引表 + 同主题簇 + 滚动待办 + 当前状态
-│   ├── 0001-<slug>.md        ← 过程记录，一篇 = 一个迭代（一个可交付的工作单元）
-│   ├── 0002-<slug>.md
-│   └── archive/
-│       ├── README.md         ← 归档索引 + 编号换算（归档不改号）
-│       ├── STATUS-HISTORY.md ← 被替换下来的旧「当前状态」块
-│       └── <stage>/NNNN-*.md
-└── lessons/
-    ├── README.md             ← 分册索引 + 使用方式
-    ├── 01-<topic>.md
-    ├── ...
-    └── 99-retrospectives.md  ← 阶段复盘（承接 SUMMARY 的职责）
+├── README.md                 ← 项目 README（加一行指向 work_log/README.md）
+└── work_log/                 ← 容器（默认名，可配置）
+    ├── README.md             ← 唯一台账：索引表 + 同主题簇 + 滚动待办 + 当前状态
+    ├── 0001-<slug>.md        ← 过程记录，**就在容器根**（一篇 = 一个可交付的工作单元）
+    ├── 0002-<slug>.md
+    ├── STATE-HISTORY.md      ← 被替换下来的旧「当前状态」块
+    ├── ARCHIVE.md            ← 归档索引（`archive --stage` 自动补行）
+    ├── <YYYY>/NNNN-*.md      ← 按年分卷后的记录（`split --by-year`）
+    ├── <stage>/NNNN-*.md     ← 归档记录：阶段目录直接建在容器下，**没有** archive/ 一层
+    ├── lessons/              ← 经验层（分册索引 + 分册 + 阶段复盘）
+    │   ├── README.md
+    │   ├── 01-<topic>.md
+    │   └── 99-retrospectives.md
+    └── logs/                 ← 日志与运行产物（按来源分子目录，见「日志归位要求」）
+        └── <来源>/
 ```
 
-- 目录名可用 `journal/`，也允许沿用既有名字（如 `work-log/`）。**只看行为，不强制改名。**
+- 容器名默认 `work_log/`，可用 `--work-log NAME`（旧写法 `--journal NAME`，等价）改名；
+  经验子目录默认 `lessons/`，可用 `--lessons NAME` 改名。
+- **编号记录一律住容器根**：`work_log/0001-x.md`，分卷后是 `work_log/2026/0001-x.md`
+  ——正好是旧布局 `journal/0001-x.md` / `journal/2026/0001-x.md` 的下一层，记录发现逻辑不变。
+- **归档 = 搬到 `work_log/<stage>/`**：阶段目录直接建在容器下，不再有 `archive/` 中间层。
+  由此推出一条判据（`journal.py` 的 `is_active_entry` / `is_archived_entry` 就是它）：
+  **相对容器路径的第一段是 4 位年份 ⇒ 活跃；其余子目录 ⇒ 已归档**。
+  `lessons/`、`logs/` 是容器内的**非记录**目录，`README.md`、`STATE-HISTORY.md`、`ARCHIVE.md`
+  也不是记录——它们各自按文件名与路径排除，绝不能被当成「一个已归档阶段」。
+  ⚠ 这条判据的代价是：**不要在容器下另建目录来放编号记录**（草稿也放容器根）。
+  容器下的子目录只有三类——年份卷 `<YYYY>/`、归档阶段 `<stage>/`、以及 `lessons/` `logs/`；
+  在别处塞 `NNNN-*.md` 会被当成「已归档」。
 - 记录文件名：`NNNN-kebab-or-中文扼要.md`，编号 4 位（历史文件早已是 1–3 位则不要重命名）。
 - 编号**单调递增、永不复用**，归档不改号。
+
+### 旧布局的读取回退（只读，不迁移）
+
+老项目还在 `journal/` + 顶层 `lessons/` 时，**不改名、不移动、不警告**，直接按下面的顺序解析：
+
+| 解析对象 | 顺序 |
+|---|---|
+| 容器 | 显式 `--work-log NAME` / `--journal NAME` → `<根>/work_log/` → `<根>/journal/` → `<根>/work-log/` |
+| 经验目录 | 显式 `--lessons NAME` → `<容器>/lessons/` → `<根>/lessons/` |
+
+- 旧布局的 `journal/archive/<stage>/` 仍按「第一段不是年份 ⇒ 已归档」判为归档，无需特判。
+- 旧布局的 `journal/archive/STATUS-HISTORY.md`、`journal/archive/README.md`、
+  `journal/archive/COLD-STORE.md` 已存在时**继续沿用原文件**（`status --roll`、`archive`、`prune` 都如此），
+  避免把同一段历史劈成两份。文件不存在时才落到容器根的新位置。
+- 迁移留给人：用户明确要求时再搬；工具不做自动迁移。
 
 ## 两个计数器（不要混）
 
@@ -47,8 +77,24 @@
 - **收口**：收尾清单（见 SKILL.md）全部完成后才算 closed。收口后**不改写已发生的结论**。
 - **更正**：新证据推翻旧结论时，**追加** `## 更正` 段（日期 / 原结论 / 新证据 / 现结论），并同步台账与 lessons；
   绝不允许把旧文字直接抹掉。
-- **归档**：阶段收口、索引表停止增长时，把整阶段的记录 move 到 `journal/archive/<stage>/`；
-  同步改索引链接、写归档索引，并跑一次 `journal.py check`。
+- **归档**：阶段收口、索引表停止增长时，把整阶段的记录 move 到 `work_log/<stage>/`；
+  同步改索引链接、写归档索引（`ARCHIVE.md`），并跑一次 `journal.py check`。
+
+## 日志归位要求
+
+**任何项目产生的持久日志 / 运行产物都进容器，并且分类存放**：
+
+- 位置固定为 `work_log/logs/`，**一个来源一个子目录**：`work_log/logs/<工具名>/`、`work_log/logs/<服务名>/`。
+  例：`work_log/logs/build/`（构建输出）、`work_log/logs/crawler/`（采集记录）、`work_log/logs/bench/`（压测结果）。
+- **不许**把 trace、`.log`、导出文件随手丢在项目根，也**不许**写到项目之外（家目录、`/tmp`、桌面、
+  系统临时目录）——那等于把证据放在版本控制与备份之外，别人接手时找不到。
+- 日志目录**不是记录**：`logs/` 下的文件不编号、不进索引表、不参与编号断档检查
+  （`journal.py` 的扫描明确跳过 `logs/` 与 `lessons/`）。日志与记录的关系是"记录引用日志"，
+  不是"日志也算一篇"：在记录里写清路径与关键结论即可。
+- **测试用的临时夹具不属于这里**：丢弃型 fixture、一次性样本、可随时重建的中间产物，不是记录，
+  不要写进 `work_log/`（更不要提交）。
+- **日志里不得出现绝对机器路径**（`C:\Users\<人名>\...`、`/home/<人名>/...`）。记录本来就要可移植，
+  日志同理：一律写**相对项目根**的路径，或写明环境变量；脱敏后再落盘。
 
 ## 整理与清理（量增长后）
 
@@ -56,10 +102,10 @@
 
 | 动作 | 命令 | 说明 |
 |---|---|---|
-| 阶段归档 | `journal.py archive --stage X --from N --to M` | 移动 + 全仓链接重写 + 补 `archive/README.md` + 死链自检 |
+| 阶段归档 | `journal.py archive --stage X --from N --to M` | 移动 + 全仓链接重写 + 补 `ARCHIVE.md` + 死链自检 |
 | 索引瘦身 | `journal.py index compact` | 已归档小节折叠成一行区间；混合/死链小节自动跳过 |
-| 按年分卷 | `journal.py split --by-year` | 移进 `journal/<YYYY>/`；`wl/NNNN` 回指不受影响 |
-| 冷存 | `journal.py prune [--zip Z] [--apply]` | 默认只报告；打包后才移出，并写 `archive/COLD-STORE.md` |
+| 按年分卷 | `journal.py split --by-year` | 移进 `work_log/<YYYY>/`；`wl/NNNN` 回指不受影响 |
+| 冷存 | `journal.py prune [--zip Z] [--apply]` | 默认只报告；打包后才移出，并写 `COLD-STORE.md` |
 
 判据与顺序：
 
@@ -107,7 +153,7 @@
 只有"构建通过"或"我觉得没问题"不算验证。软件项目给可复现命令与通过数；研究项目给样本量与数据；
 写作/设计项目给评审意见与处理结果。
 
-## 台账（`journal/README.md`）
+## 台账（`work_log/README.md`）
 
 只有一个状态区块，字段固定：
 
@@ -125,14 +171,14 @@
 
 规则：
 
-1. **唯一性**：全文件只能有一个 `## 当前状态`。新增前把旧块整段剪到 `journal/archive/STATUS-HISTORY.md`。
+1. **唯一性**：全文件只能有一个 `## 当前状态`。新增前把旧块整段剪到 `work_log/STATE-HISTORY.md`。
 2. **新鲜度**：日期必须 ≥ 最后一篇记录的日期；否则 `check` 警告。
 3. 状态块只写**当前坐标**，不写历史；历史属于记录和 STATUS-HISTORY。
 4. 待办清单只留未完成项 + 最近完成的 3–5 项（`- [x]`），旧勾选项删掉，别越堆越长。
 5. 索引表每行：`| [NNNN-slug.md](NNNN-slug.md) | 一句话方面 |`；新增记录必须补一行。
 6. 「同主题簇」：同一件事跨多篇时追加编号，按发生顺序排。
 
-## 经验层（`lessons/`）
+## 经验层（`work_log/lessons/`）
 
 条目格式固定为一条一行（或一小段）：
 
@@ -151,7 +197,7 @@
 ## 索引与链接
 
 - 相对链接一律相对**当前文件**；跨目录用 `../`。
-- 归档后旧链接要改指 `archive/<stage>/`；**git 提交信息里的旧路径不追改**（那是历史）。
+- 归档后旧链接要改指 `<stage>/`；**git 提交信息里的旧路径不追改**（那是历史）。
 - 每次收尾跑 `journal.py check`：死链、漏索引、编号断档、无来源经验都会报出来。
 
 ## 命名与语言

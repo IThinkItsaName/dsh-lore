@@ -1,8 +1,17 @@
 # 命令说明（`scripts/journal.py`）
 
 全部命令：`python scripts/journal.py <命令> [参数]`。
-`ROOT` 可省略，默认当前目录；`--journal`（默认 `journal/`，回退 `work-log/`）与 `--lessons`（默认 `lessons/`）用于非标准目录名。
-**只读命令**不修改任何文件；**写入命令**都支持 `--dry-run`，做外科式行级编辑（保留 CRLF 与其余字节）。
+`ROOT` 可省略，默认当前目录。目录参数：
+
+| 参数 | 含义 | 默认与回退 |
+|---|---|---|
+| `--work-log NAME` | **容器目录**名（台账 + 记录 + 经验 + 日志都收在它下面） | 默认 `work_log/`；回退旧名 `journal/`、`work-log/` |
+| `--journal NAME` | 上一个参数的旧名，**等价**（已弃用但保留） | 同上 |
+| `--lessons NAME` | 容器内的**经验目录**名 | 默认 `lessons/`；先找 `<容器>/lessons/`，再找 `<根>/lessons/`（旧布局） |
+
+> 旧项目（`journal/` + 顶层 `lessons/`）**不改名、不迁移、不警告**，直接就能用；
+> 解析顺序见 [conventions.md](conventions.md)「旧布局的读取回退」。
+> **只读命令**不修改任何文件；**写入命令**都支持 `--dry-run`，做外科式行级编辑（保留 CRLF 与其余字节）。
 
 ```bash
 python scripts/journal.py --help          # 命令总览
@@ -18,7 +27,7 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 |---|---|---|
 | `brief` | **压缩上下文快照**：当前状态（每行截断）+ 未完成待办 + 最近 N 篇。替代整读 50 KB 索引 | `brief --entries 8 --max-status-lines 30 --width 200 --max-todo 10` |
 | `show` | **单篇大纲**：元数据 + 触发/范围/结论 + 各小节行数，先看这个再决定要不要读全文 | `show 42` / `show ./proj 42` |
-| `search` | **定向检索**：记录 + 经验里按子串/正则只回命中行 | `search "端口冲突"` / `search --regex "E10\d\d" --in journal` / `search "验证" --files`（只列文件） |
+| `search` | **定向检索**：记录 + 经验里按子串/正则只回命中行 | `search "端口冲突"` / `search --regex "E10\d\d" --in work_log` / `search "验证" --files`（只列文件） |
 | `outline` | 全部记录一行表（编号/日期/迭代/行数/标题），可 `grep` 可排序 | `outline` |
 
 > 用法建议：接手任务先 `brief`；知道大概在哪篇用 `search`；定位到单篇用 `show`；确实需要细节再 `read` 那一个文件。
@@ -35,7 +44,8 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 | `append` | 给某篇追加小节（更正 / 遗留更新） | `append 42 --section 更正 --text "…" --bullet` |
 
 约定要点：
-- `status` 永远只维护**唯一**一个 `## 当前状态` 块；`--roll` 会把旧块整段搬进 `journal/archive/STATUS-HISTORY.md` 再写新骨架。
+- `status` 永远只维护**唯一**一个 `## 当前状态` 块；`--roll` 会把旧块整段搬进 `work_log/STATE-HISTORY.md`
+  再写新骨架（旧布局已有 `archive/STATUS-HISTORY.md` 时沿用它，不另起一份）。
 - `status --set "核对=…"` 会落到台账上已有的 `核对 / 验证` 字段（短名可识别），**不会**多长出一个平行字段；
   `阶段` / `交付物` 同理。名字对不上任何既有字段时才会新增。
 - `lesson add` 的 `--source` 必须指向真实存在的篇号，否则拒绝写入（防止无主结论）；
@@ -51,9 +61,9 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 
 | 命令 | 作用 | 典型用法 |
 |---|---|---|
-| `index compact` | **索引瘦身**：把「整节都已归档」的小节折叠成一行区间（`\| [archive/xx/](archive/xx/) \| 0027–0045（19 篇，已归档） \|`）。只动索引；混合小节、含死链的小节、**已折叠过的目录行**都自动跳过（所以可重复跑） | `index compact --dry-run` / `index compact --stage A` |
-| `archive` | **归档**：把篇号区间移进 `journal/archive/<stage>/`，自动重写全仓链接（索引 / lessons / **被移动记录自己的出站链接**）、补 `archive/README.md` 一行，并做**死链自检** | `archive --stage 02-research --from 27 --to 45` / `--no-index` 跳过索引行更新 |
-| `split` | **按年分卷**：把活跃记录移进 `journal/<YYYY>/`（取自入口行的 `日期：`），重写链接。适合上千篇的超长期项目 | `split --by-year --dry-run` |
+| `index compact` | **索引瘦身**：把「整节都已归档」的小节折叠成一行区间（`\| [02-research/](02-research/) \| 0027–0045（19 篇，已归档） \|`）。只动索引；混合小节、含死链的小节、`lessons/` 这类非记录行、**已折叠过的目录行**都自动跳过（所以可重复跑） | `index compact --dry-run` / `index compact --stage A` |
+| `archive` | **归档**：把篇号区间移进 `<容器>/<stage>/`（不再是 `archive/<stage>/`），自动重写全仓链接（索引 / lessons / **被移动记录自己的出站链接**）、补 `ARCHIVE.md` 一行，并做**死链自检** | `archive --stage 02-research --from 27 --to 45` / `--no-index` 跳过索引行更新 |
+| `split` | **按年分卷**：把活跃记录移进 `<容器>/<YYYY>/`（取自入口行的 `日期：`），重写链接。适合上千篇的超长期项目 | `split --by-year --dry-run` |
 | `prune` | **冷存**：列出「已归档 + 未被 lessons 引用 + 超期」的候选；`--zip` 打包（自动建输出目录）；`--apply` 才把原件移出并写 `COLD-STORE.md` 清单。**默认只报告** | `prune` → `prune --zip cold.zip` → `... --apply`；`--stage` 限定阶段、`--cold-store` 指定冷存目录 |
 
 推荐顺序：**`archive` → `index compact` →（很久以后）`prune`**；记录过万再考虑 `split --by-year`。
@@ -87,8 +97,8 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 | `stats` | 语料统计：总量、日期跨度、每周节奏、日期/验证合规率、体积、迭代字段覆盖、经验引用覆盖与 top cited | `stats` |
 | `topics` | **同主题簇建议**：自动找"出现在 2–N 篇"的标识符；中文用 `--keywords` 指定 | `topics --limit 15 --max-df 5` / `topics --keywords "关键决策,评审意见"` |
 | `digest` | **生成交接摘要文档**：状态 + 待办 + 近期记录表 + 经验要点，`--out` 落盘可直接给新会话/新同事 | `digest --entries 12 --per-volume 3 --out HANDOFF.md` |
-| `retro` | **阶段复盘骨架**：给篇号区间，自动生成阶段表 + 汇总区间内未完成项，用于 `lessons/99-retrospectives.md` | `retro --from 100 --to 151 --stage "第三阶段" --out retro.md` |
-| `export` | 机器可读导出（JSON 默认 / `--csv`），供其它脚本消费 | `export --csv --out journal.csv` / `export --json` |
+| `retro` | **阶段复盘骨架**：给篇号区间，自动生成阶段表 + 汇总区间内未完成项，用于 `work_log/lessons/99-retrospectives.md` | `retro --from 100 --to 151 --stage "第三阶段" --out retro.md` |
+| `export` | 机器可读导出（JSON 默认 / `--csv`），供其它脚本消费 | `export --csv --out work_log.csv` / `export --json` |
 
 `topics` 的自动模式只认 ASCII 标识符（文件名、编号、专有名词、错误码），中文主题请用 `--keywords`——这是无依赖环境下的取舍，已在输出里说明。
 
@@ -99,7 +109,7 @@ python scripts/_selftest.py               # 自测：临时工程跑通全部命
 python scripts/journal.py brief
 
 # 2. 找旧结论：先检索，再只看那一篇的大纲
-python scripts/journal.py search "会话格式" --in journal
+python scripts/journal.py search "会话格式" --in work_log   # 旧写法 --in journal 等价
 python scripts/journal.py show 51
 
 # 3. 收尾一篇：补索引 → 更新状态 → 抽经验 → 过门禁
@@ -109,7 +119,7 @@ python scripts/journal.py lesson add --volume 04-verification-and-safety.md --so
 python scripts/journal.py check --strict && python scripts/journal.py lint --strict
 
 # 4. 阶段结束：归档 + 复盘骨架
-python scripts/journal.py retro --from 100 --to 151 --out lessons/99-retrospectives.md
+python scripts/journal.py retro --from 100 --to 151 --out work_log/lessons/99-retrospectives.md
 python scripts/journal.py digest --out HANDOFF.md
 ```
 
@@ -117,6 +127,6 @@ python scripts/journal.py digest --out HANDOFF.md
 
 | 文件 | 用途 |
 |---|---|
-| `_selftest.py` | 自测全部命令（临时目录，含 CRLF 保真、"只改目标行"、非编程场景、非 UTF-8 拒写等断言）。`--root DIR` 指定夹具父目录（写入受限的沙箱里用），`--keep` 保留夹具排查 |
+| `_selftest.py` | 自测全部命令（临时目录，含 CRLF 保真、"只改目标行"、非编程场景、非 UTF-8 拒写、新布局与旧布局回退等断言）。`--root DIR` 指定夹具父目录（写入受限的沙箱里用），`--keep` 保留夹具排查 |
 | `_package.py` | 把 skill 源目录同步进可发布仓库（开发工作区专用，不随包发布）；`--check` 兼作漂移与插件文件完整性门禁 |
-| `_measure.py` | 对现成 `work-log/`+`lessons/` 做一次性测量，`references/analysis.md` 的数字由它复现 |
+| `_measure.py` | 对现成 `work_log/`（或旧 `work-log/`）+ `lessons/` 做一次性测量，`references/analysis.md` 的数字由它复现 |

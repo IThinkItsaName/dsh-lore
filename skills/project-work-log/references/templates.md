@@ -1,10 +1,11 @@
 # 模板（复制即用）
 
 > 占位符：`<项目>`、`<阶段>`、`NNNN`（篇号）、`YYYY-MM-DD`、`N`（迭代号）。
+> 目录一律写成默认容器名 `work_log/`（容器名可配置，见 [conventions.md](conventions.md)「目录布局」）。
 > `journal.py new` 用「记录模板」自动生成文件（一~五节 + 可选第六节）；其余模板在初始化项目时手工落盘一次。
 > `## 六、更正` 不在自动生成的正文里——它由 `append --section 更正` 在需要时追加（标题不带编号）。
 
-## 1. 记录模板（`journal/NNNN-slug.md`）
+## 1. 记录模板（`work_log/NNNN-slug.md`）
 
 ```markdown
 # NNNN · <一句话标题>
@@ -46,12 +47,12 @@
 - YYYY-MM-DD：原结论「…」→ 新证据「…」→ 现结论「…」。
 ```
 
-## 2. 台账模板（`journal/README.md`）
+## 2. 台账模板（`work_log/README.md`）
 
 ```markdown
 # <项目> 工作记录
 
-> 可复用的坑/技巧/教训见 [`../lessons/`](../lessons/README.md)；本目录只放逐个迭代的完整过程记录。
+> 可复用的坑/技巧/教训见 [`lessons/`](lessons/README.md)；本目录只放逐个迭代的完整过程记录。
 
 ## 文件索引
 
@@ -85,24 +86,25 @@
 > `ERROR 死链`（见 `conventions.md`）。初始化后**删掉该行**（或改成真实文件名），
 > 此时 `journal.py check` 在 0 篇记录下才应是 0 error。
 
-## 3. 归档索引模板（`journal/archive/README.md`）
+## 3. 归档索引模板（`work_log/ARCHIVE.md`）
 
 ```markdown
-# journal 归档区
+# 归档区
 
 | 目录 | 篇号 | 时间 | 内容 | 归档判据 |
 |---|---|---|---|---|
 | `<阶段>/` | NNNN–NNNN | YYYY-MM-DD ~ | <一句话> | <阶段收口 / 索引停止增长> |
 
-编号体系与主目录一致，**归档不改号、内容不删**。主索引见 [../README.md](../README.md)。
+编号体系与容器根一致，**归档不改号、内容不删**。主索引见 [README.md](README.md)、
+归档记录见 [`<阶段>/`](<阶段>/)。归档阶段目录直接建在容器下，**没有** `archive/` 一层。
 
 ## 引用换算
 
-- `journal/NNNN`（归档前）→ `journal/archive/<阶段>/NNNN-*.md`
+- `NNNN-*.md`（归档前，容器根）→ `<阶段>/NNNN-*.md`
 - `lessons/` 的 `wl/NNNN` 是纯编号引用，不受目录变化影响。
 ```
 
-## 4. 状态历史模板（`journal/archive/STATUS-HISTORY.md`）
+## 4. 状态历史模板（`work_log/STATE-HISTORY.md`）
 
 ```markdown
 # 状态历史
@@ -120,7 +122,7 @@
 - 阻塞 / 等待：
 ```
 
-## 5. 经验分册模板（`lessons/NN-topic.md`）
+## 5. 经验分册模板（`work_log/lessons/NN-topic.md`）
 
 ```markdown
 # NN · <主题>
@@ -132,7 +134,7 @@
 - **<症状>**：<现象>。根因：<机制>。做法：<正确做法>。（`wl/NNNN`）
 ```
 
-## 6. 经验索引模板（`lessons/README.md`）
+## 6. 经验索引模板（`work_log/lessons/README.md`）
 
 ```markdown
 # 经验手册
@@ -150,7 +152,7 @@
 - **新增经验**：先写进对应分册（症状 + 根因 + 做法 + 来源），再回记录里补过程。
 ```
 
-## 7. 阶段复盘模板（`lessons/99-retrospectives.md`）
+## 7. 阶段复盘模板（`work_log/lessons/99-retrospectives.md`）
 
 ```markdown
 # 99 · 阶段复盘

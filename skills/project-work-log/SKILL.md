@@ -1,6 +1,6 @@
 ---
 name: project-work-log
-description: 为长期项目建立并维护工作记录体系（过程记录 journal/ + 索引台账 + lessons/ 经验手册），不限编程——软件、研究、写作、设计、运营、教学等跳会话或跨周持续投入的项目都适用。当用户要「开始新任务并留下记录」「建工作日志 / 工作记录 / 项目日志」「总结项目经验 / 踩坑 / 教训 / 复盘」「整理台账 / 当前状态 / 待办」「归档旧记录」时使用；也用于在每项工作收尾时按固定模板落一篇记录、抽取经验并更新状态。
+description: 为长期项目建立并维护工作记录体系（过程记录 + 索引台账 + 经验手册，统一收在 work_log/ 容器里），不限编程——软件、研究、写作、设计、运营、教学等跳会话或跨周持续投入的项目都适用。当用户要「开始新任务并留下记录」「建工作日志 / 工作记录 / 项目日志」「总结项目经验 / 踩坑 / 教训 / 复盘」「整理台账 / 当前状态 / 待办」「归档旧记录」时使用；也用于在每项工作收尾时按固定模板落一篇记录、抽取经验并更新状态。
 ---
 
 # 项目长期工作记录（project-work-log）
@@ -11,15 +11,21 @@ description: 为长期项目建立并维护工作记录体系（过程记录 jou
 
 ## 这是什么
 
-把"项目里发生过什么、怎么验证的、留下了什么可复用经验"沉淀成**三层、可检索、可校验**的文档体系：
+把"项目里发生过什么、怎么验证的、留下了什么可复用经验"沉淀成**三层、可检索、可校验**的文档体系。
+三层同住**一个容器目录** `work_log/`（默认名，可配置），内部各有分工：
 
 | 层 | 位置 | 职责 | 生命周期 |
 |---|---|---|---|
-| **过程层** | `journal/NNNN-*.md` | 一篇 = 一个迭代（一个可交付的工作单元）：背景 → 事实 → 方案 → 执行 → 验证 → 遗留 | append-only，收口后不改写 |
-| **索引层** | `journal/README.md` | 分阶段索引 + 同主题簇 + 滚动待办 + **唯一**当前状态块 | 每次收尾更新 |
-| **经验层** | `lessons/*.md` | 提炼后的可复用知识：症状 → 根因 → 做法 → 来源 | 持续追加，每条必须有来源 |
+| **过程层** | `work_log/NNNN-*.md`（容器根；分卷后 `work_log/<YYYY>/NNNN-*.md`） | 一篇 = 一个迭代（一个可交付的工作单元）：背景 → 事实 → 方案 → 执行 → 验证 → 遗留 | append-only，收口后不改写 |
+| **索引层** | `work_log/README.md` | 分阶段索引 + 同主题簇 + 滚动待办 + **唯一**当前状态块 | 每次收尾更新 |
+| **经验层** | `work_log/lessons/*.md` | 提炼后的可复用知识：症状 → 根因 → 做法 → 来源 | 持续追加，每条必须有来源 |
 
 一句话：**过程留证据，索引管导航，经验可复用**。三层不互相复制内容。
+
+容器里的其他固定位置：归档记录在 `work_log/<stage>/NNNN-*.md`（阶段目录直接建在容器下，
+**没有** `archive/` 一层）、旧状态块在 `work_log/STATE-HISTORY.md`、归档索引在 `work_log/ARCHIVE.md`、
+日志与运行产物在 `work_log/logs/<来源>/`。完整布局与「日志归位要求」见
+[references/conventions.md](references/conventions.md)。
 
 > **领域无关**：这套结构不限于编程。
 > 迭代字段接受 `迭代 / 变更集 / 批次 / 阶段 / 版本 / 里程碑`（英文 `Iteration / Milestone`）；
@@ -38,7 +44,8 @@ description: 为长期项目建立并维护工作记录体系（过程记录 jou
 - 用户说"开始一个新任务"——先确认/建立这套结构，再开工。
 - 一项工作 / 一个迭代完成后要"收尾/留记录/更新台账"。
 - 要"总结经验/整理踩坑/做复盘/归档旧东西"。
-- 接手一个已有 `journal/`、`work-log/`、`lessons/`、`docs/` 记录体系的项目，要按既有约定续写。
+- 接手一个已有 `work_log/`、`journal/`、`work-log/`、`lessons/`、`docs/` 记录体系的项目，要按既有约定续写
+  （旧名 `journal/`、`work-log/` 与顶层 `lessons/` 都能被识别，**只读取、不迁移**）。
 
 ## 铁律（先看这 8 条）
 
@@ -49,20 +56,21 @@ description: 为长期项目建立并维护工作记录体系（过程记录 jou
 4. **历史不改写**：收口后不抹旧结论；被推翻时**追加** `## 更正`（日期 / 原结论 / 新证据 / 现结论）。
 5. **验证要有可核对的内容**（命令 / 数据 / 引用 / 样本）与结果；没做的必须写明"未覆盖 + 原因"。光说"完成了""应该没问题"不算验证。
 6. **经验必有来源**：lessons 每条带 `（wl/NNNN）`，来源不存在就不许写。
-7. **台账只有一个 `## 当前状态`**，字段固定（见下）；换新块时旧块整段剪到 `journal/archive/STATUS-HISTORY.md`。
+7. **台账只有一个 `## 当前状态`**，字段固定（见下）；换新块时旧块整段剪到 `work_log/STATE-HISTORY.md`。
 8. **编号永不复用，归档不改号**；归档只 move + 改链接。
 
 完整约定见 [references/conventions.md](references/conventions.md)；模板见 [references/templates.md](references/templates.md)。
 
 ## 工作流 A · 初始化（项目第一次用）
 
-1. 先查已有体系：`ls` 项目根，找 `journal/` `work-log/` `lessons/` `docs/` 以及根 `README.md` / `CLAUDE.md` / `AGENTS.md` 里的记录约定。
+1. 先查已有体系：`ls` 项目根，找 `work_log/` `journal/` `work-log/` `lessons/` `docs/` 以及根 `README.md` / `CLAUDE.md` / `AGENTS.md` 里的记录约定。
    **已有体系就沿用它的命名与编号，不新建平行目录。**
-2. 没有则按 `references/templates.md` 落盘：
-   - `journal/README.md`（台账模板）
-   - `lessons/README.md` + `lessons/01-<topic>.md`（先建 3–5 个与本项目相关的分册）
-   - `journal/archive/README.md`、`journal/archive/STATUS-HISTORY.md`
-   - 在项目根 `README.md` 加一行指向 `journal/README.md`
+2. 没有则按 `references/templates.md` 落盘（容器名默认 `work_log/`，可用 `--work-log NAME` 改）：
+   - `work_log/README.md`（台账模板）
+   - `work_log/lessons/README.md` + `work_log/lessons/01-<topic>.md`（先建 3–5 个与本项目相关的分册）
+   - `work_log/STATE-HISTORY.md`、`work_log/ARCHIVE.md`
+   - 有日志/运行产物的项目同时建 `work_log/logs/<来源>/`（见下「日志归位」）
+   - 在项目根 `README.md` 加一行指向 `work_log/README.md`
 3. 跑一次 `journal.py check --strict` 确认骨架自洽（此时 0 篇记录也应通过）。
    台账模板里的**示例索引行**要先删掉或换成真实文件名，否则被判死链。
 
@@ -85,11 +93,12 @@ description: 为长期项目建立并维护工作记录体系（过程记录 jou
 3. **状态：更新 `## 当前状态` 的 7 个固定字段**：
    `阶段 / 版本`、`迭代`、`产出`、`核对 / 验证`、`交付物与指纹`、`环境`、`阻塞 / 等待`。
    字段名按台账写法原样保留 —— `--set "核对=…"` 会落到 `核对 / 验证` 上（短名可识别），不要手改成新字段。
-4. **经验**：本轮若有可复用结论，写进 `lessons/` 对应分册并回填 `（wl/NNNN）`。
+4. **经验**：本轮若有可复用结论，写进 `work_log/lessons/` 对应分册并回填 `（wl/NNNN）`。
 5. **校验**：`python scripts/journal.py check --strict <项目根>` 必须 **0 error**。
    ⚠ 默认档位的 `check` 把"缺日期 / 缺验证小节 / 漏索引"报成 **WARN（退出码 0）**，
    只有 `--strict` 才把 warning 抬成 error —— 当门禁用必须加 `--strict`。
-6. 提交：代码与文档一起提交；提交信息引用篇号（如 `journal: 0042 ...`）。
+6. **日志归位**：本轮产生的持久日志 / 运行产物放进 `work_log/logs/<来源>/`，别留在项目根（见下「日志归位」）。
+7. 提交：代码与文档一起提交；提交信息引用篇号（如 `work_log: 0042 ...`）。
 
 ## 工作流 D · 归档、瘦身与复盘
 
@@ -105,8 +114,17 @@ python scripts/journal.py retro --from 27 --to 45 --out /tmp/retro.md     # 阶�
 - 很久以后，已归档、又没人引用的记录可以**冷存**（默认只报告，打包后才移出，**绝不直接删**）：
   `prune` → `prune --zip cold.zip` → `prune --zip cold.zip --apply`
 - 记录成千上万时用 `split --by-year` 按年分卷（`wl/NNNN` 回指不受目录变化影响）。
-- 复盘写进 `lessons/99-retrospectives.md`（阶段表 / 成果 / 可复用发现 / 遗留），**不要**另建 SUMMARY 文档到处写同一批数字。
+- 复盘写进 `work_log/lessons/99-retrospectives.md`（阶段表 / 成果 / 可复用发现 / 遗留），**不要**另建 SUMMARY 文档到处写同一批数字。
 - 铁律：**证据不删**——整理永远是"移走 + 汇总 + 留清单"；搬动后必跑 `check` 确认 0 死链。
+
+## 日志归位（任何产出都要归位）
+
+- **持久日志 / 运行产物一律进容器并分类**：`work_log/logs/<来源>/`，一个来源一个子目录
+  （例 `work_log/logs/build/`、`work_log/logs/bench/`）。**别散落在项目根，更别写到项目之外。**
+- **测试夹具、一次性样本不是记录**，不进 `work_log/`。
+- 日志里**不写绝对机器路径**，只写相对项目根的路径（脱敏后再落盘）。
+
+完整表述见 [references/conventions.md](references/conventions.md) 的「日志归位要求」。
 
 ## 工具（`scripts/journal.py`，纯标准库）
 
@@ -144,10 +162,10 @@ python scripts/journal.py stats                 # 语料统计（节奏/合规�
 python scripts/journal.py topics --limit 15     # 同主题簇建议（中文用 --keywords）
 python scripts/journal.py digest --out HANDOFF.md          # 交接摘要
 python scripts/journal.py retro --from 100 --to 151 --out r.md  # 阶段复盘骨架
-python scripts/journal.py export --csv --out journal.csv   # 机器可读导出
+python scripts/journal.py export --csv --out work_log.csv   # 机器可读导出
 ```
 
-自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全；**断言数以脚本实际输出为准**，全绿即通过）。
+自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全 + 新/旧布局；**断言数以脚本实际输出为准**，全绿即通过）。
 
 > 典型接手动作：`brief` → `search` → `show` → 需要细节才 `read` 那一个文件。
 > 典型收尾动作：`new --insert` → 补正文 → `status` → `lesson add` → `check --strict` && `lint --strict`。
@@ -156,11 +174,11 @@ python scripts/journal.py export --csv --out journal.csv   # 机器可读导出
 
 **本技能的核心是约定，脚本只是加速器。** 环境里没有 Python 也能完整使用，只是费手：
 
-1. **建结构**：按 [references/templates.md](references/templates.md) 手工落 `journal/README.md`、`journal/archive/README.md`、`lessons/README.md`。
+1. **建结构**：按 [references/templates.md](references/templates.md) 手工落 `work_log/README.md`、`work_log/ARCHIVE.md`、`work_log/STATE-HISTORY.md`、`work_log/lessons/README.md`（已有旧体系就沿用旧名，见「目录布局」的回退顺序）。
 2. **写记录**：按记录模板写入口 5 行 + 验证小节 + 遗留；标题固定 `# NNNN · 标题`。
 3. **收尾**：把「工作流 C 收尾清单」当人工检查表逐条走；把 `check` / `lint` 的判据（见 [references/commands.md](references/commands.md)）当核对清单。
 4. **检索导航**：用 `grep` / `rg` 代替 `search`，用索引表代替 `brief` / `outline`。
-5. **整理**：归档就是"移文件 + 改链接"，手工做时**先全仓 grep 链接再改**——脚本的价值主要就在这里（自动重写 + 死链自检）。
+5. **整理**：归档就是"移文件 + 改链接"（容器根 → `<stage>/`），手工做时**先全仓 grep 链接再改**——脚本的价值主要就在这里（自动重写 + 死链自检）。
 
 脚本全部只用 Python 标准库，**不需要 `pip install`**；只要 Python 3.9+ 在 PATH 里就能跑
 （更精确的实测范围见下方「环境边界」）。若连命令都不能执行（纯聊天环境），技能退化为一份
@@ -185,18 +203,19 @@ python scripts/journal.py export --csv --out journal.csv   # 机器可读导出
 | 反模式 | 后果 | 正确做法 |
 |---|---|---|
 | 台账靠人肉同步、长期不更 | "当前状态"过期，看板不可信（基线项目实测） | 收尾必更状态块，并用 `check` 判新鲜度 |
-| 当前状态 + 一堆历史状态堆在索引 | 索引膨胀、改一处分多处 | 只有一块当前状态，旧块进 STATUS-HISTORY |
+| 当前状态 + 一堆历史状态堆在索引 | 索引膨胀、改一处分多处 | 只有一块当前状态，旧块进 `STATE-HISTORY.md` |
 | 有的记录写日期、有的不写 | 无法机器校验、审计困难（基线 41/106） | `日期：` 必填，**用 `check --strict` 判 error**（默认档位只是 WARN） |
 | 篇号当迭代号引用 | 引用歧义 | 迭代号只写迭代字段，回指一律 `wl/NNNN` |
-| README 与 SUMMARY 各写一份数字 | 改一处漏一处 | 复盘并入 `lessons/99-retrospectives.md`，数字只留一份 |
+| README 与 SUMMARY 各写一份数字 | 改一处漏一处 | 复盘并入 `work_log/lessons/99-retrospectives.md`，数字只留一份 |
 | lessons 写结论不带来源 | 追不回证据、无法证伪 | 每条带 `（wl/NNNN）`，`check` 校验来源存在 |
 | 直接抹掉被推翻的旧结论 | 丢失演进与纠错价值 | 追加 `## 更正` 段 |
 | 把软件术语当成通用要求（如"验证必须有命令"） | 研究/写作类项目无法满足，规则被架空 | 验证口径是"可核对的内容"：命令、数据、引用、样本都算 |
-| 一次性调研随手建新目录 | 编号体系分裂 | 沿用既有 `journal/`，不编号就写 `迭代: -` |
+| 一次性调研随手建新目录 | 编号体系分裂 | 沿用既有 `work_log/`（或旧名 `journal/`），不编号就写 `迭代: -` |
+| 日志、trace、导出文件散在项目根（或写到项目外） | 证据游离在版本控制与备份之外，接手时找不到 | 一律归位到 `work_log/logs/<来源>/`；夹具不进容器；日志只写相对路径 |
 
 ## 参考文件
 
 - [references/analysis.md](references/analysis.md) · 基线实测分析与改进对照
-- [references/conventions.md](references/conventions.md) · 目录/编号/生命周期/台账/经验层的硬约定
+- [references/conventions.md](references/conventions.md) · 容器目录布局（含旧布局回退）/编号/生命周期/台账/经验层/日志归位 的硬约定
 - [references/commands.md](references/commands.md) · `journal.py` 全部命令与组合套路
 - [references/templates.md](references/templates.md) · 记录、台账、归档、经验分册、复盘 全套模板

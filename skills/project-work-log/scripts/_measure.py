@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""一次性测量：统计一个 journal/ + lessons/ 的现状（供 references/analysis.md 复现数字）。
+"""一次性测量：统计一个记录容器 + lessons/ 的现状（供 references/analysis.md 复现数字）。
 
 不属于技能运行时；随包发布只为让 analysis.md 里的数字可复现。
 
-    python scripts/_measure.py [ROOT] [--journal NAME] [--lessons NAME]
+    python scripts/_measure.py [ROOT] [--work-log NAME] [--journal NAME] [--lessons NAME]
 
-ROOT 默认为当前目录；`--journal` 默认自动在 `journal/` 与 `work-log/` 之间挑一个。
+ROOT 默认为当前目录；容器默认为自动探测：`work_log/` → `journal/` → `work-log/`
+（即默认新布局，同时兼容旧布局的 `journal/`、`work-log/`）。
+经验目录同样先看容器内，再看项目根（旧布局的顶层 `lessons/`）。
 与 journal.py 一致：标签解析同时接受中文默认与英文别名。
 """
 from __future__ import annotations
@@ -21,6 +23,10 @@ VERIFY_WORDS = ("验证", "实测", "复核", "检查", "审查", "评审", "结
                 "Verification", "Review", "Results", "Evidence", "Tests")
 STATUS_KEYS = ("当前状态", "Status", "Current Status")
 HISTORY_KEYS = ("历史状态", "Status History")
+
+# 与 journal.py 保持一致：默认容器名 + 旧名回退顺序。
+CONTAINER_FALLBACKS = ("work_log", "journal", "work-log")
+LESSONS_FALLBACKS = ("lessons",)
 
 
 def _any(aliases: tuple[str, ...]) -> str:
@@ -42,32 +48,54 @@ def read_text(path: str) -> str:
         return ""
 
 
-def resolve_journal(name: str | None, root: str) -> str:
+def resolve_container(name: str | None, root: str) -> str:
     if name:
         return os.path.join(root, name)
-    for cand in ("journal", "work-log"):
+    for cand in CONTAINER_FALLBACKS:
         if os.path.isdir(os.path.join(root, cand)):
             return os.path.join(root, cand)
-    return os.path.join(root, "journal")
+    return os.path.join(root, CONTAINER_FALLBACKS[0])
+
+
+def resolve_lessons(name: str | None, container: str, root: str) -> str:
+    """经验目录：先看容器内（新布局），再看项目根（旧布局）。"""
+    cands = (name,) if name else LESSONS_FALLBACKS
+    for base in (container, root):
+        for cand in cands:
+            if cand and os.path.isdir(os.path.join(base, cand)):
+                return os.path.join(base, cand)
+    return os.path.join(container, name or LESSONS_FALLBACKS[0])
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="统计 journal/ + lessons/ 现状（一次性测量工具）")
+    ap = argparse.ArgumentParser(description="统计记录容器 + lessons/ 现状（一次性测量工具）")
     ap.add_argument("root", nargs="?", default=".", help="项目根，默认当前目录")
-    ap.add_argument("--journal", default=None, help="记录目录名；默认自动识别 journal/ 或 work-log/")
-    ap.add_argument("--lessons", default="lessons", help="经验目录名（默认 lessons）")
+    ap.add_argument("--work-log", dest="work_log", default=None,
+                    help="容器目录名；默认自动探测 work_log/ → journal/ → work-log/")
+    ap.add_argument("--journal", default=None, help="已弃用：--work-log 的旧名，等价")
+    ap.add_argument("--lessons", default=None, help="经验目录名（默认 lessons，容器内优先）")
     args = ap.parse_args()
 
     root = os.path.abspath(args.root)
-    wl = resolve_journal(args.journal, root)
-    ls = os.path.join(root, args.lessons)
+    wl = resolve_container(args.work_log or args.journal, root)
+    ls = resolve_lessons(args.lessons, wl, root)
     print(f"root    : {root}")
-    print(f"journal : {wl}" + ("" if os.path.isdir(wl) else "   (不存在)"))
+    print(f"work_log: {wl}" + ("" if os.path.isdir(wl) else "   (不存在)"))
     print(f"lessons : {ls}" + ("" if os.path.isdir(ls) else "   (不存在)"))
     print()
 
+    # 容器里 lessons/logs 是**非记录**目录（分册名 `01-topic.md` 与记录同形），必须排除。
+    skip = {".git", "node_modules", "logs"}
+    if os.path.isdir(ls) and os.path.abspath(os.path.dirname(ls)) == os.path.abspath(wl):
+        skip.add(os.path.basename(ls))
+
+    def walk_records(base: str):
+        for dp, dn, fn in os.walk(base):
+            dn[:] = [d for d in dn if d not in skip]
+            yield dp, fn
+
     nums: dict[int, list[str]] = {}
-    for dp, _dn, fn in os.walk(wl):
+    for dp, fn in walk_records(wl):
         for f in fn:
             m = re.match(r"^(\d+)(?:-.*)?\.md$", f)
             if m:
@@ -121,7 +149,7 @@ def main() -> int:
 
     # 标题里写迭代号的篇数：基线把「变更集号」混进标题的次数
     titled = 0
-    for dp, _dn, fn in os.walk(wl):
+    for dp, fn in walk_records(wl):
         for f in fn:
             if not re.match(r"^\d+(?:-.*)?\.md$", f):
                 continue

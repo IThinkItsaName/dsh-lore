@@ -8,6 +8,47 @@
 
 ## [未发布]
 
+### 变更（破坏性：目录布局）
+
+- **记录体系收进单一容器目录 `work_log/`**。此前是**两个平行的顶层目录**（`journal/` +
+  顶层 `lessons/`），现在统一到一个容器，内部再分类：
+
+  | 旧位置 | 新位置 |
+  |---|---|
+  | `journal/README.md` | `work_log/README.md`（唯一台账，位置不变、角色不变） |
+  | `journal/NNNN-*.md` | `work_log/NNNN-*.md`（编号记录住**容器根**，不再套一层 `journal/`） |
+  | `journal/<YYYY>/NNNN-*.md` | `work_log/<YYYY>/NNNN-*.md`（按年分卷） |
+  | `journal/archive/<stage>/NNNN-*.md` | `work_log/<stage>/NNNN-*.md`（**取消 `archive/` 中间层**） |
+  | `journal/archive/STATUS-HISTORY.md` | `work_log/STATE-HISTORY.md` |
+  | `journal/archive/README.md` | `work_log/ARCHIVE.md` |
+  | `journal/archive/COLD-STORE.md` | `work_log/COLD-STORE.md` |
+  | `lessons/`（顶层） | `work_log/lessons/` |
+
+  容器名可配置：新增 `--work-log NAME`；`--journal NAME` 保留为等价的弃用别名。
+
+- **归档判据不再依赖字面量 `archive/`**：改为「相对容器的第一段是 4 位年份 ⇒ 活跃（分卷），
+  是别的子目录 ⇒ 已归档」。新旧布局因此共用一条规则，旧布局的 `archive/<stage>/` 无需特判。
+  代价见 `conventions.md` 的 ⚠：容器下**任何**临时子目录里的 `NNNN-*.md` 都会被算作已归档。
+
+- **旧布局只读回退，不迁移、不改名、不告警**：容器按 `--work-log`/`--journal` →
+  `work_log/` → `journal/` → `work-log/` 顺序解析；经验目录先看容器内再回退项目根。
+  `status --roll` / `archive` / `prune` 若发现旧布局的 `archive/{STATUS-HISTORY,README,COLD-STORE}.md`
+  已存在，就**继续沿用原文件** —— 不把同一段历史劈成两份文件（历史只搬运、不改写）。
+
+### 新增
+
+- **「日志归位」要求**：项目产生的持久日志 / 运行产物一律放进容器并分类 ——
+  `work_log/logs/<来源>/`，一个来源一个子目录（如 `work_log/logs/build/`、`work_log/logs/bench/`）。
+  不许散落在项目根，更不许写到项目之外；日志内只写相对路径。
+  **测试夹具与一次性样本不算记录**，不进容器。
+  这条同时写进了 `SKILL.md`（独立小节 + 工作流 A/C 引用）、`conventions.md`（完整表述）与反模式表。
+
+- `_selftest.py` 断言 96 → **122**：新增容器根放记录、`lessons/` 属容器子目录、归档落
+  `work_log/<stage>/`、`STATE-HISTORY.md` 落容器根、`lessons/` 不被当成归档阶段、
+  `logs/` 下同形文件名不算记录、`--lessons` 改名后仍被排除、以及整套旧布局回退的回归。
+- 文档里的自测数字**不再硬编码**（`analysis.md` 原写 `95/95`，且因计数时机差一本来就错）。
+  约束仍在：`_selftest.py` 会核对文档里出现的任何统计数字，写死过期数字会被判 FAIL。
+
 ## [0.2.0] - 2026-09-25
 
 本版把它变成**一个包、两种装法**：既是原来的 Agent Skill，也是一个 **DeepSeek Harness 插件包**。

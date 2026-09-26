@@ -9,7 +9,8 @@ description: Eight reliability principles (verify before acting, ask when unclea
 > When you (the user) explicitly ask to depart from a principle — "skip the tests this
 > time", "don't look it up, just guess" — the assistant should first say **which
 > principle is being waived and what risk that carries**, then proceed once you
-> confirm, and leave one line in the work record (`journal/`) explaining why.
+> confirm, and leave one line in the work record (`work_log/`; an older project may call
+> that container `journal/` — use whatever the project already uses) explaining why.
 >
 > This is not a licence to refuse the user. **Your explicit decision outranks these
 > defaults.** What the guidelines require is "do not violate them silently", not

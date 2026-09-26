@@ -8,6 +8,51 @@
 
 ## [未发布]
 
+## [0.4.0] - 2026-09-26
+
+> **从 0.3.0 直接看这一版即可**：`0.3.1` 从未单独发布（见该条目的说明）。
+
+### 新增（项目配置文件）
+
+- **`<容器>/.config.json`**：项目级偏好，`journal.py` 每次执行时读，**改完立即生效**。
+
+  | 字段 | 默认 | 说明 |
+  |---|---|---|
+  | `mode` | `full` | 新项目的精细度默认档 |
+  | `container` | `work_log` | 容器目录名 |
+  | `lessons` | `lessons` | 经验目录名 |
+  | `legacy` | 空 | 旧记录清单（同 `LEGACY.md`） |
+  | `snapshotEntries` | `12` | 摘要默认篇数 |
+
+  优先级：**命令行 > `.config.json` > 内置默认**。
+
+  > **`container` / `lessons` 是例外**：它们命名配置文件自己所住的目录，不可能靠读文件
+  > 得知自己在哪。所以容器仍**只按目录发现**；配置里这两个字段与实际不符时**报出来但不改
+  > 生效值**，也不失败。它们的正确含义是「**新项目该叫什么**」。
+
+- **`config` 子命令**：显示每个字段的**生效值**以及**它来自哪**（`命令行` / `.config.json`
+  / `内置默认`）—— 在此之前用户无法知道一个值为什么是这个值。
+  `--write` 生成、`--set key=value` 改一项、`--force` 才覆盖已有文件。
+
+### 新增（插件设置页）
+
+- **插件设置页**，与 `dsh-status-rotator` 同一栏，导航名「工作记录」。可改
+  `guidelinesEnabled` / `guidelinesLanguage` / `verbose` / `skillDir` / `guidelinesDir`，
+  以及三个**新项目默认值**（`container` / `lessons` / `mode`）。
+
+  - 设置文件在 **`<DSH_HOME>/worklog/settings.json`**（`DSH_WORKLOG_SETTINGS` 可整路径覆盖）。
+    不放在包旁边，是因为装进 profile 的是指向 git 工作树的 junction（写进去会弄脏工作树），
+    而重装会替换那个目录 —— 恰恰最不该丢设置的时候。
+  - 优先级 **设置文件 > row config > 内置默认**。这不是口味问题：bundle 补丁里写死了四个
+    准则相关的键，如果 row 赢，**设置页改什么都无效**。
+  - **不用手搓 UI**：表单控件取自 `@deepseek-ai/dsh-client-ui-primitives`
+    （`Switch` / `Input` / `SegmentedControl` / `DisclosureRow`…），只用 `--dsw-*` 令牌着色。
+    所以这个半边只有 **485 行**，而同类插件的客户端半边是 259 KB —— 那个自带了整套 CSS。
+  - **无构建步骤**：`lib/client.js` 是手写的普通 JS，包装与 `require`（只有 `react` 与
+    `dsh-client-ui-primitives`，都在宿主固定的 9 项 baseline 里）都手写，不用 JSX。
+  - **三个项目级键不归插件管**：插件只**存**它们，**不读**它们。界面把它们放在
+    「新项目默认值（插件不读）」下并注明写的是项目自己的 `.config.json`、由 `journal.py` 读。
+
 ### 变更（仓库改名）
 
 - **仓库由 `worklog` 改名为 `dsh-worklog`**，与 npm 包名一致。文档里的 13 处引用
@@ -21,6 +66,7 @@
   > "改了一半"，只是不能自动得知远端真名。
 
 ### 修复（插件页显示的文字不跟随语言设置）
+
 
 - **插件管理页里的标题与描述现在跟随 DSH 的语言设置。** 此前无论切到哪种语言，
   那一行永远是英文的 `package.json` 顶层 `description`。原因不是"没做本地化"，而是两处
@@ -53,6 +99,10 @@
 > `package.json` 里还写着 `0.2.0` —— 包清单与 tag 不一致。按本文件顶部"tag 一旦推送
 > 就不要移动"的规矩，tag 保持不动，改用 0.3.1 承载这批内容。
 > 0.3.0 与 0.3.1 之间没有代码差异。
+>
+> ⚠ **0.3.1 没有单独发布过**：它的内容与 `v0.3.0` 的 tag 之间只差版本号本身，
+> 随后插件继续演进（0.4.0 补上了这一版真正缺的那一块 —— 插件页显示文字跟随语言）。
+> 从 0.3.0 直接升到 0.4.0 的读者，两版内容都在 0.4.0 里。
 
 ### 修复（发布面的版本一致性）
 
@@ -389,8 +439,9 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.3.1...HEAD
+[未发布]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.4.0...HEAD
 [0.3.1]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.3.0...v0.3.1
+[0.4.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.3.1...v0.4.0
 [0.3.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.1.0...v0.1.1

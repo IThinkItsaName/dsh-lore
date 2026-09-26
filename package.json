@@ -1,6 +1,6 @@
 {
   "name": "dsh-worklog",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Long-term project work-log system for AI agents (software, research, writing, design, operations): process journal + index ledger + lessons, with a stdlib-only Python toolbox. Ships as an Agent Skill and as a DeepSeek Harness plugin bundle.",
   "license": "MIT",
   "type": "module",

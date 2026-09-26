@@ -50,14 +50,14 @@ git push -u origin main
 pi 安装时可以固定到 tag/commit，用户就不会被上游改动影响：
 
 ```bash
-git tag -a v0.3.1 -m "project-work-log v0.3.1"
-git push origin v0.3.1
+git tag -a v0.4.0 -m "project-work-log v0.3.1"
+git push origin v0.4.0
 ```
 
 之后别人可以这样装：
 
 ```bash
-pi install git:github.com/IThinkItsaName/dsh-worklog@v0.3.1
+pi install git:github.com/IThinkItsaName/dsh-worklog@v0.4.0
 ```
 
 > ⚠ **打 tag 之前先改 `package.json` 的 `version`，并确认它等于 tag 去掉 `v`。**
@@ -87,7 +87,7 @@ python <工作区>/.pi/skills/project-work-log/scripts/_package.py --check
 # 4) 提交并推送
 cd <工作区>/publish/worklog
 git add -A && git commit -m "chore: sync skill from source" && git push
-git tag -a v0.3.2 -m "v0.3.2" && git push origin v0.3.2   # 有行为变化时
+git tag -a v0.4.1 -m "v0.4.1" && git push origin v0.4.1   # 有行为变化时
 ```
 
 > 不要在 `publish/worklog/skills/` 里直接改脚本——下次同步会被覆盖。改源，再同步。

@@ -128,7 +128,7 @@ echo /tmp/worklog-trace.log > <包>/lib/.trace
 pi install git:github.com/IThinkItsaName/dsh-worklog
 
 # 固定到 tag（推荐，避免上游变动）
-pi install git:github.com/IThinkItsaName/dsh-worklog@v0.3.1
+pi install git:github.com/IThinkItsaName/dsh-worklog@v0.4.0
 
 # 只装到当前项目（写入 .pi/settings.json，可随仓库共享给团队）
 pi install -l git:github.com/IThinkItsaName/dsh-worklog

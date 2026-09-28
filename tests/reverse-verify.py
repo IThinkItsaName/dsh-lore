@@ -338,6 +338,16 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "            if i in other.legacy_rows:\n                self.legacy_rows.add(len(self.rows) - 1)",
      "            if False:\n                self.legacy_rows.add(len(self.rows) - 1)",
      "gates: the gradual rule survives the merge (a legacy finding stays info)"),
+    ("gates", "新增一条降级规则却不进中央清单",
+     'RULE_TITLE = "标题形制"',
+     'RULE_TITLE = "标题形制"\nRULE_UNLISTED = "没进清单的新规则"',
+     "gates: the central list names `RULE_UNLISTED`"),
+    ("gates", "降级调用不再传常量（硬编码规则名）",
+     '                                       + " / ".join(VERIFY_WORDS[:12]) + " 之一，h2–h4 都算）")\n'
+     '            _mark_legacy(rep, i, legacy_rec, RULE_VERIFY)',
+     '                                       + " / ".join(VERIFY_WORDS[:12]) + " 之一，h2–h4 都算）")\n'
+     '            _mark_legacy(rep, i, legacy_rec, "验证小节")',
+     "gates: every _mark_legacy call passes a RULE_* constant, never a literal"),
 
     # ── links：链接目标的三种写法（裸 / 尖括号 / %转义）走同一套解析 ──────────────
     # 这一相的核心不变量：**写出来的、检查得到的、折叠得动的，必须是同一批目标**。
@@ -415,14 +425,23 @@ def main() -> int:
             print(f"MISS  {name}   [替换源不唯一：{n} 次]")
             continue
         d = os.path.join(scratch_root, f"rev{i:02d}")
-        os.makedirs(d)
-        with open(os.path.join(d, "journal.py"), "w", encoding="utf-8", newline="") as fh:
+        # 副本要**照真实技能布局**建：`scripts/` 放代码、`references/` 放文档。
+        # 平铺（代码直接放 rev00/）会让 `os.path.dirname(HERE)` 少一层——
+        # 相里按 `../references/` 找文档的断言就会抛 FileNotFoundError，
+        # 于是变异"跑不起来"而不是"如期变红"，看着像通过其实什么都没验。
+        os.makedirs(os.path.join(d, "scripts"))
+        os.makedirs(os.path.join(d, "references"))
+        with open(os.path.join(d, "scripts", "journal.py"), "w", encoding="utf-8", newline="") as fh:
             fh.write(original.replace(old, new))
-        with open(os.path.join(d, "_selftest.py"), "w", encoding="utf-8", newline="") as fh:
+        with open(os.path.join(d, "scripts", "_selftest.py"), "w", encoding="utf-8", newline="") as fh:
             fh.write(selftest_src)
+        shutil.copyfile(
+            os.path.join(os.path.dirname(SKILL), "references", "commands.md"),
+            os.path.join(d, "references", "commands.md"),
+        )
         fx = os.path.join(d, "fx")
         os.makedirs(fx)
-        mod = load_module(os.path.join(d, "_selftest.py"), f"m{i}")
+        mod = load_module(os.path.join(d, "scripts", "_selftest.py"), f"m{i}")
         # 只留结论：把子进程逐条 PASS/FAIL 的打印静音，否则每跑一条变异都会倒出
         # 一整份自测输出（五十几条变异就是几万行），真正要看的那行会被埋掉。
         def _quiet(cond, label, detail="", _mod=mod):

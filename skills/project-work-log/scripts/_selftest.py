@@ -1104,6 +1104,33 @@ def gate_phase(parent: str) -> None:
     ok(r.returncode == 0,
        "gates: the gradual rule survives the merge (a legacy finding stays info)", r.stdout + r.stderr)
 
+    # 8) 降级规则的**中央清单**不许与代码漂移 --------------------------------
+    #
+    # 这是 `0020` 的遗留：哪些规则参与渐进原则，原先只能读代码才知道（实跑时还按错假设写过
+    # 断言——「结论为空」降级、「结论没有可核对的信息」不降级）。现在 `commands.md` 的
+    # 「渐进原则」小节里有一张表，表里点名 `RULE_*` 常量；两边对账是机械可判的，
+    # 所以放进自测，而不是指望下一个人记得同步。
+    skill_dir = os.path.dirname(HERE)
+    tool_src = read(os.path.join(HERE, "journal.py"))
+    doc_src = read(os.path.join(skill_dir, "references", "commands.md"))
+    constants = dict(re.findall(r'^(RULE_\w+) = "([^"]+)"', tool_src, re.M))
+    ok(len(constants) >= 3, "gates: found the downgrade rule constants in the code",
+       ", ".join(sorted(constants)))
+    for name, value in sorted(constants.items()):
+        ok(f"`{name}`" in doc_src,
+           f"gates: the central list names `{name}`", f"value = {value}")
+    listed = set(re.findall(r"`(RULE_\w+)`", doc_src))
+    ok(listed <= set(constants),
+       "gates: the central list names no rule the code no longer has",
+       f"doc-only: {', '.join(sorted(listed - set(constants))) or '(none)'}")
+    # `(?<!def )` 把函数定义那一行排除掉——它的形参与调用长得一样，第一版就把它算成了调用点。
+    calls = [m.group(0) for m in re.finditer(r"(?<!def )_mark_legacy\([^)]*\)", tool_src)]
+    ok(len(calls) >= 5, "gates: found the _mark_legacy call sites", str(len(calls)))
+    bad_calls = [c for c in calls if not re.search(r"\bRULE_\w+\s*\)", c)]
+    ok(not bad_calls,
+       "gates: every _mark_legacy call passes a RULE_* constant, never a literal",
+       "; ".join(c.strip() for c in bad_calls) or "(all good)")
+
 
 def link_phase(parent: str) -> None:
     """链接目标的三种写法必须走**同一套**解析：裸、尖括号（含空格）、百分号转义。

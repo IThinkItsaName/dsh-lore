@@ -26,6 +26,13 @@
 所以读配置文件之前就得先知道它们——只能按目录发现，配置里的值只当"新项目该叫什么"的备注。
 `mode`（配置里的）只提供**新项目的初始档位**；项目里显式切过档之后，台账的 `精细度` 才是权威。
 
+全局记忆（`<DSH_HOME>/memory/`，跨工作区）
+------------------------------------------
+工作区的经验层只在工作区内可见。要把一条确证过的教训带到**别的工作区**，走这一层：
+唯一的出口是 `<工作区>/<容器>/发布.md`（双向白名单，也是全局层唯一获准读的工作区文件），
+准入靠**来源分档**（`wl/NNNN` / manual:tested / manual:read / manual:inferred），
+索引是**生成物**、超硬上限报错而不截断。落点、生命周期与命令见 references/memory.md。
+
 两种记录命名**都认**（实测 237 篇编号式 + 71 篇日期式）：
 - 编号式 `NNN-<slug>.md`，H1 必须 `# NNN · <标题>`；编号永不复用、归档不改号。
 - 日期式 `YYYY-MM-DD-<slug>.md`，H1 必须 `# YYYY-MM-DD <标题>`（日期后可接一个行内实验号，如 `R21：`）。
@@ -63,6 +70,13 @@
     digest    生成交接摘要文档（--out 落盘）
     retro     阶段复盘骨架（篇号区间 → 阶段表 + 遗留汇总）
     export    机器可读导出（--json / --csv）
+
+读写 · 跨工作区（全局记忆，见 references/memory.md）
+    memory    全局记忆：publish 发布清单 / collect 收集 / add 新增 / search 检索 /
+              index 索引 / lint 门禁 / status 状态（落在 <DSH_HOME>/memory/，不进工作区）
+    dream     把一个项目的记录收敛成摘要：发骨架 / accept 收下（回指机械校验）/ check 复查
+    inbox     跨工作区信箱：put / list / take / sweep / count（它是通信，不是记忆）
+    promote   升格为技能的建议（三条件同时满足才报候选；**只报，不自动打包**）
 
 只用 Python 标准库。约定见 references/conventions.md，模板见 references/templates.md。
 """
@@ -3644,7 +3658,7 @@ def memory_body_line(entry: dict) -> str:
 def render_memory_entry(entry: dict) -> str:
     """按约定格式渲染一条（`index` 与 `add` 写出去的就是这个形状）。"""
     out = [f"- id: {entry['id']}",
-           f"  applies-to: {', '.join(entry['applies_to'])}",
+           f"  applies-to: {', '.join(entry['applies_to'])}".rstrip(),
            f"  state: {entry['state']}",
            f"  source: {entry['source']}",
            f"  cited-by: [{', '.join(entry['cited_by'])}]"]
@@ -4111,7 +4125,7 @@ def dream_skeleton(container: str, recs: list[dict]) -> str:
              "> 脚本只做机械的那半：挑出还没收敛的记录、按主题分组、发这个骨架；",
              "> 总结由模型或人来写。**摘要不是新事实**，是一条指向记录的收敛视图 ——",
              "> 所以 `### 主题` 下的每条断言都必须带一个指向记录的回指链接，",
-             "> `dream accept` 会逐条机械校验，过不了就拒绝写回。", "",
+             "> `dream --accept` 会逐条机械校验，过不了就拒绝写回。", "",
              f"## 待收敛（{len(recs)} 篇）", ""]
     for title, members in dream_groups(recs):
         lines += [f"### {title}", "", "| 记录 | 标题 |", "|---|---|"]
@@ -4255,6 +4269,7 @@ def cmd_memory_collect(args: argparse.Namespace) -> int:
     registry = load_registry(memory)
     state = load_state(memory)
     wrote_any = False
+    registry_dirty = False
     changed: list[str] = []
     skipped: list[str] = []
     problems: list[str] = []
@@ -4276,6 +4291,13 @@ def cmd_memory_collect(args: argparse.Namespace) -> int:
             continue
         for lv, msg in manifest["problems"]:
             problems.append(f"{name}: {msg}")
+        # 名册跟着清单走：清单是声明（手改的也算数），名册只是它的缓存。
+        # 不跟，`memory status` 就会报一个与清单不符的 upload —— 同一件事两个答案。
+        if (list(conf.get("applies-to", [])) != list(manifest["applies-to"])
+                or bool(conf.get("upload")) != bool(manifest["upload"])):
+            registry[ws] = {**conf, "applies-to": list(manifest["applies-to"]),
+                            "upload": bool(manifest["upload"])}
+            registry_dirty = True
         text = read_raw(memory_manifest_path(ws))
         digest = _memory_sha1(text)
         st = state["workspaces"].get(ws)
@@ -4305,7 +4327,11 @@ def cmd_memory_collect(args: argparse.Namespace) -> int:
                                else "01-general.md",
                      "domain": manifest["applies-to"][0] if manifest["applies-to"] else "general"}
             existing = [e for e in load_memory_entries(memory) if e["id"] == eid]
+            cite_added = False
             if existing:
+                # 同名 id 落在**别的领域**（别的分册）= 冲突；落在同一分册 = 引用。
+                # 判据是分册：同一个领域里叫同一个 id，说的是同一条教训，第二个
+                # 工作区是在**引用**它 —— 那正是 §七 说的"最强且无法伪造"的信号。
                 other = [e for e in existing if e["volume"] != entry["volume"]]
                 if other:
                     problems.append(f"{name}: id `{eid}` 已被分册 `{other[0]['volume']}` 占用"
@@ -4314,15 +4340,17 @@ def cmd_memory_collect(args: argparse.Namespace) -> int:
                 entry["volume"] = existing[0]["volume"]
                 entry["domain"] = existing[0]["domain"]
                 entry["cited_by"] = sorted(set(existing[0]["cited_by"]) | {name})
+                cite_added = entry["cited_by"] != sorted(existing[0]["cited_by"])
             else:
                 note_usage(memory, eid)
+            if not existing:
                 changed.append(f"+ {eid}（{name}）")
+            elif cite_added:
+                changed.append(f"~ {eid}（{name} 加入 cited-by）")
             if args.dry_run:
                 continue
             if upsert_memory_entry(memory, entry):
                 wrote_any = True
-                if not existing:
-                    changed.append(f"+ {eid}（{name}）")
         if not args.dry_run:
             state["workspaces"][ws] = {"digest": digest, "at": _memory_now()}
             wrote_any = True
@@ -4330,6 +4358,8 @@ def cmd_memory_collect(args: argparse.Namespace) -> int:
     cand = observe_candidate(memory, os.path.abspath(args.root), registry)
     if wrote_any and not args.dry_run:
         save_state(memory, state)
+    if registry_dirty and not args.dry_run:
+        save_registry(memory, registry)
     print(f"MEMORY  {memory}")
     for c in changed:
         print("  " + c)
@@ -4339,6 +4369,8 @@ def cmd_memory_collect(args: argparse.Namespace) -> int:
         print("  ! " + p)
     if not changed and not problems:
         print("  没有新东西（collect 是幂等的：清单没变就不重复收）")
+    if changed and not args.dry_run:
+        print("  提示：跑 `memory index` 重建索引（索引是生成物，collect 不代劳）")
     if cand:
         print(f"  候选（未登记，只提示）：{cand}")
     if args.dry_run:
@@ -4644,6 +4676,18 @@ def _dream_parse(args: argparse.Namespace):
     return root, journal, lessons
 
 
+def cmd_dream(args: argparse.Namespace) -> int:
+    """`dream` 的调度：默认发骨架，`--accept` 收下，`--check` 复查。
+
+    两个模式的分工写在各自的 docstring 里；这里只是一处分派，不做判断。
+    """
+    if args.accept:
+        return cmd_dream_accept(args)
+    if args.check:
+        return cmd_dream_check(args)
+    return cmd_dream_prepare(args)
+
+
 def cmd_dream_prepare(args: argparse.Namespace) -> int:
     root, journal, lessons = _dream_parse(args)
     if not journal:
@@ -4672,7 +4716,7 @@ def cmd_dream_prepare(args: argparse.Namespace) -> int:
     write_raw(draft, text)
     print(f"  骨架：{rel(root, draft)}")
     print("  下一步：**模型写总结**，把每条 `- …（回指：<记录文件名>）` 换成"
-          "一句话断言 + 一个指向记录的链接，然后跑 `dream accept`。")
+          "一句话断言 + 一个指向记录的链接，然后跑 `dream --accept`。")
     return 0
 
 
@@ -4694,10 +4738,20 @@ def cmd_dream_accept(args: argparse.Namespace) -> int:
     text = read(src)
     links = dream_record_links(text)
     body = _dream_strip_covered(text)
-    # 骨架的第一行是它自己的 H1，且它的 `## 待收敛` 小节名属于草稿阶段；
-    # 成品换成自己的 H1 + 生成的覆盖范围，其余正文原样留着。
-    rest = body.split("\n", 1)[1] if "\n" in body else body
-    rest = rest.replace("## 待收敛（", "## 本轮收敛（", 1).lstrip("\n")
+    # 丢掉骨架自己的 H1 与其后紧接的说明引用块：它们讲的是"怎么填骨架"，
+    # 不是摘要内容，带进成品只会让读者以为那是总结的一部分。
+    rest_lines = body.splitlines(keepends=True)
+    k = 0
+    while k < len(rest_lines) and not rest_lines[k].strip():
+        k += 1
+    h = heading_level(rest_lines[k]) if k < len(rest_lines) else None
+    if h and h[0] == 1:
+        k += 1
+    while k < len(rest_lines) and (not rest_lines[k].strip()
+                                   or rest_lines[k].lstrip().startswith(">")):
+        k += 1
+    rest = "".join(rest_lines[k:]).lstrip("\n")
+    rest = rest.replace("## 待收敛（", "## 本轮收敛（", 1)
     out = [f"# 摘要（dream 收敛视图，{today()}）", "",
            "> **摘要不是新事实**：它是一条指向记录的收敛视图，每条断言都下钻一层到来源。",
            "> 覆盖范围由 `dream accept` 生成；要改内容就改骨架再收一次。", "",
@@ -4841,13 +4895,19 @@ def cmd_inbox_take(args: argparse.Namespace) -> int:
         body = ENTRY_TEMPLATE.format(num=num, title=args.into_record, date=today(), iter="-",
                                      cmd="<命令 / 数据 / 引用 / 样本>")
         lines = body.splitlines(keepends=True)
+        nl = nl_of(body)
+        # 转移过来的原文**原样放进去**（只统一换行）：这是"把信箱里那条搬进记录"，
+        # 不是"重新表述它"。开头那个空行是为了别把正文顶到小节标题上。
+        payload = [nl, f"（来自信箱 `{item['name']}`）{nl}", nl]
+        payload += [l + nl for l in text.replace("\r\n", "\n").splitlines()]
+        payload.append(nl)
         span = find_section(lines, 2, "背景与事实核查")
-        payload = ["（来自信箱 `" + item["name"] + "`）", ""] + text.splitlines(keepends=True) + [""]
         if span:
             insert_at_end_of_section(lines, span[1], span[2], payload)
             body = "".join(lines)
         else:
-            body = body.rstrip("\n") + "\n\n## 来源（信箱）\n\n" + "".join(payload)
+            body = (body.rstrip("\n") + nl + nl + "## 来源（信箱）" + nl + nl
+                    + "".join(payload[1:]))
         if args.dry_run:
             print(f"[dry-run] 将创建 {rel(root, rpath)}，并删除信箱条目 `{item['name']}`")
             return 0
@@ -4953,6 +5013,11 @@ def _add_legacy(p: argparse.ArgumentParser) -> None:
 
 def _add_root(p: argparse.ArgumentParser) -> None:
     p.add_argument("root", nargs="?", default=".", help="项目根，默认当前目录")
+
+
+def _add_memory(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--memory", default=None, metavar="P",
+                   help="全局记忆根目录；默认 $DSH_WORKLOG_MEMORY，再默认 $DSH_HOME/memory")
 
 
 def _root_and_num(paths: list[str]) -> tuple[str, str]:
@@ -5170,6 +5235,170 @@ mode 同样只提供**新项目的初始档位**：台账 `## 当前状态` 有 
     p.add_argument("--text", required=True)
     p.add_argument("--bullet", action="store_true", help="每行自动加 `- ` 前缀")
     p.add_argument("--dry-run", action="store_true")
+
+    # ---- 全局记忆（跨工作区，见 references/memory.md）------------------------
+    # 每个子命令自己带 `_add_common` / `_add_root`：argparse 的子解析器默认值会
+    # 覆盖父级的同名值，两边都加等于让父级的 `--work-log` 静默失效。
+    p_mem = sub.add_parser(
+        "memory", help="全局记忆（跨工作区）：publish / collect / add / search / index / lint / status",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="工作区之外的一层记忆：一个工作区里确证过的教训，能在另一个工作区被用到。\n"
+                    "准入靠**来源分档**，不靠「看起来重要吗」；唯一的出口是本工作区的\n"
+                    "`<容器>/发布.md`（双向白名单，也是全局层唯一获准读的工作区文件）。")
+    msub = p_mem.add_subparsers(dest="memory_cmd", required=True)
+
+    p = msub.add_parser("publish", help="写出/更新本工作区的发布清单，并登记进名册")
+    _add_common(p)
+    _add_root(p)
+    _add_memory(p)
+    p.add_argument("--applies-to", dest="applies_to", default=None, metavar="a,b",
+                   help="本工作区关心的标签（逗号分隔）；留空 = 到处都适用")
+    p.add_argument("--upload", dest="upload", action="store_true", default=None,
+                   help="允许外流（默认 false：只读不传，合法且常见）")
+    p.add_argument("--no-upload", dest="upload", action="store_false")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_memory_publish)
+
+    p = msub.add_parser("collect", help="按名册与清单收集（幂等：靠 .state.json 的清单摘要）")
+    _add_common(p)
+    _add_root(p)
+    _add_memory(p)
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_memory_collect)
+
+    p = msub.add_parser("add", help="新增一条记忆（来源必须能分档）")
+    p.add_argument("text", help="一句话教训（症状 → 根因 → 做法）")
+    _add_common(p)
+    _add_root(p)
+    _add_memory(p)
+    p.add_argument("--source", required=True,
+                   help="`<工作区>/wl/NNNN` 或 `wl/NNNN`（本工作区），或 manual:tested / manual:read / manual:inferred")
+    p.add_argument("--id", required=True, help="全局唯一 id（小写拉丁 / 数字 / 连字符）")
+    p.add_argument("--applies-to", dest="applies_to", default=None, metavar="a,b")
+    p.add_argument("--volume", default=None, help="分册文件名，默认按第一个标签取 `01-<标签>.md`")
+    p.add_argument("--state", default=MEMORY_RETIRED_DEFAULT, choices=list(MEMORY_STATES))
+    p.add_argument("--personal", action="store_true",
+                   help="写进 personal/（不进 git、不进索引、默认不检索）")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_memory_add)
+
+    p = msub.add_parser("search", help="检索记忆（默认只搜 active / stale）")
+    _add_memory(p)
+    p.add_argument("query")
+    p.add_argument("--tags", default=None, metavar="a,b", help="按 applies-to 取交集")
+    p.add_argument("--include-personal", dest="include_personal", action="store_true")
+    p.add_argument("--include-retired", dest="include_retired", action="store_true")
+    p.add_argument("--limit", type=int, default=30)
+    p.add_argument("--dry-run", action="store_true", help="只查不记命中")
+    p.set_defaults(func=cmd_memory_search)
+
+    p = msub.add_parser("index", help="重建 / 校验 INDEX.md（注入用索引，生成物）")
+    _add_memory(p)
+    p.add_argument("--check", action="store_true", help="只校验索引与正文是否一致")
+    p.set_defaults(func=cmd_memory_index)
+
+    p = msub.add_parser("lint", help="记忆门禁（WARN 在 --strict 下抬成 ERROR）")
+    _add_common(p)
+    _add_root(p)
+    _add_memory(p)
+    p.add_argument("--strict", action="store_true")
+    p.add_argument("--quiet", action="store_true")
+    p.set_defaults(func=lambda a: _run(
+        Report(a.strict),
+        lambda: memory_lint_report(os.path.abspath(a.root), memory_root(a.memory), a.strict), a))
+
+    p = msub.add_parser("status", help="名册 / 候选 / 索引大小 / 信箱条数")
+    _add_common(p)
+    _add_root(p)
+    _add_memory(p)
+    p.add_argument("--verbose", action="store_true", help="连工作区路径一起列出来")
+    p.set_defaults(func=cmd_memory_status)
+
+    # ---- dream：收敛（脚本做机械的那半，模型做总结的那半）--------------------
+    # 两个模式用**互斥的开关**表示，不建子解析器：`dream [ROOT]` 里的 ROOT 是可选的
+    # 位置参数，argparse 会让它和子解析器抢第一个词（实测 `dream <路径>` 会被当成
+    # 子命令名而报错）。开关没有这个歧义，也和规格里的 `dream [ROOT] [--dry-run]` 对得上。
+    p_dream = sub.add_parser(
+        "dream", help="把一个项目的记录收敛成摘要：发骨架（默认）/ --accept 收下 / --check 复查",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+两半分工（这是重点）：
+
+  脚本  挑出还没收敛的记录、按主题分组、发骨架、**校验每条断言的回指**、写回。
+  模型  读骨架、写总结，把 `- …（回指：<记录文件名>）` 换成断言 + 指向记录的链接。
+
+**摘要不是新事实**，是一条指向记录的收敛视图：每条断言都要能下钻一层到来源，
+所以回指是**机械校验**的（复用既有的死链检查器），过不了就拒绝写回。
+
+    python scripts/journal.py dream              # 发骨架 → <容器>/摘要.draft.md
+    python scripts/journal.py dream --accept     # 回指全过 → 写回 <容器>/摘要.md
+    python scripts/journal.py dream --check      # 以后复查：回指还指得到吗
+""")
+    _add_common(p_dream)
+    _add_root(p_dream)
+    mode = p_dream.add_mutually_exclusive_group()
+    mode.add_argument("--accept", action="store_true", help="收下一份填好的骨架并写回")
+    mode.add_argument("--check", action="store_true", help="复查已写回的摘要")
+    p_dream.add_argument("--in", dest="in_", default=None, metavar="FILE",
+                         help="配合 --accept：要收下的骨架，默认 <容器>/摘要.draft.md")
+    p_dream.add_argument("--dry-run", action="store_true", help="只打印，不写盘")
+    p_dream.add_argument("--force", action="store_true", help="发骨架时覆盖已经填过的骨架")
+    p_dream.add_argument("--strict", action="store_true", help="配合 --check：把 WARN 抬成 ERROR")
+    p_dream.set_defaults(func=cmd_dream)
+
+    # ---- 信箱：它不是记忆，是通信 -------------------------------------------
+    p_inbox = sub.add_parser(
+        "inbox", help="跨工作区信箱：put / list / take / sweep / count",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="信箱是**通信**，不是记忆：不进索引、不进注入、不进 git，阅后即删或转移为记录。\n"
+                    "硬上限（条数 / 单条字节 / 总量字节）：**写满就报错，不静默堆积** ——\n"
+                    "信箱一旦无限增长，它就变成了一个没人读的日志。")
+    isub = p_inbox.add_subparsers(dest="inbox_cmd", required=True)
+
+    p = isub.add_parser("put", help="投一条消息（原子写：先临时文件再 rename）")
+    _add_memory(p)
+    p.add_argument("text", nargs="?", default=None, help="消息正文；也可以给 --file")
+    p.add_argument("--file", default=None, help="从文件读正文")
+    p.set_defaults(func=cmd_inbox_put)
+
+    p = isub.add_parser("list", help="列出信箱条目")
+    _add_memory(p)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--limit", type=int, default=50)
+    p.set_defaults(func=cmd_inbox_list)
+
+    p = isub.add_parser("take", help="取走一条（默认阅后即删；--into-record 转移为记录）")
+    p.add_argument("name", help="条目名（可给唯一子串）")
+    _add_common(p)
+    _add_root(p)
+    _add_memory(p)
+    p.add_argument("--into-record", dest="into_record", default=None, metavar="TITLE",
+                   help="转移成工作区里的一篇记录，然后删掉原件")
+    p.add_argument("--keep", action="store_true", help="只打印，不删原件")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_inbox_take)
+
+    p = isub.add_parser("sweep", help="清理过期条目（默认只报告，--apply 才真删）")
+    _add_memory(p)
+    p.add_argument("--older-than", dest="older_than", type=int, default=MEMORY_INBOX_SWEEP_DAYS)
+    p.add_argument("--apply", action="store_true")
+    p.set_defaults(func=cmd_inbox_sweep)
+
+    p = isub.add_parser("count", help="只打印一个整数：信箱里有几条（给插件调用）")
+    _add_memory(p)
+    p.set_defaults(func=cmd_inbox_count)
+
+    # ---- promote：升格为技能（只报候选）-------------------------------------
+    p_promote = sub.add_parser(
+        "promote", help="升格为技能的建议（只报候选，不自动打包）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="分界：**一条事实进记忆，一套过程进技能**。三条件同时满足才够格。\n"
+                    "唯一硬规则 —— **技能只许「教」，不许「管」**。")
+    psub = p_promote.add_subparsers(dest="promote_cmd", required=True)
+    p = psub.add_parser("suggest", help="列出够格升格的条目")
+    _add_memory(p)
+    p.add_argument("--all", action="store_true", help="连未够格的一起列，并写明缺哪一条")
+    p.set_defaults(func=cmd_promote_suggest)
 
     return ap
 

@@ -334,7 +334,221 @@ Summary: 7 error / 0 warn / 130 info  (--strict)
 
 `topics` 的自动模式只认 ASCII 标识符（文件名、编号、专有名词、错误码），中文主题请用 `--keywords`——这是无依赖环境下的取舍，已在输出里说明。
 
-## 六、组合套路（省上下文的标准动作）
+## 六、全局记忆、收敛、信箱与升格（跨工作区）
+
+> **机制、条目格式、来源分档、生命周期与校验表见 [memory.md](memory.md)。**
+> 这一节只讲**命令怎么用**。
+>
+> 记忆落在 `<DSH_HOME>/memory/`（**不在工作区里**）。落点三级覆盖：
+> `--memory <P>` > `$DSH_WORKLOG_MEMORY` > `$DSH_HOME/memory`。
+> 环境变量那一档是给 harness 用的 —— 跑测试时**一定**带上其中一个，
+> 否则会动到用户真实的记忆库。
+
+### `memory publish` —— 写出/更新本工作区的发布清单
+
+```bash
+python scripts/journal.py memory publish --applies-to dsh-plugin --upload
+```
+
+```
+工作区：wsA  （D:\work\wsA）
+清单：work_log/发布.md
+applies-to: dsh-plugin
+upload: true（允许外流）
+条目：2 条（这一轮从经验层挑出 2 条；沿用旧清单 0 条）
+已登记进名册：workspaces.json
+提示：清单里那句话就是全局条目的正文，把它改成**能带走**的措辞；`→ id:` 不写就按引用机械兜底。
+```
+
+- **`upload` 默认 `false`（只读不传）**。这是一道闸门：不显式打开，什么都不会外流。
+- 生成的是**草稿**：条目从经验层里带 `wl/NNNN` 引用的经验条抄来。要外流就得自己
+  把它改成**能带走**的一句话（清单里那句话就是全局条目的正文）。
+- 再跑一次**不会冲掉手改过的 id**，也不会丢掉你手工加进清单的行。
+- `--dry-run` 只打印，清单与名册都不写。
+
+### `memory collect` —— 按名册与清单收集（幂等）
+
+```bash
+python scripts/journal.py memory collect
+```
+
+```
+MEMORY  C:\Users\me\.dsh\memory
+  + host-style-claiming（wsA）
+  ~ cache-key-env（wsE 加入 cited-by）
+  - wsC（upload: false，只读不传）
+  - wsR（无清单（只读不传））
+  提示：跑 `memory index` 重建索引（索引是生成物，collect 不代劳）
+```
+
+- **幂等**：清单没变就跳过，第二次跑一个字节都不写（连 `.state.json` 都不动）。
+- **已存在的条目不会被覆盖**：`state` / `applies-to` / 正文都是人维护的；
+  收集只做两件事 —— 新增没见过的 id、给已存在的 id 累计 `cited-by`。
+- 同名 id 落在**别的分册**（别的领域）= 冲突，拒绝；落在**同一分册** = 引用。
+- `collect` 不重建索引，但会提醒你重建。
+
+### `memory add` —— 新增一条
+
+```bash
+python scripts/journal.py memory add "构建缓存要带上环境维度。" \
+    --source wl/0002 --id cache-key-env --applies-to python-stdlib-tooling
+```
+
+```
+已加入 01-python-stdlib-tooling.md
+- id: cache-key-env
+  applies-to: python-stdlib-tooling
+  state: active
+  source: wl/0002
+  cited-by: []
+  构建缓存要带上环境维度。
+提示：跑 `memory index` 重建索引，`memory lint` 过一遍门禁。
+```
+
+| 参数 | 说明 |
+|---|---|
+| `--source` | `wl/NNNN`（**本工作区**，核到真实记录）/ `<工作区>/wl/NNNN`（核到那份发布清单）/ `manual:tested` / `manual:read` / `manual:inferred`。认不出一律拒绝 |
+| `--id` | 全局唯一，只认 `[a-z0-9][a-z0-9-]*` |
+| `--applies-to` | 逗号分隔的标签；留空 = 到处都适用 |
+| `--volume` | 分册文件名，默认按第一个标签取 `01-<标签>.md` |
+| `--state` | `active`（默认）/ `stale` / `retired` |
+| `--personal` | 写进 `personal/`：不进 git、不进索引、默认不检索 |
+
+`add` 只做**准入**（来源分档、id 合法性、重复检查）；正文的附加要求由 `lint` 判 ——
+所以 `manual:tested` 缺结果**进得来**，但门禁会红。
+
+### `memory search` —— 检索
+
+```bash
+python scripts/journal.py memory search "缓存"
+python scripts/journal.py memory search "" --tags dsh-plugin --include-personal --include-retired
+```
+
+```
+cache-key-env	active	wsA/wl/0002
+    构建缓存要带上环境维度。
+```
+
+默认只搜 `active` / `stale`，且不搜 `personal/`（`--include-retired` / `--include-personal` 才放行）。
+命中会被记进 `.state.json`，**只用于 `lint` 提建议，绝不据此降级**。
+
+### `memory index` —— 重建 / 校验索引
+
+```bash
+python scripts/journal.py memory index            # 重建 INDEX.md
+python scripts/journal.py memory index --check     # 只校验，不改
+```
+
+```
+已重建 INDEX.md（224 字）
+```
+
+索引是**生成物**（`manual:inferred` 的条目不进去），超硬上限时**报错但照写完整**
+—— 超限报错，绝不静默截断。
+
+### `memory lint` —— 记忆门禁
+
+```bash
+python scripts/journal.py memory lint --strict
+```
+
+```
+[ERROR] 01-general.md: 第 17 行：`manual:read` 必须在正文里指名出处（哪个文件、哪一节：反引号里的名字 / 文件名 / `§`）
+
+Summary: 1 error / 0 warn / 0 info  (--strict)
+```
+
+判据表见 [memory.md](memory.md) §八。要 `--strict` 才把 WARN 抬成 ERROR 的只有两条：
+分册标题与文件名对不上、近似重复。
+
+### `memory status` —— 名册 / 候选 / 索引大小 / 信箱条数
+
+```bash
+python scripts/journal.py memory status            # 只列工作区名字
+python scripts/journal.py memory status --verbose   # 连路径一起列
+```
+
+```
+MEMORY  C:\Users\me\.dsh\memory
+  分册      2 个，条目 6 条（active 5 / stale 1 / retired 0）
+  名册      2 个工作区（upload: 1）
+            - wsA（upload: true）
+            - wsR  ! 目录不存在
+  候选      1 个未登记（只提示，不自动收录）
+            - wsQ
+  索引      INDEX.md 612 字（软 800 / 硬 1500）
+  信箱      2 条 / 272 字节（上限 200 条 / 262144 字节）
+  personal  1 条（不进索引、默认不检索）
+```
+
+### `dream` —— 把记录收敛成摘要
+
+> **两半分工**：脚本做机械的那半（挑记录、分组、发骨架、**校验回指**、写回），
+> 模型做总结的那半。插件自己的节点半边**不能调用 LLM**，所以必须这么切。
+
+```bash
+python scripts/journal.py dream                      # 发骨架 → <容器>/摘要.draft.md
+# —— 模型读骨架、写总结，把 `- …（回指：<记录文件名>）` 换成断言 + 指向记录的链接 ——
+python scripts/journal.py dream --accept             # 回指全过才写回 <容器>/摘要.md
+python scripts/journal.py dream --check              # 以后复查：回指还指得到吗
+```
+
+```
+DREAM  work_log
+  记录 1 篇；已收敛 0 篇；待收敛 1 篇
+  骨架：work_log/摘要.draft.md
+  下一步：**模型写总结**，把每条 `- …（回指：<记录文件名>）` 换成一句话断言 + 一个指向记录的链接，然后跑 `dream --accept`。
+```
+
+- **摘要不是新事实**：每条断言都必须带一个指向记录的 markdown 链接，否则拒绝写回。
+- 回指**复用既有的死链检查器** —— 来源记录一被删，`dream --check` 立刻变红。
+- 填过的骨架**不会被默认覆盖**（`--force` 才重发），避免把写好的总结冲掉。
+- `--accept` 生成 `## 覆盖范围`（它就是「已处理」的标记），所以 `dream` 不会重复挑
+  已经收敛的记录。
+
+### `inbox` —— 跨工作区信箱（**它不是记忆，是通信**）
+
+```bash
+python scripts/journal.py inbox put "另一条会话留下的消息：样式表要加前缀。"
+python scripts/journal.py inbox list
+python scripts/journal.py inbox take 20260928-124231-25892-msg --into-record "信箱转来的样式问题"
+python scripts/journal.py inbox sweep --older-than 30            # 只报告
+python scripts/journal.py inbox sweep --older-than 30 --apply    # 才真删
+python scripts/journal.py inbox count                            # → 一个整数
+```
+
+- **不进索引、不进注入、不进 git**；阅后即删，或 `take --into-record` 转移成一篇记录。
+- **原子写**：先写带 pid 的临时名再 `rename`；读者侧把 `.tmp` 半截文件当不存在。
+- **硬上限**：200 条 / 单条 16 KiB / 总量 256 KiB。**写满就报错**，不静默堆积。
+- `inbox count` 的契约：**stdout 第一行就是一个整数**，别的什么都不打印 ——
+  宿主的「待收 N 条」尾注入每次装配都要求值，所以它必须便宜且可机械解析。
+
+### `promote suggest` —— 升格为技能的建议（**只报候选**）
+
+```bash
+python scripts/journal.py promote suggest
+python scripts/journal.py promote suggest --all     # 连未够格的也列，写明缺哪一条
+```
+
+```
+PROMOTE  C:\Users\me\.dsh\memory
+  6 条在册条目里 1 条够格升格为技能
+
+  all-three  （manual:tested）
+    遇到样式冲突时先查名字。步骤：先查注册表，再注册，最后验证一遍。验证方式：跑 `pytest -q`，3 passed。
+    ✓ 是一套过程（触发）：遇到
+    ✓ 是一套过程（步骤）：先
+    ✓ 是一套过程（验证）：验证
+    ✓ 已真实执行过：manual:tested
+    ✓ 有重复需求（≥2 个工作区引用 或 ≥2 次命中）：cited-by 2 / 命中 0
+
+提示：**只报候选，不自动打包**。分界是「一条事实进记忆，一套过程进技能」；升格时必须同时交一个能变红能变绿的最简自测。
+```
+
+三条件**同时**满足才够格（判据表见 [memory.md](memory.md) §十三）。
+`promote` **只给建议**：唯一硬规则是**技能只许「教」，不许「管」**。
+
+## 七、组合套路（省上下文的标准动作）
 
 ```bash
 # 0. 新项目（可选）：把默认档与旧记录清单写进项目配置文件，之后每次执行都立即生效
@@ -367,15 +581,20 @@ python scripts/journal.py retro --from 100 --to 151 --out work_log/lessons/99-re
 python scripts/journal.py digest --out HANDOFF.md
 ```
 
-## 七、内部脚本
+## 八、内部脚本
 
 | 文件 | 用途 |
 |---|---|
-| `_selftest.py` | 自测全部命令（临时目录，含 CRLF 保真、"只改目标行"、非编程场景、非 UTF-8 拒写、新布局与旧布局回退、精细度档位与"验证不随档位放宽"、**两种命名约定、渐进原则、实质验证、snapshot 只读、项目配置文件与其三层优先级、目标表的三条规则**等断言）。`--root DIR` 指定夹具父目录（写入受限的沙箱里用），`--keep` 保留夹具排查 |
+| `_selftest.py` | 自测全部命令（临时目录，含 CRLF 保真、"只改目标行"、非编程场景、非 UTF-8 拒写、新布局与旧布局回退、精细度档位与"验证不随档位放宽"、**两种命名约定、渐进原则、实质验证、snapshot 只读、项目配置文件与其三层优先级、目标表的三条规则、全局记忆（分档 / 清单往返 / 收集幂等 / 索引 / 门禁 / 收敛 / 信箱 / 升格）**等断言）。`--root DIR` 指定夹具父目录（写入受限的沙箱里用），`--keep` 保留夹具排查 |
 | `_package.py` | 把 skill 源目录同步进可发布仓库（开发工作区专用，不随包发布）；`--check` 兼作漂移与插件文件完整性门禁 |
 | `_measure.py` | 对现成 `work_log/`（或旧 `work-log/`）+ `lessons/` 做一次性测量，`references/analysis.md` 的数字由它复现；同时报出台账的 `精细度`（缺字段则报默认档） |
 
-## 八、容器根上的辅助文件
+> `reverse-verify.py`（源在 `logs/tests/`，随包镜像到 `tests/`）把全局记忆那一相的每条断言
+> 逐条弄红一次：它按一张变异表改坏 `journal.py` 的**临时副本**，确认期望的断言确实
+> 变红。本项目的硬规矩是**没见它红过的断言不算数**，这个脚本就是那条规矩的执行者。
+> 它是开发工具，**不在 `npm run test:plugin` 的清单里**（一次要跑几十遍自测）。
+
+## 九、容器根上的辅助文件
 
 | 文件 | 谁写 | 作用 |
 |---|---|---|
@@ -386,3 +605,6 @@ python scripts/journal.py digest --out HANDOFF.md
 | `LEGACY.md` | **人**（工具只读） | 旧记录声明（见「渐进原则」）；工具**从不写**它 |
 | `目标.md` | **人 / agent**（工具只读） | 长期目标 → 阶段的两层表（见 §四「目标表」）；**需要时才建**，缺它是正常的 |
 | `.config.json` | `config --write` / `config --set` | 项目配置文件（见 §二「config」）；**缺它等于全部内置默认** |
+| `发布.md` | `memory publish` / **人**（全局层只读） | 工作区**唯一**获准被全局记忆层读的文件（双向白名单）；见 [memory.md](memory.md) §五 |
+| `摘要.md` | `dream --accept` | 记录收敛视图（每条断言都指向记录）；`dream --check` 复查回指 |
+| `摘要.draft.md` | `dream` | 待填的骨架（给模型写总结用）；**不是记录**，不编号、不进索引 |

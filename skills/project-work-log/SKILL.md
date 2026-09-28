@@ -207,7 +207,24 @@ python scripts/journal.py retro --from 27 --to 45 --out /tmp/retro.md     # 阶�
   `prune` → `prune --zip cold.zip` → `prune --zip cold.zip --apply`
 - 记录成千上万时用 `split --by-year` 按年分卷（`wl/NNNN` 回指不受目录变化影响）。
 - 复盘写进 `work_log/lessons/99-retrospectives.md`（阶段表 / 成果 / 可复用发现 / 遗留），**不要**另建 SUMMARY 文档到处写同一批数字。
-- 铁律：**证据不删**——整理永远是"移走 + 汇总 + 留清单"；搬动后必跑 `check` 确认 0 死链。
+- **证据不删**是硬规则：清理 = 移走 + 汇总 + 留清单，不是删除；搬动后必跑 `check` 确认 0 死链。
+
+## 工作流 E · 把教训带出去（跨工作区）
+
+一个工作区里确证过的教训，要让**别的工作区**也用得上，走全局记忆这一层
+（落在 `<DSH_HOME>/memory/`，**不在工作区里**）。三步，每步都由人决定要不要走：
+
+```bash
+python scripts/journal.py memory publish --applies-to dsh-plugin --upload   # 1. 声明：哪些教训允许外流
+#   ↑ 清单里那句话就是全局条目的正文，把它改成**能带走**的措辞
+python scripts/journal.py memory collect                                    # 2. 收集（幂等，可重复跑）
+python scripts/journal.py memory lint --strict && python scripts/journal.py memory index  # 3. 过门禁、重建索引
+```
+
+- **准入靠来源分档**，不靠"看起来重要吗"；`manual:inferred` 允许进，但**不进索引**。
+- **`upload` 默认 `false`**：不显式打开，什么都不会外流。这是双向白名单。
+- 想让它变成技能（而不是一条记忆）就 `promote suggest` 看够不够格 —— **只报候选，不自动打包**。
+- 机制、条目格式、来源分档、生命周期见 [references/memory.md](references/memory.md)。
 
 ## 日志归位（任何产出都要归位）
 
@@ -263,9 +280,22 @@ python scripts/journal.py topics --limit 15     # 同主题簇建议（中文用
 python scripts/journal.py digest --out HANDOFF.md          # 交接摘要
 python scripts/journal.py retro --from 100 --to 151 --out r.md  # 阶段复盘骨架
 python scripts/journal.py export --csv --out work_log.csv   # 机器可读导出
+
+# —— 跨工作区：全局记忆（落在 <DSH_HOME>/memory/，不在工作区里）——
+python scripts/journal.py memory publish --applies-to dsh-plugin --upload  # 写发布清单（双向白名单）
+python scripts/journal.py memory collect                                    # 按清单收集（幂等）
+python scripts/journal.py memory add "…" --source wl/0042 --id some-slug    # 新增一条（来源分档准入）
+python scripts/journal.py memory lint --strict                              # 记忆门禁（判据见 memory.md §八）
+python scripts/journal.py dream                                             # 记录 → 摘要骨架（模型填，再 --accept）
+python scripts/journal.py inbox count                                       # 待收条数（stdout 一个整数）
+python scripts/journal.py promote suggest                                   # 升格为技能的建议（只报候选）
 ```
 
-自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全 + 新/旧布局 + 精细度档位 + 两种命名 + 渐进原则 + snapshot + 项目配置文件 + 目标表；**断言数以脚本实际输出为准**，全绿即通过）。
+> **全局记忆是经验层的上一层，不是另一套格式**：一条教训要离开本工作区，必须由
+> 本工作区的 `发布.md` 点名（那是唯一获准被读的文件，也是双向白名单）。
+> 机制、条目格式、来源分档与生命周期见 [references/memory.md](references/memory.md)。
+
+自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全 + 新/旧布局 + 精细度档位 + 两种命名 + 渐进原则 + snapshot + 项目配置文件 + 目标表 + 全局记忆；**断言数以脚本实际输出为准**，全绿即通过）。
 
 > 典型接手动作：`brief` → `snapshot` → `search` → `show` → 需要细节才 `read` 那一个文件。
 > 典型收尾动作：`new --insert` → 补正文 → `status` → `lesson add` → `check --strict` && `lint --strict`。
@@ -326,5 +356,6 @@ python scripts/journal.py export --csv --out work_log.csv   # 机器可读导出
 
 - [references/analysis.md](references/analysis.md) · 基线实测分析与改进对照
 - [references/conventions.md](references/conventions.md) · 容器目录布局（含旧布局回退）/编号/生命周期/台账/经验层/日志归位 的硬约定
-- [references/commands.md](references/commands.md) · `journal.py` 全部命令与组合套路
+- [references/commands.md](references/commands.md) · `journal.py` 全部命令与组合套路（含全局记忆 / 收敛 / 信箱 / 升格）
+- [references/memory.md](references/memory.md) · 全局记忆（跨工作区）：分层 / 条目格式 / 来源分档 / 发布清单 / 生命周期 / 校验表 / 收敛 / 信箱 / 升格
 - [references/templates.md](references/templates.md) · 记录、台账、归档、经验分册、复盘 全套模板

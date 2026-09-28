@@ -1,7 +1,8 @@
 # worklog bundle patch — enables the skill provider this bundle needs, and
 # inserts this package's host row.
 #
-# Two skills ship with this bundle:
+# Skills that ship with this bundle (one provider each; any further bundle placed under
+# `skills/` is served too — see `apply()`):
 #   - `project-work-log`       — the work-record system (journal + ledger + lessons).
 #   - `reliability-guidelines` — eight working principles, applied in the projects
 #                                that install this plugin. Disable with

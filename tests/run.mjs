@@ -5,7 +5,7 @@
 //   node logs/tests/run.mjs
 import { readFileSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { PKG } from './_pkg.mjs'
+import { PKG, extraBundledSkills } from './_pkg.mjs'
 const results = []
 function ok(condition, label, detail = '') {
   results.push([Boolean(condition), label, detail])
@@ -165,8 +165,9 @@ ok(mod.stripFrontmatter('no frontmatter here') === 'no frontmatter here',
 
 const ctxA = fakeCtx()
 mod.apply(ctxA, {})
-ok(ctxA.providers.length === 2, 'default config mounts both skills (worklog + guidelines)',
-   String(ctxA.providers.length))
+ok(ctxA.providers.length === 2 + extraBundledSkills().length,
+   'default config mounts one provider per bundle on disk (worklog + guidelines + extras)',
+   `${ctxA.providers.length} providers, ${extraBundledSkills().length} extra bundles`)
 ok(errorsIn(ctxA).length === 0, 'no error logged on a healthy bundle', JSON.stringify(ctxA.logs))
 
 /* ---- REGRESSION: the memory tool must actually reach the tools registry ----
@@ -202,6 +203,31 @@ ok(pGuidelines.name === 'worklog-guidelines', 'the guidelines provider has its o
    String(pGuidelines.name))
 ok(pWorklog.name !== pGuidelines.name, 'the two provider names are distinct (the registry requires it)')
 ok(pWorklog.name !== 'runtime' && pGuidelines.name !== 'runtime', 'neither uses the reserved "runtime"')
+
+/* ---- Bundled skills: one provider per bundle in `skills/`, and each bundle's own
+   frontmatter invocation policy survives this path.
+
+   Why this is the assertion worth having: `apply()` used to mount exactly the two bundles it
+   named, so a third bundle shipped under `skills/` was **inert** — `npm pack` shipped it, nothing
+   registered it, and a host restart never helped (the filesystem provider scans
+   `<DSH_HOME>/skills`, not a package's own directory). The count is derived from the package
+   directory (`extraBundledSkills()`), and the policy check pins the part that would silently
+   break the "off by default" promise: `createProvider` ANDs the config switches with the
+   *frontmatter*, so `disable-model-invocation: true` must still come through as
+   `modelInvocable: false` on the candidate the registry sees. ---- */
+const extraProviders = mountAll(ctxA).slice(2)
+ok(extraProviders.length === extraBundledSkills().length,
+   'every extra bundle on disk got its own provider',
+   `${extraProviders.length} providers for ${extraBundledSkills().join(', ') || '(none)'}`)
+for (const provider of extraProviders) {
+  const obs = await provider.list({ cwd: 'X', scope: {} })
+  const candidate = obs.candidates[0]
+  const text = readFileSync(candidate.path, 'utf8')
+  const declaresOff = /^disable-model-invocation:\s*true\s*$/m.test(text.split('---')[1] ?? '')
+  ok(candidate.invocation.modelInvocable === !declaresOff,
+     `${provider.name}: the bundle's own frontmatter decides modelInvocable`,
+     `frontmatter says off=${declaresOff}, candidate says modelInvocable=${candidate.invocation.modelInvocable}`)
+}
 
 /* ---- REGRESSION: the registry wraps these calls in `waitWithAbort`, which does
    `value.then(...)` whenever a signal is present. A synchronous `list()`/`get()`
@@ -340,7 +366,8 @@ ok(flat(bodyEn).includes('not a licence to refuse the user'),
 /* ---- disabling the guidelines ---- */
 const ctxOff = fakeCtx()
 mod.apply(ctxOff, { guidelinesEnabled: false })
-ok(ctxOff.providers.length === 1, 'guidelinesEnabled=false mounts only the worklog skill',
+ok(ctxOff.providers.length === 1 + extraBundledSkills().length,
+   'guidelinesEnabled=false drops the guidelines provider but keeps the bundled skills',
    String(ctxOff.providers.length))
 
 /* ---- liveness: a provider re-reads, so an edit changes the body ---- */
@@ -366,13 +393,15 @@ ok(defB.invocation.modelInvocable === true, 'config leaves the model surface int
 
 const ctxC = fakeCtx()
 mod.apply(ctxC, { modelInvocable: 'yes', bogusKey: 1 })
-ok(ctxC.providers.length === 2, 'a non-boolean / unknown config value does not break the mount')
+ok(ctxC.providers.length === 2 + extraBundledSkills().length,
+   'a non-boolean / unknown config value does not break the mount')
 ok(ctxC.logs.some(([level, m]) => level === 'warn' && m.includes('bogusKey')),
    'unknown config keys are reported', JSON.stringify(ctxC.logs))
 
 const ctxD = fakeCtx()
 mod.apply(ctxD, null)
-ok(ctxD.providers.length === 2, 'a null config does not break the mount')
+ok(ctxD.providers.length === 2 + extraBundledSkills().length,
+   'a null config does not break the mount')
 
 const ctxE = fakeCtx()
 mod.apply(ctxE, { skillDir: `${PKG}/no/such/dir`, guidelinesDir: `${PKG}/no/such/dir` })

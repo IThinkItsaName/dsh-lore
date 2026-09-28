@@ -8,6 +8,17 @@
 
 ## [未发布]
 
+## [未发布]
+
+### 修复：随包技能不止两个时，`skills/` 里多出来的 bundle 是**惰性**的
+
+- 实测（`0036` §六）：把一份新技能放进 `skills/`，它会随 `npm pack` 发出去，但 `apply()` **只挂它按名字点到的两个目录** —— 重启多少次都取不到。
+  已改成"**一个 bundle 一个 provider**"：配置的 `skillDir`、启用时的 guidelines，再加 `skills/` 下**其他**每一个含 `SKILL.md` 的直接子目录（一层，与文件系统 provider 的扫描深度一致），provider 名按目录名派生（`worklog-bundle-<目录名>`；注册表在同一层拒绝重名提供者）。
+- **显式开关仍然权威**：`guidelinesEnabled: false` 时，通用枚举**不会**把 guidelines 当"额外技能"挂回来 —— 这条是行为断言抓出来的真缺陷（原本会变成 3 个 provider，而不是 2 个）。
+- **frontmatter 的调用策略穿透这条路径**：`createProvider` 把配置开关与 bundle 自己的 frontmatter **AND** 起来，所以随包技能里写 `disable-model-invocation: true` 依然让它在模型目录外（新增断言钉住这一点）。
+- 测试口径同时改掉一处**脆弱写法**：原先写死"`apply()` 注册 2 个 provider"，加第三个就红，而红的是算术不是行为。现在从包目录推导（`extraBundledSkills()`），断言的是"**磁盘上每个 bundle 都有一个 provider**"。
+  受影响：`run.mjs`、`registry-contract.mjs`、`preaudit.mjs`、`audit-settings.mjs`。
+
 ### 新增：随包附带技能 `client-require-whitelist`（**默认关着**，带一支小彩蛋）
 
 - 写 DSH 客户端半边时最容易静默失效的一件事：`require('@deepseek-ai/dsh-client-ui-xxx')` 这类

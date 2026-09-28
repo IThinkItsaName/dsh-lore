@@ -3,7 +3,7 @@
 import { readFileSync, realpathSync, existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
-import { PKG } from './_pkg.mjs'
+import { PKG, extraBundledSkills } from './_pkg.mjs'
 
 /*
  * The profile link can only be checked against the package that is actually
@@ -106,7 +106,9 @@ const ctx = {
 }
 mod.apply(ctx, {})
 
-ok(creates.length === 2, 'apply() calls registerProvider once per skill (2)', String(creates.length))
+ok(creates.length === 2 + extraBundledSkills().length,
+   'apply() calls registerProvider once per skill bundle on disk',
+   `${creates.length} calls, ${extraBundledSkills().length} extra bundles`)
 ok(!logs.some(([l]) => l === 'E'), 'apply() logged no error', JSON.stringify(logs))
 
 const provider = creates[0]({ signal: new AbortController().signal, invalidate: () => {} })

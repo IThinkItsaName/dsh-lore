@@ -9,7 +9,7 @@
 //   node tests/registry-contract.mjs
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { PKG } from './_pkg.mjs'
+import { PKG, extraBundledSkills } from './_pkg.mjs'
 
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
@@ -34,7 +34,8 @@ const ok = (condition, label, detail = '') => {
   if (!condition) problems.push(label)
 }
 
-ok(providers.length === 2, 'apply() registers two providers (worklog + guidelines)',
+ok(providers.length === 2 + extraBundledSkills().length,
+   'apply() registers one provider per skill bundle on disk',
    String(providers.length))
 ok(logs.filter(([level]) => level === 'error').length === 0, 'apply() logged no error',
    JSON.stringify(logs))

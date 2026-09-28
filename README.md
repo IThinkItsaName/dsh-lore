@@ -216,7 +216,8 @@ python <skill>/scripts/journal.py check --strict --lint   # 结构 + 内容，�
 > 然后用 `ctx.skills.registerProvider(...)` 注册**技能提供者**：`list()` 报目录、`get()` 每次
 > **重新读文件**给正文——所以改 Markdown 不需要重启，也不需要重建。
 > （对比：`ctx.skills.register()` 在挂载时就把正文快照下来，改文件要重启才生效。）
-> 两个技能各有一个提供者（`worklog-bundle` / `worklog-guidelines`），名字必须不同。
+> 每个技能 bundle 一个提供者（`worklog-bundle` / `worklog-guidelines` / `worklog-bundle-<目录名>`），
+> 名字必须互不相同 —— 注册表在同一层里拒绝重名提供者。
 >
 > 它**只 import `node:` 内置模块**，没有任何第三方依赖 ——
 > 这是硬要求：插件装进 profile 后按自己的真实路径解析 import，而宿主包都在 `app.asar` 里，

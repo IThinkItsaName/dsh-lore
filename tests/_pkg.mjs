@@ -4,7 +4,7 @@
 // (`<pkg>/tests/`) and the working copy in this workspace (`logs/tests/`) — so a
 // bare `resolve(HERE, '..')` is wrong for one of them: from `logs/tests` the parent
 // is `logs`, not the package. Probe instead of assuming.
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createRequire, registerHooks } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
@@ -144,4 +144,32 @@ if (process.env.DSH_WORKLOG_SETTINGS === undefined) {
 export const ISOLATED_MEMORY_ROOT = join(tmpdir(), 'dsh-worklog-memory-isolated')
 if (process.env.DSH_WORKLOG_MEMORY === undefined) {
   process.env.DSH_WORKLOG_MEMORY = ISOLATED_MEMORY_ROOT
+}
+
+/*
+ * Extra skill bundles this package ships beside the two it mounts by name.
+ *
+ * The harnesses assert how many providers `apply()` registers, and the first version of that
+ * assertion said "2" outright — so it went red the moment a third bundle was added, which says
+ * nothing about whether the third bundle is actually served. Deriving the count from the package
+ * directory keeps the assertion about the invariant that matters ("one provider per bundle on
+ * disk") instead of about today's arithmetic.
+ *
+ * `project-work-log` and `reliability-guidelines` are mounted by name (the latter only when
+ * `guidelinesEnabled`), so they are not "extra".
+ */
+export function extraBundledSkills() {
+  const skillsRoot = join(PKG, 'skills')
+  let names
+  try {
+    names = readdirSync(skillsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((name) => existsSync(join(skillsRoot, name, 'SKILL.md')))
+  } catch {
+    return []
+  }
+  return names
+    .filter((name) => name !== 'project-work-log' && name !== 'reliability-guidelines')
+    .sort()
 }

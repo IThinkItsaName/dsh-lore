@@ -26,7 +26,7 @@ import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { PKG } from './_pkg.mjs'
+import { PKG, extraBundledSkills } from './_pkg.mjs'
 
 const problems = []
 const ok = (condition, label, detail = '') => {
@@ -358,7 +358,7 @@ async function call(method, body) {
   // inert — this bundle's patch declares every one of these keys outright.
   writeFileSync(settingsPath, JSON.stringify({ guidelinesEnabled: false }), 'utf8')
   const fileOff = runApply(row)
-  ok(fileOff.creates.length === 1,
+  ok(fileOff.creates.length === 1 + extraBundledSkills().length,
     'the settings file beats the row config (file false with row true → one skill)',
     `${fileOff.creates.length} provider(s)`)
   ok(fileOff.errors.length === 0, 'apply() logged no error', JSON.stringify(fileOff.logs))
@@ -366,19 +366,20 @@ async function call(method, body) {
   // The reverse direction, and the row still wins for keys the file omits.
   writeFileSync(settingsPath, JSON.stringify({ guidelinesEnabled: true }), 'utf8')
   const fileOn = runApply({ ...row, guidelinesEnabled: false })
-  ok(fileOn.creates.length === 2,
+  ok(fileOn.creates.length === 2 + extraBundledSkills().length,
     'the settings file beats the row config (file true with row false → two skills)',
     `${fileOn.creates.length} provider(s)`)
 
   writeFileSync(settingsPath, JSON.stringify({ guidelinesLanguage: 'en' }), 'utf8')
   const rowOnly = runApply({ ...row, guidelinesEnabled: false })
-  ok(rowOnly.creates.length === 1,
+  ok(rowOnly.creates.length === 1 + extraBundledSkills().length,
     'a key the file does not state still comes from the row config (row false → one skill)',
     `${rowOnly.creates.length} provider(s)`)
 
   // And the file's language actually selects the English bundle.
   const fileEn = runApply({ ...row, guidelinesEnabled: false })
-  ok(fileEn.creates.length === 1, 'the file language alone does not enable the skill')
+  ok(fileEn.creates.length === 1 + extraBundledSkills().length,
+    'the file language alone does not enable the skill')
   const both = runApply(row)
   const provider = both.creates[1]({ signal: new AbortController().signal, invalidate: () => {} })
   const catalog = await provider.list()

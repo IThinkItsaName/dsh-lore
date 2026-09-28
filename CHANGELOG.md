@@ -8,6 +8,31 @@
 
 ## [未发布]
 
+### 修复：配置卡片在真机上**从未注册过**（判据读的 `schema.properties` 根本不存在）
+
+- **实测**（2026-09-29，插件重新启用后）：宿主半边一切正常 —— 新的只读状态端点返回
+  **200** 与四个键，`Config.listConfigs{name:"dsh-worklog"}` 报 `schema`；
+  而 `plugins.item` 的占用者里**没有我们**，`settings.section` 里也没有旧的导航项。
+  即：客户端半边加载了，但**一个槽位都没注册**。
+- **根因**：认领判据读的是 `row.schema.properties`。把宿主自己那条投影跑一遍
+  （`dsh-settings/lib/types/schema.js` 的 `volatileForm(Config).toJSON()`）就看得见：
+
+  ```
+  toJSON() top-level keys : ["uid","refs"]
+  json.properties         : UNDEFINED
+  ```
+
+  宿主发的是 schemastery 的**重水合信封**（字段名在 `refs[<uid>].dict` 里，浏览器交给
+  `schema.rehydrate(...)` 还原），**顶层没有 `properties`**。判据于是恒为假。
+- **改成读 `value`**（宿主投影出来的**生效配置**，普通 JSON、十一个字段恒在），
+  不依赖 schemastery 的内部编码。
+- **为什么 151 条断言没挡住它**：harness 的假行是
+  `{type:'object', properties:{…}}` —— **照着代码的假设去造假宿主**，于是判据与假数据自洽、
+  永远为真。harness 现在按**实测的真实信封**造行，并加了一条"只有旧形状 schema、
+  `value` 为空 → 必须认领不到"的断言；退回读 `schema` 会当场变红（变异驱动已钉住）。
+- 这是同一个坑的**第三次**：`work_log/0016`（量错对象）、`0041`（假 editor 抹平层级）、
+  本次（假宿主自洽）。三次的形状一样：**测试替身按被测代码的假设造，而不是按被测系统的实测造**。
+
 ### 修复：旧设置文件的迁移**从不迁移**（它把 bundle 层的键当成了"用户已写"）
 
 - **真机实测**（2026-09-29 01:00:48 那次启动）：`~/.dsh/worklog/settings.json` 被改名成
@@ -38,7 +63,9 @@
 - **读写走官方通道**：卡片通过槽位注入的 `form` 控制器（`getSnapshot` / `subscribe` /
   `set` / `unset`）读写，写回由 `dsh-config-editor` 落到 profile patch。
   **不写死 namespace**：宿主给的 `ns` 是部署相关的（本机是 `include:dsh-worklog`），
-  所以卡片按**投影 schema 的字段集**认领自己那一行；认领不到就**什么都不注册**。
+  所以卡片按投影出来的 **`value`**（那份生效配置）是否带齐我们那 11 个字段来认领自己那一行；
+  认领不到就**什么都不注册**。（第一版读的是 `schema.properties` —— 真实投影是个
+  `{uid, refs}` 信封、顶层没有 `properties`，所以判据恒为假；修复见下面那条。）
 - **HTTP 只剩一个只读状态端点** `GET /plugins/dsh-worklog/status.json`
   （`{source, path, memory, error}`）：写动词一律 405。配置不再经 HTTP 写 ——
   留着 POST 等于给同一个事实源开第二个写入口。

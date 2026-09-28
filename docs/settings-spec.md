@@ -280,8 +280,10 @@ window.__ModuleLoader__.load({
 ### 挂载点
 
 > **已被取代（2026-09-29）**：下面这段是**旧**设计（设置页分区）。现在的挂载点是
-> 插件页的 `plugins.item`，而且**不是写死 namespace 的** —— 卡片按 schema 字段集
-> 认领自己那一行（`ns` 是部署相关的）。现行写法见 `lib/client.js` 的 `apply()`。
+> 插件页的 `plugins.item`，而且**不是写死 namespace 的** —— 卡片按这一行投影出来的
+> **`value`**（生效配置）是否带齐那 11 个字段来认领自己那一行（`ns` 是部署相关的）。
+> **注意不是 `schema`**：宿主发的是 schemastery 的 `{uid, refs}` 信封、顶层没有
+> `properties`，第一版就是栽在这里（`work_log/0042`）。现行写法见 `lib/client.js` 的 `apply()`。
 > 旧写法留在这里，是因为"当初为什么那么挂"与"后来为什么换"是两条不同的信息。
 
 ```js

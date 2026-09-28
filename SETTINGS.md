@@ -174,12 +174,18 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 各有一份伴生客户端包）。它**不是**设置页的一个分区：管的是插件自己的配置，
 归属就在插件条目下面。
 
-### 认领自己的 namespace：按 schema，不按 id
+### 认领自己的 namespace：按字段集，不按 id
 
 宿主给每个带 `.volatile()` 字段的插件投影一份"设置命名空间"，id 是
 `entry.options.id` —— 那是**部署相关**的：本机是 `include:dsh-worklog`，换个挂法就变。
-所以卡片不写死 id，而是**按字段集认领**：投影 schema 只含 `.volatile()` 字段，
-于是"我们那 11 个名字齐了"就是指纹（`lib/client.js` 的 `FORM_FIELDS`）。
+所以卡片不写死 id，而是**按字段集认领**：看这一行投影出来的 **`value`**（那份生效配置）
+是否同时带齐我们那 11 个名字（`lib/client.js` 的 `FORM_FIELDS`）。
+
+> **为什么是 `value` 而不是 `schema`（2026-09-29 在真实宿主上量出来的）**：宿主发的 `schema`
+> 是 schemastery 的**重水合信封** `{uid, refs}`，字段名躺在 `refs[<uid>].dict` 里 ——
+> **顶层根本没有 `properties`**。第一版读的就是 `schema.properties`，于是判据在真机上恒为假、
+> 卡片一次都没注册过（而当时的 harness 照着自己的假设造假行，所以 151 条断言全绿）。
+> 详见 `work_log/0042`。
 
 - 认领不到 → **什么都不注册**（宁可这一页不出现，也不要在别人的命名空间上挂一张会写错地方的卡片）。
 - 命名空间消失 → 卡片撤下；再出现 → 重新挂上。

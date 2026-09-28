@@ -251,6 +251,39 @@ const CONFIG_VOLATILE_FIELDS = (() => {
       .map((match) => match[1])
 })()
 
+/**
+ * The schema the host REALLY projects, copied from a live measurement.
+ *
+ * Measured 2026-09-29 by running the host's own `volatileForm(Config).toJSON()`
+ * (`dsh-settings/lib/types/schema.js`) over this plugin's `Config`:
+ *
+ *     toJSON() top-level keys : ["uid","refs"]
+ *     json.properties         : UNDEFINED
+ *
+ * It is schemastery's **rehydration envelope**: the field names live in `refs[<uid>].dict`, and the
+ * browser hands the envelope back to `schema.rehydrate(...)` to recover a real schema. There is no
+ * `properties` key at the top level.
+ *
+ * This constant exists so the fake rows are shaped like the host's, and NOT like whatever the claim
+ * happens to read. The shipped first version of the claim read `schema.properties` — a key this
+ * envelope does not have — so it returned undefined on every real host and the card never appeared,
+ * while 151 assertions passed against fake rows that had been built to match the code.
+ */
+const REAL_SCHEMA_ENVELOPE = {
+  uid: 85,
+  refs: {
+    74: { type: 'string', meta: { default: '' } },
+    85: { type: 'object', meta: { default: {} }, dict: { skillDir: { $ref: 74 } } },
+  },
+}
+
+/** The values a projected row carries — the config's own defaults, keyed by field name. */
+const PROJECTED_DEFAULTS = {
+  skillDir: '', skillFile: 'SKILL.md', modelInvocable: true, userInvocable: true, verbose: false,
+  guidelinesEnabled: true, guidelinesDir: '', guidelinesLanguage: 'zh',
+  memoryEnabled: true, memoryInjectIndex: true, memoryPersonalSearchable: false,
+}
+
 /* ============================ 1. wrapper + factory ========================= */
 // One module table for every section below. The bundle must be evaluated once:
 // the primitives it requires and the component it registers have to come from
@@ -301,9 +334,12 @@ let clientExports = null
 {
   const claim = clientExports.claimNamespace
   const FIELDS = clientExports.FORM_FIELDS
-  const propertiesFor = (keys) => Object.fromEntries(keys.map((key) => [key, { type: 'string' }]))
+  const valuesFor = (keys) => Object.fromEntries(keys.map((key) => [key, PROJECTED_DEFAULTS[key] ?? null]))
   const mirrorOf = (rows) => ({ getSnapshot: () => ({ status: 'ready', view: { namespaces: rows } }) })
-  const rowOf = (ns, keys, extra = {}) => ({ ns, schema: { type: 'object', properties: propertiesFor(keys) }, ...extra })
+  /** A row shaped like the host's: the real envelope for `schema`, plain JSON for `value`. */
+  const rowOf = (ns, keys, extra = {}) => ({
+    ns, schema: structuredClone(REAL_SCHEMA_ENVELOPE), value: valuesFor(keys), ...extra,
+  })
 
   ok(claim(undefined) === undefined, 'no mirror at all claims nothing')
   ok(claim({}) === undefined, 'a mirror without getSnapshot claims nothing')
@@ -312,9 +348,11 @@ let clientExports = null
   ok(claim({ getSnapshot: () => ({ view: { namespaces: 'nope' } }) }) === undefined,
     'a non-array namespaces field claims nothing')
   ok(claim(mirrorOf([{ ns: SERVED_NS }])) === undefined,
-    'a row with no schema claims nothing')
-  ok(claim(mirrorOf([{ ns: SERVED_NS, schema: { properties: null } }])) === undefined,
-    'a row whose schema has no properties claims nothing')
+    'a row with no value claims nothing')
+  ok(claim(mirrorOf([{ ns: SERVED_NS, value: null }])) === undefined,
+    'a row whose value is null claims nothing')
+  ok(claim(mirrorOf([{ ns: SERVED_NS, value: [] }])) === undefined,
+    'a row whose value is an array claims nothing')
 
   const short = FIELDS.slice(0, FIELDS.length - 1)
   ok(claim(mirrorOf([rowOf(SERVED_NS, short)])) === undefined,
@@ -337,8 +375,18 @@ let clientExports = null
     'an extra projected field does not stop the claim (a superset is still ours)')
   ok(claim(mirrorOf([rowOf('', FIELDS)])) === undefined,
     'a row with an empty ns is never claimed (it could not be addressed)')
-  ok(claim(mirrorOf([{ ns: SERVED_NS, schema: { properties: propertiesFor(FIELDS) } }])) === SERVED_NS,
-    'a row with nothing but ns + schema is enough (no other field is required)')
+
+  /* ---- the two cases that pin the MEASURED shape (the shipped bug lived here) ---- */
+  ok(claim(mirrorOf([{ ns: SERVED_NS, value: valuesFor(FIELDS) }])) === SERVED_NS,
+    'a row with nothing but ns + value is enough (the claim reads plain JSON, not the envelope)')
+  ok(claim(mirrorOf([{
+    ns: SERVED_NS,
+    // The OLD signal, exactly as the fake rows used to fake it: a JSON-Schema `properties` map.
+    // The real envelope has no such key, so a claim that still reads it must fail right here.
+    schema: { type: 'object', properties: valuesFor(FIELDS) },
+    value: {},
+  }])) === undefined,
+    'a legacy-shaped schema with an EMPTY value claims nothing (reading `schema.properties` is the bug)')
 }
 
 /* ================== the fake host services the card needs ================= */
@@ -416,9 +464,13 @@ function namespaceRow(ns, keys) {
   return {
     ns,
     autoGenerate: true,
-    schema: { type: 'object', properties: Object.fromEntries(keys.map((key) => [key, { type: 'string' }])) },
+    schema: structuredClone(REAL_SCHEMA_ENVELOPE),
     revision: 1,
     applies: 'live',
+    // The projected live configuration: plain JSON, one key per `.volatile()` field.
+    value: Object.fromEntries(keys.map((key) => [key, PROJECTED_DEFAULTS[key] ?? null])),
+    base: {},
+    user: {},
   }
 }
 

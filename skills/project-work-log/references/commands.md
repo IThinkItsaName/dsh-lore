@@ -9,6 +9,26 @@
 | `--journal NAME` | 上一个参数的旧名，**等价**（已弃用但保留） | 同上 |
 | `--lessons NAME` | 容器内的**经验目录**名 | 默认 `lessons/`；再认配置文件里的 `lessons`；顺序 `命令行 → 配置 → <容器>/lessons/ → <根>/lessons/` |
 
+### `ROOT` 放哪儿（**不统一**，照下表写）
+
+一次整体功能实跑把这件事撞出来了：`ROOT` 是可省略的**位置参数**（不是 `--root` 选项），
+但它在各命令族里挂在不同的层上。写错位置的报错往往是误导性的（`unrecognized arguments`
+或"当前目录不是工作区"，而当前目录明明就是工作区）。
+
+| 命令族 | `ROOT` 放哪 | 例 |
+|---|---|---|
+| 大多数顶层命令（`check` / `lint` / `brief` / `snapshot` / `outline` / `show` / `search` / `stats` / `topics` / `export` / `digest` / `retro` / `status` / `mode` / `config` / `todo` / `archive` / `split` / `prune` / `new` / `append` / `dream`） | **第一个位置** | `check --strict <ROOT>` |
+| `index` | 挂在**父级** | `index <ROOT> sync`（不是 `index sync <ROOT>`） |
+| `lesson` | 挂在**父级** | `lesson <ROOT> add --volume …`（不是 `lesson add <ROOT>`） |
+| `memory publish\|collect\|add\|search\|index\|lint\|status` | 挂在**叶子** | `memory lint <ROOT> --strict`；**`add` 例外**：`text` 在前、`ROOT` 在后 —— `memory add "一句话" <ROOT> --source …` |
+| `inbox put\|list\|sweep\|count` | **没有 `ROOT`**（信箱在记忆侧，用 `--memory`） | `inbox count --memory <MEM>` |
+| `inbox take` | 挂在叶子，且**在条目名之后** | `inbox take <条目名> [<ROOT>]` |
+| `promote suggest` | **没有 `ROOT`**（靠当前目录） | `cd <ROOT> && promote suggest --all` |
+
+> **不想记这张表就一律走当前目录**：`cd <ROOT>` 之后不加任何 `ROOT`，所有命令都按默认值工作
+> （上面每一行都成立）。这也是文档里绝大多数示例的写法。
+> 只有 `memory *` 与 `inbox *` 的 `--memory` 指**记忆根**，与工作区根无关。
+
 > 旧项目（`journal/` + 顶层 `lessons/`）**不改名、不迁移、不警告**，直接就能用；
 > 解析顺序见 [conventions.md](conventions.md)「旧布局的读取回退」。
 > **只读命令**不修改任何文件；**写入命令**都支持 `--dry-run`，做外科式行级编辑（保留 CRLF 与其余字节）。

@@ -32,6 +32,8 @@ PHASES: dict[str, str] = {
     "memory": "memory_phase",
     "config": "config_phase",
     "gates": "gate_phase",
+    "links": "link_phase",
+    "mode": "mode_phase",
 }
 
 # (相, 名字, 原文, 改成, 期望变红的那条断言里的字样)
@@ -336,6 +338,32 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "            if i in other.legacy_rows:\n                self.legacy_rows.add(len(self.rows) - 1)",
      "            if False:\n                self.legacy_rows.add(len(self.rows) - 1)",
      "gates: the gradual rule survives the merge (a legacy finding stays info)"),
+
+    # ── links：链接目标的三种写法（裸 / 尖括号 / %转义）走同一套解析 ──────────────
+    # 这一相的核心不变量：**写出来的、检查得到的、折叠得动的，必须是同一批目标**。
+    # 下面每条各破坏它的一面（旧口径 `\\]\\(([^)\\s]+)\\)` 就是三处一起错的那版）。
+    ("links", "链接匹配退回排除空白的旧口径",
+     'LINK_RE = re.compile(r"\\]\\(\\s*(<[^>\\n]*>|[^)\\n]*?)\\s*\\)")',
+     'LINK_RE = re.compile(r"\\]\\(([^)\\s]+)\\)")',
+     "links: a dead link with a space in a bare target is reported"),
+    ("links", "尖括号目标不再去括号",
+     "    if len(t) >= 2 and t.startswith(\"<\") and t.endswith(\">\"):",
+     "    if False:",
+     "links: a dead link inside angle brackets is reported"),
+    ("links", "链接目标不再做百分号解码",
+     "    return unquote(t)",
+     "    return t",
+     "links: an existing file is not a dead link, in either written form"),
+    ("links", "index compact 又对解析不出的行硬取 group(1)",
+     "            if m is not None:",
+     "            if True:",
+     "links: index compact survives a row it cannot parse"),
+
+    # ── mode：精细度档位（提示行里的"当前"必须是生效档位）───────────────────────
+    ("mode", "mode 的提示行又拿内置默认当当前值",
+     "（当前 {cur}）",
+     "（当前 {MODE_DEFAULT}）",
+     "mode's hint line names the effective tier, not the built-in default"),
 ]
 
 

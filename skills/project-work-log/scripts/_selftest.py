@@ -721,6 +721,10 @@ def mode_phase(parent: str) -> None:
     r = run(legacy, "mode")
     ok(r.stdout.startswith("digest"), "mode reads the value back", r.stdout)
     ok("阶段收口" in r.stdout, "mode prints the recorded reason", r.stdout)
+    # 提示行里的"当前"必须是**生效档位**：曾经写成常量 `full`，于是台账是 digest 时
+    # 同一条输出自相矛盾（上一行 digest、下一行"当前 full"）——整体功能实跑抓到的。
+    ok("（当前 digest）" in r.stdout and "（当前 full）" not in r.stdout,
+       "mode's hint line names the effective tier, not the built-in default", r.stdout)
 
     # brief / outline 带着这个多出来的字段照常渲染
     r = run(legacy, "brief", "--entries", "1")
@@ -1099,6 +1103,87 @@ def gate_phase(parent: str) -> None:
     r = run(legacy, "check", "--strict", "--quiet", "--lint", "--legacy", "*")
     ok(r.returncode == 0,
        "gates: the gradual rule survives the merge (a legacy finding stays info)", r.stdout + r.stderr)
+
+
+def link_phase(parent: str) -> None:
+    """链接目标的三种写法必须走**同一套**解析：裸、尖括号（含空格）、百分号转义。
+
+    起因是一次整体功能实跑：`archive --stage "A. 起步"` 这类带空格的阶段目录，工具
+    **自己就会写出** `](A. 起步/x.md)` 这种目标，而旧正则 `\\]\\(([^)\\s]+)\\)` 排除空白，
+    于是同一个事实在三处各错一次——死链检查看不见（漏报）、归档重写改不到（静默留旧链接）、
+    `index compact` 抛 `AttributeError`（崩）。所以这一节测的不是"某个函数返回值"，
+    而是**三处口径一致**：写出来的、检查得到的、折叠得动的，必须是同一批目标。
+    """
+    stage = "A. 起步"
+    root = os.path.join(parent, "links")
+    os.makedirs(os.path.join(root, CONTAINER, stage))
+    # 阶段目录里的一个真实文件：链接指向它时**不许**报死链（两种写法都不许）。
+    write(os.path.join(root, CONTAINER, stage, "真.md"),
+          "# 真\n\n## 四、验证\n\n- 方式：`true`\n- 结果：1 passed\n")
+    write(os.path.join(root, CONTAINER, "0001-links.md"),
+          "# 0001 · 链接写法\n\n日期：2026-09-06\n迭代：-\n结论：四种写法各测一次，2 死 2 活。\n\n"
+          "## 一、写法\n\n"
+          "- 裸目标、含空格、不存在：[死](A. 起步/nope.md)\n"
+          "- 尖括号、含空格、不存在：[死](<A. 起步/nope2.md>)\n"
+          "- 百分号转义、指向真实文件：[真](A.%20起步/真.md)\n"
+          "- 尖括号、指向真实文件：[真](<A. 起步/真.md>)\n\n"
+          "## 二、验证\n\n- 方式：`journal.py check --strict`\n- 结果：死链 2 条\n")
+    write(os.path.join(root, CONTAINER, "README.md"), fmt_ledger(["0001-links.md"]))
+
+    r = run(root, "check", "--strict", "--quiet")
+    ok("死链：A. 起步/nope.md" in r.stdout,
+       "links: a dead link with a space in a bare target is reported", r.stdout)
+    ok("死链：A. 起步/nope2.md" in r.stdout,
+       "links: a dead link inside angle brackets is reported", r.stdout)
+    ok("真.md" not in r.stdout,
+       "links: an existing file is not a dead link, in either written form", r.stdout)
+    ok(r.returncode != 0, "links: the two dead links make the gate fail", r.stdout)
+
+    # 归档 + 索引瘦身：写出来的链接、检查、折叠必须一致 ------------------------
+    both = os.path.join(parent, "linksarchive")
+    os.makedirs(os.path.join(both, CONTAINER))
+    write(os.path.join(both, CONTAINER, "0001-a.md"),
+          "# 0001 · 指向 b\n\n日期：2026-09-06\n迭代：-\n结论：见 `wl/0002` 的 1 处结论。\n\n"
+          "## 一、正文\n\n- 见 [b](0002-b.md)\n\n"
+          "## 二、验证\n\n- 方式：`true`\n- 结果：1 passed\n")
+    write(os.path.join(both, CONTAINER, "0002-b.md"), entry("0002", "b", "2026-09-06"))
+    # 索引里故意留一行**坏的**：有 `](` 却没有闭合括号（手改索引很容易留下这种行）。
+    # 它正是 `index compact` 那条守卫要挡的东西：旧实现在这一行上抛 AttributeError，
+    # 整条命令崩掉。检查端看不见它（匹配不上），折叠端必须扛得住它。
+    ledger = fmt_ledger(["0001-a.md", "0002-b.md"]).replace(
+        "| [0001-a.md](0001-a.md) | 说明 |",
+        "| [0001-a.md](0001-a.md) | 指向 b |\n| [坏行]( | 手抖留下的 |")
+    write(os.path.join(both, CONTAINER, "README.md"), ledger)
+    r = run(both, "check", "--strict", "--quiet")
+    ok(r.returncode == 0, "links: the fixture starts clean", r.stdout + r.stderr)
+
+    r = run(both, "archive", "--stage", stage, "--from", "2", "--to", "2")
+    ok(r.returncode == 0, "links: archive exits 0", r.stdout + r.stderr)
+    moved = read(os.path.join(both, CONTAINER, "0001-a.md"))
+    # 含空格的新目标必须写成尖括号形式，否则 markdown 截断 + 自家匹配又漏掉。
+    ok("](<A. 起步/0002-b.md>)" in moved,
+       "links: archive writes a space-containing target in the angle form", moved)
+    r = run(both, "check", "--strict", "--quiet")
+    ok(r.returncode == 0 and "死链" not in r.stdout,
+       "links: what archive wrote is what the checker can see (0 dead links)", r.stdout)
+
+    r = run(both, "index", "compact", "--stage", stage)
+    ok(r.returncode == 0 and "Traceback" not in (r.stdout + r.stderr),
+       "links: index compact survives a row it cannot parse", r.stdout + r.stderr)
+    ok("含活跃记录" in r.stdout,
+       "links: and it refuses to fold a section that still holds an active record", r.stdout)
+
+    # 两篇都归档之后才该折叠（整节已归档是折叠的前提，不是可选项）-------------
+    r = run(both, "archive", "--stage", stage, "--from", "1", "--to", "1")
+    ok(r.returncode == 0, "links: archiving the second record exits 0", r.stdout + r.stderr)
+    r = run(both, "index", "compact", "--stage", stage)
+    ok(r.returncode == 0 and "Traceback" not in (r.stdout + r.stderr),
+       "links: index compact does not crash on an all-archived section", r.stdout + r.stderr)
+    ok("已归档）" in read(os.path.join(both, CONTAINER, "README.md")),
+       "links: and it folds the section once every row is archived",
+       read(os.path.join(both, CONTAINER, "README.md")))
+    r = run(both, "check", "--strict", "--quiet")
+    ok(r.returncode == 0, "links: still clean after folding", r.stdout)
 
 
 def format_phase(parent: str) -> None:
@@ -2553,6 +2638,9 @@ def main() -> int:
 
         # 两道门禁：check --lint 会合并，默认不合并 ---------------------------
         gate_phase(tmp)
+
+        # 链接目标的三种写法（裸 / 尖括号 / %转义）走同一套解析 ----------------
+        link_phase(tmp)
 
         # 项目配置文件（<容器>/.config.json）---------------------------------
         config_phase(tmp)

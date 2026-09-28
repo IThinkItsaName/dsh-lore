@@ -307,6 +307,32 @@ npm run audit           # preaudit：端到端——宿主将会 import 什么
 哪些做法有效（编号即地址、三层不互相复制、证据优先）、哪些会腐坏（台账漂移、格式漂移、双份数字）。
 详见 [`references/analysis.md`](skills/project-work-log/references/analysis.md)。
 
+## 依赖声明（`peerDependencies` 不是装饰，是**能不能加载**）
+
+`package.json` 里的两条 peer 是**运行必需**，不是规范摆设：
+
+```json
+"peerDependencies": {
+  "@deepseek-ai/dsh-tools": ">=0.1.7-alpha.1",
+  "@deepseek-ai/schemastery": "^3.18.3"
+}
+```
+
+**为什么**：本包以 **junction / symlink 链接**的方式装进 profile（开发时的常态，`link:` 安装），
+于是它落在 DSH 的 **linked root** 里。宿主对链接目录内的 `import '@deepseek-ai/…'` **只有在该名字
+出现在 `peerDependencies` 里时**才走拦截、把它解析到宿主自己那一份；否则退回原生 Node 解析，
+而在链接包内部与 profile 目录下都解析不到（实测 `MODULE_NOT_FOUND`）。
+
+后果不是"少一个字段"，是**条目 `inactive`、插件整体消失**（技能与设置页一起）。
+本次修的就是这个：`lib/index.js` 现在 import `schemastery` 与 `dsh-tools`，而这两个名字此前没声明。
+
+依据：宿主文档 `@deepseek-ai/dsh-app-boot/README.zh.md`「链接目录」一节（peer 包名命中才用运行时包）、
+`PLUGIN-AUTHORING.md` 的 `peerDependencies` 条（兼容闸门：导入前比对运行时版本）。
+同 profile 里另一个第三方插件 `dsh-ds-balance` 也声明了这一组 peer。
+
+> 改完这条要**重启宿主进程**才生效：插件的 `fiber.runtime`（含它拿到的 `Config`）在首次挂载时
+> 就固定下来，Node 的 ESM 模块缓存也按 URL 复用；只禁用/启用那一行拿到的是同一个旧实例。
+
 ## 支持矩阵（诚实标注验证情况）
 
 | 维度 | 支持 | 验证情况 |

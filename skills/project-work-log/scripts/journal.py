@@ -91,6 +91,7 @@ import re
 import sys
 import unicodedata
 import zipfile
+from urllib.parse import unquote
 
 try:  # Windows 控制台默认码页可能不是 UTF-8
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -161,7 +162,45 @@ ISO_DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 # （否则 `R21`、`v4`、`0029` 会各自算一个数字记号，把「只有一个编号」的散文判成有数据）。
 NUM_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])\d+(?:[.,]\d+)?%?")
 VERIFY_HEAD_RE = re.compile(rf"^#{{2,4}}\s*.*(?:{_any(L_VERIFY)})", re.M)
-LINK_RE = re.compile(r"\]\(([^)\s]+)\)")
+# markdown 链接目标。**两种写法都要认**：
+#   - 尖括号目标 `](<a b/c.md>)` —— 目标含空格时的**正式**写法；
+#   - 裸目标 `](a/b.md)` —— 含空格的裸写法其实**不合 Markdown 规范**（会被渲染器截断），
+#     但**本工具的旧版本会写出它**（`archive` 的链接重写看不见含空格的目标，于是原地留下
+#     一个"看着像链接、其实解析不了"的字符串）。既然历史产物里有，检查端就得认它，
+#     否则那些容器的死链永远查不出来 —— 宽进严出：读的时候宽容，写的时候规范。
+#
+# 为什么这条曾经是个**静默失效**：旧正则 `\]\(([^)\s]+)\)` 排除空白，含空格的目标整个
+# 匹配不上，于是同一个事实在三处各错一次：
+#   - `check` 的死链检查看不见它（漏报：链接断了也报 0 死链）；
+#   - `archive` 的链接重写改不到它（搬完链接就旧了，而检查还说"死链 0"）；
+#   - `index compact` 在它上面直接抛 `AttributeError`（`.group(1)` 拿到 None）。
+# 只修其中一处没有意义：**匹配口径必须是同一个**，否则三处又会各说各话。
+#
+# 两条负向约束，都是实测踩出来的：
+#   - **不跨行**（`[^)\n]`）：目标里可以没有右括号（手改索引留下的坏行），
+#     允许跨行就会把下面一行的 `)` 当成本行的收尾，凭空造出一个"死链"——
+#     自己的宽松写法给自己制造误报。旧口径因排除空白而恰好没有这个问题，
+#     放宽时必须把它显式写回来。
+#   - **不吞尖括号里的 `>`**：`<...>` 形里不能再有 `>`，否则 `](<a> b)` 会切错。
+LINK_RE = re.compile(r"\]\(\s*(<[^>\n]*>|[^)\n]*?)\s*\)")
+
+
+def link_target(m: "re.Match[str]") -> str:
+    """把一个链接匹配规范化成**可以直接拿去解析路径**的目标：去尖括号、解 `%XX`。
+
+    百分号解码不是锦上添花：`A.%20起步/x.md` 与 `A. 起步/x.md` 指的是同一个文件，
+    不解码就会把**真实存在的文件**报成死链（实测踩过）。
+    """
+    t = m.group(1)
+    if len(t) >= 2 and t.startswith("<") and t.endswith(">"):
+        t = t[1:-1]
+    return unquote(t)
+
+
+def link_targets(text: str) -> list[str]:
+    """正文里全部链接目标（规范化后，按出现顺序）。"""
+    return [t for t in (link_target(m) for m in LINK_RE.finditer(text)) if t]
+
 CITE_RE = re.compile(r"wl/(\d+)")
 # 状态块标题后面的日期括号：全角 `（…）` 与半角 `(…)` 都要认（英文台账用半角）。
 DATE_PAREN_RE = re.compile(r"[（(][^）)\r\n]*[）)]")
@@ -1140,7 +1179,7 @@ def rewrite_links(base_dirs: list[str], moves: dict[str, str], dry_run: bool = F
 
     def fixer(path: str, base: str, frame_dir: str):
         def sub(m: re.Match) -> str:
-            target = m.group(1)
+            target = link_target(m)
             if target.startswith(("http://", "https://", "mailto:", "#")):
                 return m.group(0)
             anchor = ""
@@ -1162,9 +1201,11 @@ def rewrite_links(base_dirs: list[str], moves: dict[str, str], dry_run: bool = F
                 # 书写者就在原地、目标也没搬：链接本来就对，一个字都别动。
                 return m.group(0)
             new_target = os.path.relpath(new_path, os.path.dirname(path)).replace(os.sep, "/") + anchor
-            if new_target != m.group(1):
-                changed.append((rel(base, path), m.group(1), new_target))
-            return f"]({new_target})"
+            if new_target != target + anchor:
+                changed.append((rel(base, path), target + anchor, new_target))
+            # 新目标含空格时**必须**写成尖括号形式：裸写会被 markdown 解析器截断，
+            # 也会被我们自己的链接匹配漏掉（那正是这条修复要消灭的形态）。
+            return f"](<{new_target}>)" if " " in new_target else f"]({new_target})"
         return sub
 
     for base in base_dirs:
@@ -1711,7 +1752,7 @@ def _check_links(root: str, path: str, rep: Report) -> None:
     base = os.path.dirname(path)
     where = rel(root, path)
     seen = set()
-    for target in LINK_RE.findall(read(path)):
+    for target in link_targets(read(path)):
         if target.startswith(("http://", "https://", "mailto:", "#")):
             continue
         # 先去掉 `#锚点` 再判断是不是 .md —— 否则 `x.md#part` 会被整条跳过，
@@ -2418,7 +2459,16 @@ def cmd_index_compact(args: argparse.Namespace) -> int:
                 if lines[k].lstrip().startswith("|") and "](" in lines[k]]
         if not rows:
             continue
-        targets = [LINK_RE.search(lines[k]).group(1).split("#")[0] for k in rows]
+        # 逐行取目标，取不到的行**跳过而不是崩**：`](` 后面不一定是合法目标
+        # （含空格的裸写法在旧正则下就是这种行），一行坏数据不该让整条命令抛异常。
+        targets: list[str] = []
+        for k in rows:
+            m = LINK_RE.search(lines[k])
+            if m is not None:
+                targets.append(link_target(m).split("#")[0])
+        if not targets:
+            skipped.append((title, "行里没有可解析的链接目标"))
+            continue
         resolved = [os.path.normpath(os.path.join(journal, t)) for t in targets]
         if any(os.path.isdir(p) for p in resolved):
             # 已经折叠过的行：目标是个目录。再折一次会把 `5–6（2 篇）` 变成 `1 篇`，
@@ -2602,7 +2652,10 @@ def cmd_mode(args: argparse.Namespace) -> int:
             print(f"（{tail}：当前取{where} `{cfg.mode}`）")
         if why:
             print(f"原因：{why}")
-        print(f"切换：`journal.py mode --set full|session|digest|milestone`（当前 {MODE_DEFAULT}）")
+        # 提示行里的"当前"必须是**生效档位** `cur`，不是常量 `MODE_DEFAULT`。
+        # 曾经写成常量：台账是 digest 时，上一行说 digest、这一行说"当前 full"，
+        # 同一条输出自相矛盾（整体功能实跑时抓到的）。
+        print(f"切换：`journal.py mode --set full|session|digest|milestone`（当前 {cur}）")
         return 0
 
     # `--why` 不带 `--set` 时只补原因，档位不动（沿用现有原因；没有就新建）。
@@ -3103,7 +3156,7 @@ def _remove_index_rows(journal: str, basenames: set[str]) -> int:
     for line in text.splitlines(keepends=True):
         if line.lstrip().startswith("|") and "](" in line:
             m = LINK_RE.search(line)
-            if m and os.path.basename(m.group(1).split("#")[0]) in basenames:
+            if m and os.path.basename(link_target(m).split("#")[0]) in basenames:
                 removed += 1
                 continue
         kept.append(line)
@@ -3789,7 +3842,10 @@ def resolve_record_ref(root: str, ref: str) -> tuple[str | None, str]:
     """
     journal, lessons = resolve_layout(root, None, None)
     if not journal:
-        return None, "当前目录不是工作区（没有 work_log/ 容器）"
+        # 说清**用的是哪个根**：调用方可能给了根目录（`memory add` 就是这样），
+        # 报"当前目录"会让它以为 cwd 不对，去错的地方找问题（实测踩过）。
+        where = "当前目录" if root in ("", ".") else f"根目录 `{root}`"
+        return None, f"{where}不是工作区（没有 work_log/ 容器）"
     r = (ref or "").strip()
     m = MEMORY_WL_REF_RE.match(r)
     if m:
@@ -4093,7 +4149,7 @@ def memory_similarity(a: str, b: str) -> float:
 def dream_record_links(text: str) -> list[str]:
     """正文里指向**记录**的 markdown 链接目标（按出现顺序去重）。"""
     out: list[str] = []
-    for target in LINK_RE.findall(text):
+    for target in link_targets(text):
         clean = target.split("#", 1)[0].strip()
         if clean.endswith(".md") and is_record_name(os.path.basename(clean)) and clean not in out:
             out.append(clean)

@@ -8,6 +8,42 @@
 
 ## [未发布]
 
+### 修复（`peerDependencies`：不补这一条，下次加载插件会整体消失）
+
+- `package.json` 补上 `@deepseek-ai/dsh-tools` 与 `@deepseek-ai/schemastery` 两条 peer 声明。
+- **为什么是"必需"而不是"规范"**：本包以 junction / symlink 链接进 profile，落在 DSH 的 **linked root**
+  里；宿主对链接目录内的 `import '@deepseek-ai/…'` **只在该名字出现在 `peerDependencies` 里时才拦截**
+  到宿主自己那一份，否则退回原生解析。实测：这两个包在链接包内部与 profile 目录下都 `MODULE_NOT_FOUND`
+  （`dsh-worklog` 自身能解析，所以问题只出在这两个名字上）。
+- 后果：`lib/index.js` 现在 import 这两个包，没有 peer 声明 → 加载即 `MODULE_NOT_FOUND` →
+  条目 `inactive`，**技能与设置页一起消失**。这不是理论风险：本机另一处探针插件日志里就有同一句
+  `ERR_MODULE_NOT_FOUND Cannot find package '@deepseek-ai/schemastery'`。
+- 依据：`@deepseek-ai/dsh-app-boot/README.zh.md`「链接目录」（peer 包名命中才用运行时包）、
+  `PLUGIN-AUTHORING.md` 的 `peerDependencies` 条；对照同 profile 的 `dsh-ds-balance`（声明了同组 peer）。
+- **要重启宿主进程才生效**：`fiber.runtime`（含插件拿到的 `Config`）在首次挂载时固定，Node 的 ESM
+  缓存按 URL 复用模块实例——禁用/启用那一行拿到的还是同一个旧实例。
+
+### 修复（链接解析：同一个事实在三处各错一次，其中一处是静默漏报）
+
+- `LINK_RE` 曾排除空白，于是**含空格的链接目标整个匹配不上**——而 `archive --stage "A. 起步"`
+  这类带空格的阶段目录，**工具自己就会写出**这种目标。三处后果：
+  - `check` 的死链检查**看不见**它 → 链接断了也报 0 死链（静默漏报，最严重的一条）；
+  - `archive` 的链接重写改不到它 → 搬完留下旧链接，而检查还说"死链 0"；
+  - `index compact` 在它上面抛 `AttributeError` → **整条命令崩**（工作流 D 里紧接 `archive` 的那条）。
+- 现在三种写法（裸 / `<尖括号>` / `%20` 转义）走**同一套**解析；`archive` 写出的含空格目标一律用
+  尖括号形式；`index compact` 遇到解析不出的行**跳过而不是崩**（自测夹具里特意留了一行坏索引行）。
+- 实测两个方向都错了：指向**真实存在**文件的 `](A.%20起步/真实存在.md)` 被报成死链（误报），
+  而 `](<A. 起步/真实存在.md>)` 在检查与重写里都看不见（漏报）。
+- 放宽匹配时踩到并写进注释的负向约束：**不跨行**——允许跨行会把下一行的 `)` 当成本行的收尾，
+  凭空造出"死链"，宽松写法自己给自己制造误报。
+
+### 修复（两处小缺陷，都由整体功能实跑抓到）
+
+- `mode` 的提示行拿常量 `MODE_DEFAULT` 当"当前值"：台账是 `digest` 时，同一份输出上一行说 digest、
+  下一行说"当前 full"。改成**生效档位**。
+- `resolve_record_ref` 找不到容器时一律报"当前目录不是工作区"——调用方给的可能是**根目录**
+  （`memory add` 就是），现在报出**用的是哪个根**，否则会去错的地方找问题。
+
 ### 新增（`check --lint`：两道门禁能一起跑，但**默认不合并**）
 
 - `check` 与 `lint` 是两道门：前者管结构，后者管内容质量。它们此前**只能分两次跑**，

@@ -5245,12 +5245,16 @@ SCAFFOLD_VERIFY_TXT = '''# 写一行命令，`{fixture}` 会被替换成被测�
 SCAFFOLD_SKILL_MD = '''---
 name: __NAME__
 description: __DESC__
+disable-model-invocation: true
 ---
 
 # __NAME__
 
 > 由 `journal.py promote scaffold __ENTRY__` 从记忆条目生成（来源 `__SOURCE__`）。
 > **技能只许「教」，不许「管」**：写"这类问题怎么诊断"没问题，写"你必须先做 X"就越界了。
+> **现在它是关着的**（`disable-model-invocation: true`）：骨架还没写完，不该进模型的技能目录 ——
+> 技能的名字+描述是这套产物里曝光面最大的一处。把 description 与正文写清楚、自测跑到绿之后，
+> 再删掉那一行，才算真的"发布"这个技能。
 
 ## 触发场景
 
@@ -5345,8 +5349,12 @@ def cmd_promote_scaffold(args: argparse.Namespace) -> int:
     print("\n接下来（骨架**现在是红的**，这是故意的）：")
     print("  1. 在 `verify-command.txt` 里写一行命令，用 `{fixture}` 当被测路径；")
     print("  2. `fixtures/ok/` 放一个应当通过的样本，`fixtures/bad/` 放一个应当失败的；")
-    print("  3. `python selftest.py` 跑到 2/2，再把 `SKILL.md` 的正文写成人能照着做的过程。")
-    print(f"  4. 装到宿主能看见的地方：`<DSH_HOME>/skills/{name}/`（放好当场就能被 `skill` 工具取到，不必重启）。")
+    print("  3. `python selftest.py` 跑到 2/2，再把 `SKILL.md` 的正文写成人能照着做的过程；")
+    print("  4. 把 frontmatter 的 `description` 改写成「什么时候该用」（现在是 `[骨架待改]` 标记）；")
+    print(f"  5. 装到宿主能看见的地方：`<DSH_HOME>/skills/{name}/`"
+          "（放好当场就能被 `skill` 工具取到，不必重启）；")
+    print("  6. **最后**才删掉 `disable-model-invocation: true` —— 骨架默认不进模型目录，"
+          "写完、验完再放它进去。")
     return 0
 
 

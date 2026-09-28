@@ -10,7 +10,8 @@
 | 什么 | 源（改这里） | 副本（工具写，别手改） | 同步命令 |
 |---|---|---|---|
 | 技能 + 工具箱 | `.pi/skills/project-work-log/` | `publish/worklog/skills/project-work-log/` | `python scripts/_package.py` |
-| 测试 harness | `logs/tests/` | `publish/worklog/tests/` | 同上（一次跑完两处） |
+| 附带技能（默认关着） | `.pi/skills/client-require-whitelist/` | `publish/worklog/skills/client-require-whitelist/` | 同上（每个技能一项，见 `SKILL_SOURCES`） |
+| 测试 harness | `logs/tests/` | `publish/worklog/tests/` | 同上（一次跑完三处） |
 | 纯文档变体 | `skill-only/`（手写源） | `dist/skill-only/`（构建产物） | `node tools/build-skill-only.mjs` |
 
 **两条纪律**：
@@ -112,7 +113,9 @@ git push origin v0.5.0
 | 现象 | 原因 |
 |---|---|
 | `_package.py --check` 报漂移 | 改了源没同步，**或者改了副本**（后者更危险：同步会覆盖它） |
+| `_package.py --check` 只报 `__pycache__` | 刚在**副本**目录里跑过自测（`npm test` 或 `skills/.../\_selftest.py`）。它是派生文件、不该随包发（实测过一次：包里躺着一个 398 KB 的陈旧 `.pyc`），同步一下即可清掉 |
 | 门禁在开发者机器上变红 | harness 读了真实设置文件或真实记忆根；夹具必须写到系统临时目录 |
 | 页面改了没效果 | 客户端半边由 `__ModuleLoader__` 按页会话缓存，**要硬刷新**（`Ctrl+Shift+R`） |
 | 设置页改了没反应 | 那个键是**装载期**读的（见 `SETTINGS.md` 的「改完需重启」）；或该字段只在一处声明却没被读 |
 | 版本审计失败 | `package.json` 的 `version` 与 tag / CHANGELOG 不一致；三处要同时改 |
+| 新加的随包技能当场查不到 | 插件自带技能在**插件挂载时**注册；新文件要**重启宿主**才登记（放进 `<DSH_HOME>/skills/` 的则会被文件系统 provider 活查发现） |

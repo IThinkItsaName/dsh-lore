@@ -2471,6 +2471,17 @@ def memory_phase(parent: str) -> None:
        "memory: 骨架里建好了两个夹具目录")
     ok("[骨架待改]" in read(os.path.join(scaffold_out, "SKILL.md")),
        "memory: description 留了显式待改标记，而不是自动编一句像成品的话")
+    # 骨架默认**不进模型目录**：`disable-model-invocation: true` 是宿主真读的字段
+    # （`dsh-tool-skill` 的 `isModelInvocable`），而技能的名字+描述曝光面最大，
+    # 没写完的骨架不该进去。写完、验完再由作者删掉这一行。
+    #
+    # 断言只认 **frontmatter**：正文里也提到了这个字段名（在解释"为什么默认关着"），
+    # 在整份文件里找子串会漏掉"frontmatter 那行被删掉"这种情况（实测漏过一次）。
+    scaffold_md = read(os.path.join(scaffold_out, "SKILL.md"))
+    front = scaffold_md.split("---")[1] if scaffold_md.startswith("---") else ""
+    ok("disable-model-invocation: true" in front,
+       "memory: 骨架默认关着（frontmatter 的 disable-model-invocation），避免半成品进模型目录",
+       front.strip())
 
     # `--out` 必填、且不覆盖非空目录
     r = m(wsA, "promote", "scaffold", "host-style-claiming")

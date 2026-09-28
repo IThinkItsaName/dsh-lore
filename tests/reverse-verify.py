@@ -325,6 +325,10 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      '        print("\\\\n补完之后再跑一次：python selftest.py")\n        return 1',
      '        print("\\\\n补完之后再跑一次：python selftest.py")\n        return 0',
      "memory: 骨架生成出来就是红的，并指出缺哪样"),
+    ("memory", "骨架默认进模型目录（半成品也能被模型捡走）",
+     'description: __DESC__\ndisable-model-invocation: true',
+     'description: __DESC__',
+     "memory: 骨架默认关着（frontmatter 的 disable-model-invocation），避免半成品进模型目录"),
 
     # ── config：项目配置文件（三层优先级：命令行 > .config.json > 内置默认）──────────
     # 这一相的核心不变量就是那条优先级。下面几条各破坏它的一面。

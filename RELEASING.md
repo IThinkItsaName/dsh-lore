@@ -58,14 +58,17 @@ python skills/project-work-log/scripts/journal.py check --strict --quiet "<每�
 **本容器自己也要干净**（在装了这套东西的工作区里）：
 
 ```bash
-python skills/project-work-log/scripts/journal.py check --strict "<该工作区根>"
-python skills/project-work-log/scripts/journal.py lint --strict "<该工作区根>"
+python skills/project-work-log/scripts/journal.py check --strict --lint "<该工作区根>"
 ```
 
-> **`lint` 这一行是 2026-09-28 补的**：那个工作区自己的容器里有 **7 条** lint ERROR
-> 一直没人看见，根因不是"写错了"而是**从没有人跑过它**——`check` 与 `lint` 是两道门，
-> 前者只管结构（章节、死链、编号），后者管内容质量（结论有没有可核对的信息、有没有空小节）。
-> 只跑一道，另一道的错就会一直攒着。
+> **两道门禁要一起跑，所以用 `--lint`。** `check` 管结构（章节、死链、编号），
+> `lint` 管内容质量（结论有没有可核对的信息、有没有空小节）。**两道门是分开的**，
+> 只跑一道，另一道的错就会一直攒着——那个工作区自己的容器就攒了 **7 条** lint ERROR
+> 无人看见，因为这份清单原先只写了 `check`。
+>
+> **为什么不用"让 check 默认带上 lint"来解决**：九个真实语料实测，那会让今天全绿的项目
+> 当场变红（`dsh_from_github` 7 → **94** 条、`3_param_block` 0 → **30** 条）。合并是**选项**，
+> 检查点自己加；`check` 单独跑时会留一行提示，免得下一个人又以为"绿灯就是检查完了"。
 >
 > 加这一行的代价：**记录写得含糊会让发版变红**。这正是想要的——否则"结论：已完成"
 > 这种句子会一直混过去，而它恰好是本项目记录里最没用的那种。

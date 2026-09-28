@@ -1676,6 +1676,23 @@ class Report:
                 n += 1
         return n
 
+    def merge(self, other: "Report") -> None:
+        """把另一道门禁的发现并进本报告（`check --lint`）。
+
+        `legacy_rows` 存的是**行号**，合并后行号会变，所以这里的换算不是可选的：
+        漏了它，降级标记就会指向另一条发现（或者指到界外），渐进原则静默失效。
+        """
+        for i, row in enumerate(other.rows):
+            if row in self._seen:
+                # 同级别同文字的两门发现只留一条。容器不存在、配置文件非法这类
+                # 两门都报的发现，重复列出只会让人以为有两处问题。
+                continue
+            self._seen.add(row)
+            self.rows.append(row)
+            self.rules.append(other.rules[i])
+            if i in other.legacy_rows:
+                self.legacy_rows.add(len(self.rows) - 1)
+
     def errors(self) -> int:
         return sum(1 for lv, _ in self.rows if lv == "ERROR")
 
@@ -1895,7 +1912,9 @@ def lint(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bo
     rep = Report(strict)
     journal, lessons, cfg = load_project_config(root, journal_arg, lessons_arg, legacy)
     if not journal:
-        rep.add("ERROR", root, "找不到记录容器（work_log/；旧名 journal/、work-log/ 也认）")
+        # 与 `check` 同一句话，一字不差：`check --lint` 会把两门的发现并进一份报告，
+        # 文案不同就会**同一件事报两遍**（实测踩过：容器不存在时列出两条一模一样的错）。
+        rep.add("ERROR", root, "找不到记录容器（work_log/；旧名 journal/、work-log/ 也认）；先按 templates.md 初始化")
         return rep
     # 档位只在台账里读一次（台账没有 `精细度` 时退回配置文件的 `mode`）：
     # 粗档位的额外义务按它判（默认档不加要求）。
@@ -5063,10 +5082,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stage", default=None, help="配合 --insert 指定阶段小节")
     p.add_argument("--dry-run", action="store_true")
 
-    p = add("check", lambda a: _run(Report(a.strict),
-                                    lambda: check(os.path.abspath(a.root), a.journal, a.lessons,
-                                                  a.strict, a.legacy), a), "结构门禁")
+    p = add("check", cmd_check, "结构门禁")
     p.add_argument("--strict", action="store_true", help="把 WARN 当 ERROR")
+    p.add_argument("--lint", action="store_true",
+                   help="同时跑内容质量门禁（判据与 lint 完全相同；两门的发现并进同一份报告与同一个退出码）")
     _add_legacy(p)
     p.add_argument("--quiet", action="store_true")
 
@@ -5401,6 +5420,32 @@ mode 同样只提供**新项目的初始档位**：台账 `## 当前状态` 有 
     p.set_defaults(func=cmd_promote_suggest)
 
     return ap
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    """`check`：结构门禁；带 `--lint` 时把内容质量门禁并进同一次运行。
+
+    **为什么默认不合并**（这是量出来的，不是口味问题）：拿九个真实语料各跑一遍，
+    `lint --strict` 会让今天全绿的项目当场变红——`dsh_from_github` 从 7 条涨到 **94** 条、
+    `3_param_block` 从 **0** 涨到 30 条、`2_multi_attention` 从 **0** 涨到 9 条。
+    那些是别人的仓库：本项目的检查点想少跑一条命令，不构成替他们改判决的理由。
+    所以门是**并进来**的，但要说一声 —— 而"说一声"的成本由调用方出（加 `--lint`）。
+
+    反过来，结构门禁**通过**时留一行提示，因为那正是人最容易以为"检查完了"的时刻；
+    这也正是本工作区那 7 条 lint 欠账能攒下来的原因（`RELEASING.md` 只跑了 check）。
+    """
+    def build() -> Report:
+        rep = check(os.path.abspath(args.root), args.journal, args.lessons,
+                    args.strict, args.legacy)
+        if args.lint:
+            rep.merge(lint(os.path.abspath(args.root), args.journal, args.lessons,
+                           args.strict, args.legacy))
+        return rep
+
+    code = _run(Report(args.strict), build, args)
+    if not args.lint and code == 0 and not getattr(args, "quiet", False):
+        print("（这是结构门禁。内容质量是另一道：加 `--lint` 一起跑，或单跑 `lint`）")
+    return code
 
 
 def _run(rep: Report, fn, args: argparse.Namespace) -> int:

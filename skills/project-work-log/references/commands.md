@@ -215,9 +215,33 @@ snapshotEntries = 12               ← .config.json
 | 命令 | 检查内容 | 退出码 |
 |---|---|---|
 | `check` | 结构：标题与文件名一致（两种命名）、验证小节（含实质内容）、md 死链、漏索引、状态块唯一且新鲜、lessons 来源可回指、目标表（可选文件，见下） | 有 ERROR → 1 |
+| `check --lint` | **上面那道 + 下面那道**，一次运行、一份报告、一个退出码 | 有 ERROR → 1 |
 | `lint` | 内容：占位符残留（`<命令 / 数据 / 引用 / 样本>`/`TODO`…）、空小节、结论无可核对信息、验证无可核对内容、含糊措辞（"应该没问题"）、粗档位记录缺 `未记录：…` | 有 ERROR → 1 |
 
 `--strict` 把 WARN 当 ERROR（新项目/CI 建议开）；`--quiet` 不打印 INFO。
+
+### `--lint`：两道门禁能一起跑，但**默认不合并**
+
+**为什么不默认合并**：这两道门管的事不同，而 `lint` 在既有项目上的判决**严得多**。
+实测九个真实语料（`check --strict` 的基线是干净的）：
+
+| 语料 | `check --strict` | `lint --strict` |
+|---|---|---|
+| `dsh_from_github` | 7 error | **94 error** |
+| `3_param_block` | **0** error | **30 error** |
+| `2_multi_attention` | **0** error | **9 error** |
+| `comfy` / `5_diffusion` | 0 error | 0 error |
+
+也就是说，把 `lint` 并进 `check` 的默认行为，会让**今天全绿的项目当场变红**。
+那些是别人的仓库：本项目的检查点想少跑一条命令，不构成替他们改判决的理由。
+所以合并是**选项**，写检查点的人自己加 `--lint`。
+
+**但"另一道门存在"必须说一声**：结构门禁**通过**时会留一行提示
+（`--quiet` 下不打印），因为"绿灯"正是人最容易以为"检查完了"的时刻——
+本项目自己的容器就因此攒了 7 条 lint ERROR 没人看见。加了 `--lint` 之后不再提示。
+
+**合并的两件事**（自测钉住的）：同一件事两门都报时**只留一条**（文案必须一致，
+否则会列出两条一模一样的错）；渐进原则的**降级下标要换算**，否则旧记录降级静默失效。
 
 > **老仓库第一次跑不再是一片红**：默认按容器规模兜底（记录 ≥ 5 篇就整批算旧记录），
 > 因旧格式而失败的发现只报 `[INFO]`；记录还少的新项目不受兜底，照报 error。见下「渐进原则」。
@@ -568,7 +592,7 @@ python scripts/journal.py mode                     # 先确认档位：默认 fu
 python scripts/journal.py new --title "…" --iter 154 --insert --stage "新阶段"
 python scripts/journal.py status --set "迭代=154" --set "核对=抽样 30 条全部通过" --date
 python scripts/journal.py lesson add --volume 04-verification-and-safety.md --source 152 --text "…"
-python scripts/journal.py check --strict && python scripts/journal.py lint --strict
+python scripts/journal.py check --strict --lint   # 两道门禁一起跑（检查点/CI 用这一条）
 
 # 3b. 老仓库第一次接手：先看整体情况，不要急着修
 python scripts/journal.py snapshot --entries 12    # 最近 12 篇各自做到哪（只读）

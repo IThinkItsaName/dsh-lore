@@ -171,7 +171,7 @@ python <skill>/scripts/journal.py new --title "第三轮用户访谈结论" --it
 # 收尾：更新状态 → 抽经验 → 过门禁
 python <skill>/scripts/journal.py status --set "核对=抽样 30 条全部通过" --date
 python <skill>/scripts/journal.py lesson add --volume 02-verification.md --source 42 --text "…"
-python <skill>/scripts/journal.py check --strict && python <skill>/scripts/journal.py lint --strict
+python <skill>/scripts/journal.py check --strict --lint   # 结构 + 内容，两道门禁一次跑完
 ```
 
 ## 目录结构
@@ -235,7 +235,8 @@ python <skill>/scripts/journal.py check --strict && python <skill>/scripts/journ
 
 它和工作记录是互补的：准则管"怎么做事"，worklog 管"把做过的事留下来"。
 两者的验证口径是**同一套** —— 准则第 7 条说的"证据"就是记录里的验证小节，门禁就是
-`journal.py check --strict` / `lint --strict`。
+`journal.py check --strict` 与 `lint --strict`（一条命令跑两道：`check --strict --lint`；
+为什么默认不合并见 `skills/project-work-log/references/commands.md`）。
 
 ### 与原始文档相比改了什么
 

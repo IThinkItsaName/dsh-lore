@@ -271,6 +271,7 @@ python scripts/journal.py prune                                           # 冷�
 
 # —— 可校验：两道门禁（有 ERROR 退出码 1）——
 python scripts/journal.py check --strict        # 结构：标题/日期/验证/死链/漏索引/状态/来源/目标表（可选文件）
+python scripts/journal.py check --strict --lint  # 上面那道 + 下面那道，一次跑完（检查点/CI 用这条）
 python scripts/journal.py lint --strict         # 内容：占位符/空小节/结论无可核对信息/含糊措辞
 python scripts/journal.py check --legacy ""     # 全按新格式判（不给就是宽松起步：旧记录只报 info）
 
@@ -298,7 +299,7 @@ python scripts/journal.py promote suggest                                   # �
 自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全 + 新/旧布局 + 精细度档位 + 两种命名 + 渐进原则 + snapshot + 项目配置文件 + 目标表 + 全局记忆；**断言数以脚本实际输出为准**，全绿即通过）。
 
 > 典型接手动作：`brief` → `snapshot` → `search` → `show` → 需要细节才 `read` 那一个文件。
-> 典型收尾动作：`new --insert` → 补正文 → `status` → `lesson add` → `check --strict` && `lint --strict`。
+> 典型收尾动作：`new --insert` → 补正文 → `status` → `lesson add` → `check --strict --lint`（两道门禁一起跑；为什么默认不合并见 [references/commands.md](references/commands.md)）。
 
 ## 没有 Python 怎么办（降级路径）
 

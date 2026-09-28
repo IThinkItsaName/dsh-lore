@@ -1012,6 +1012,95 @@ def fmt_ledger(files: list[str], status: str = "2026-09-06", mode: str | None = 
     return head + f"{nl}## 当前状态（{status}）{nl}{nl}{fields}"
 
 
+def gate_phase(parent: str) -> None:
+    """`check --lint`：两道门禁能并成一次运行，而**默认不合并**。
+
+    这一节的起因是一次真实的漏检：本工作区自己的容器攒了 7 条 lint ERROR 没人看见，
+    因为发版清单里只写了 `check`。修法不是"让 check 默认带上 lint"——九个真实语料实测，
+    那会把今天全绿的项目当场变红（`dsh_from_github` 7 → 94 条、`3_param_block` 0 → 30 条）。
+    所以并进来的是**选项**，而"另一道门存在"这件事必须在 check 通过时说出来。
+
+    断言分四组：前提（两门各自独立成立）、合并（发现与退出码都并进来）、
+    提示（只在通过且没跑 lint 时出现）、以及合并的两处易错点（去重与降级下标）。
+    """
+    root = os.path.join(parent, "gates")
+    os.makedirs(os.path.join(root, CONTAINER))
+    # 0001 干净；0002 结构没问题，但小节下面直接接子标题 —— 只有内容门禁看得见。
+    write(os.path.join(root, CONTAINER, "0001-clean.md"), entry("0001", "干净", "2026-09-06"))
+    write(os.path.join(root, CONTAINER, "0002-hollow.md"),
+          entry("0002", "空心", "2026-09-06") + "\n## 五、补充\n\n### 子节\n\n- 有内容。\n")
+    write(os.path.join(root, CONTAINER, "README.md"),
+          fmt_ledger(["0001-clean.md", "0002-hollow.md"]))
+
+    # 1) 前提：结构门禁过、内容门禁不过 ------------------------------------
+    r = run(root, "check", "--strict", "--quiet")
+    ok(r.returncode == 0, "gates: the fixture passes the structure gate alone", r.stdout + r.stderr)
+    r = run(root, "lint", "--strict", "--quiet")
+    ok(r.returncode != 0 and "空小节" in r.stdout,
+       "gates: and fails the content gate alone", r.stdout)
+
+    # 2) 合并：发现与退出码都并进同一次运行 ---------------------------------
+    r = run(root, "check", "--strict", "--quiet", "--lint")
+    ok(r.returncode != 0, "gates: check --lint takes the content gate's verdict", r.stdout)
+    ok("空小节" in r.stdout, "gates: check --lint prints the content finding", r.stdout)
+    r = run(root, "check", "--strict", "--quiet")
+    ok("空小节" not in r.stdout,
+       "gates: without --lint the content gate stays out (the default is unchanged)", r.stdout)
+
+    # 3) 干净容器：一起跑也不许报错（防"合并即误报"）-------------------------
+    clean = os.path.join(parent, "gatesclean")
+    os.makedirs(os.path.join(clean, CONTAINER))
+    write(os.path.join(clean, CONTAINER, "0001-clean.md"), entry("0001", "干净", "2026-09-06"))
+    write(os.path.join(clean, CONTAINER, "README.md"), fmt_ledger(["0001-clean.md"]))
+    r = run(clean, "check", "--strict", "--quiet", "--lint")
+    ok(r.returncode == 0, "gates: a clean container passes both gates in one run", r.stdout + r.stderr)
+
+    # 4) 提示：只在「结构门禁通过」且「没跑 --lint」且「不是 --quiet」时出现 ----
+    r = run(clean, "check", "--strict")
+    ok("--lint" in r.stdout, "gates: a passing check points at the second gate", r.stdout)
+    r = run(clean, "check", "--strict", "--quiet")
+    ok("--lint" not in r.stdout, "gates: --quiet silences the pointer", r.stdout)
+    r = run(clean, "check", "--strict", "--lint")
+    ok("另一道" not in r.stdout,
+       "gates: --lint does not point at the gate it just ran", r.stdout)
+
+    # 5) 结构发现不许被合并挤掉 --------------------------------------------
+    both = os.path.join(parent, "gatesboth")
+    os.makedirs(os.path.join(both, CONTAINER))
+    write(os.path.join(both, CONTAINER, "0001-both.md"),
+          entry("0001", "两门都错", "2026-09-06").replace("## 四、验证", "[死链](nope.md)\n\n## 四、验证")
+          + "\n## 五、补充\n\n### 子节\n\n- 有内容。\n")
+    write(os.path.join(both, CONTAINER, "README.md"), fmt_ledger(["0001-both.md"]))
+    r = run(both, "check", "--strict", "--quiet", "--lint")
+    ok("死链" in r.stdout and "空小节" in r.stdout,
+       "gates: --lint keeps the structure findings next to the content ones", r.stdout)
+
+    # 6) 同一件事两门都报时只留一条 ----------------------------------------
+    # 容器不存在是最典型的：两门各自都会报同一句话，文案一字不差才会去重。
+    missing = os.path.join(parent, "gatesmissing")
+    os.makedirs(missing)
+    r = run(missing, "check", "--strict", "--quiet", "--lint")
+    ok(r.stdout.count("找不到记录容器") == 1,
+       "gates: a finding both gates report is listed once, not twice", r.stdout)
+
+    # 7) 渐进原则穿得过合并（`legacy_rows` 存的是行号，合并后必须换算）-------
+    # 用「验证小节没有可核对的内容」这条：它是**格式类**规则，旧记录才降级。
+    # （「结论没有可核对的信息」不降级——内容含糊不随记录新旧改变，这是有意的，
+    #  别拿它当夹具，否则测的是另一件事。）
+    legacy = os.path.join(parent, "gateslegacy")
+    os.makedirs(os.path.join(legacy, CONTAINER))
+    write(os.path.join(legacy, CONTAINER, "0001-thin.md"),
+          "# 0001 · 验证很薄\n\n日期：2026-09-06\n迭代：-\n结论：见正文（1 处）。\n\n"
+          "## 四、验证\n\n- 结果：测试通过\n")
+    write(os.path.join(legacy, CONTAINER, "README.md"), fmt_ledger(["0001-thin.md"]))
+    r = run(legacy, "check", "--strict", "--quiet", "--lint")
+    ok(r.returncode != 0 and "验证小节" in r.stdout,
+       "gates: a thin verify section reaches check --lint", r.stdout)
+    r = run(legacy, "check", "--strict", "--quiet", "--lint", "--legacy", "*")
+    ok(r.returncode == 0,
+       "gates: the gradual rule survives the merge (a legacy finding stays info)", r.stdout + r.stderr)
+
+
 def format_phase(parent: str) -> None:
     """两种命名 + 放宽后的格式 + 实质验证 + 渐进原则 + `snapshot`。
 
@@ -2461,6 +2550,9 @@ def main() -> int:
 
         # 两种命名 + 放宽后的格式 + 实质验证 + 渐进原则 + snapshot -------------
         format_phase(tmp)
+
+        # 两道门禁：check --lint 会合并，默认不合并 ---------------------------
+        gate_phase(tmp)
 
         # 项目配置文件（<容器>/.config.json）---------------------------------
         config_phase(tmp)

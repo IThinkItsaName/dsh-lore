@@ -31,6 +31,7 @@ SKILL = os.path.join(WORKSPACE, ".pi", "skills", "project-work-log", "scripts")
 PHASES: dict[str, str] = {
     "memory": "memory_phase",
     "config": "config_phase",
+    "gates": "gate_phase",
 }
 
 # (相, 名字, 原文, 改成, 期望变红的那条断言里的字样)
@@ -311,6 +312,30 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "    if not os.path.isfile(cfg.path):",
      "    if os.path.isfile(cfg.path):",
      "config: a missing config file is not an error"),
+
+    # ── gates：两道门禁（`check --lint` 合并 / 默认不合并 / 提示 / 合并的两处易错点）──
+    # 这一相的核心不变量：**默认判决不变，合并只在显式要求时发生**，且合并后
+    # 去重与降级下标都不能坏。下面几条各破坏它的一面。
+    ("gates", "check --lint 不再合并内容门禁",
+     "        if args.lint:\n            rep.merge(",
+     "        if False:\n            rep.merge(",
+     "gates: check --lint takes the content gate's verdict"),
+    ("gates", "结构门禁通过时不再提第二道门",
+     '        print("（这是结构门禁。内容质量是另一道：加 `--lint` 一起跑，或单跑 `lint`）")',
+     "        pass",
+     "gates: a passing check points at the second gate"),
+    ("gates", "提示连 `--quiet` 都不认",
+     '    if not args.lint and code == 0 and not getattr(args, "quiet", False):',
+     "    if not args.lint and code == 0:",
+     "gates: --quiet silences the pointer"),
+    ("gates", "合并时不再去重（同一件事报两遍）",
+     "            if row in self._seen:",
+     "            if False:",
+     "gates: a finding both gates report is listed once, not twice"),
+    ("gates", "合并时丢掉降级下标（渐进原则静默失效）",
+     "            if i in other.legacy_rows:\n                self.legacy_rows.add(len(self.rows) - 1)",
+     "            if False:\n                self.legacy_rows.add(len(self.rows) - 1)",
+     "gates: the gradual rule survives the merge (a legacy finding stays info)"),
 ]
 
 

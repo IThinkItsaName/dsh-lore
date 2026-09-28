@@ -105,7 +105,7 @@ git push origin v0.5.0
 - [ ] `git tag --sort=-v:refname | head -4` 确认新 tag 在列表里且指向预期提交
 - [ ] 从 tag 拉一份到临时目录，跑一次 `npm run test:plugin` 与 `npm test`：
       **验证发布物本身完整**，而不是验证工作树
-- [ ] 若插件已装进某个 profile，硬刷新页面（必要时重启 DSH）看设置页与技能是否正常
+- [ ] 若插件已装进某个 profile，硬刷新页面（必要时重启 DSH）看配置卡片与技能是否正常
 - [ ] 在 `work_log/` 写一条记录：这一版发了什么、验证到什么程度、有没有未覆盖的
 
 ## 常见坑（都真发生过）
@@ -116,6 +116,8 @@ git push origin v0.5.0
 | `_package.py --check` 只报 `__pycache__` | 刚在**副本**目录里跑过自测（`npm test` 或 `skills/.../\_selftest.py`）。它是派生文件、不该随包发（实测过一次：包里躺着一个 398 KB 的陈旧 `.pyc`），同步一下即可清掉 |
 | 门禁在开发者机器上变红 | harness 读了真实设置文件或真实记忆根；夹具必须写到系统临时目录 |
 | 页面改了没效果 | 客户端半边由 `__ModuleLoader__` 按页会话缓存，**要硬刷新**（`Ctrl+Shift+R`） |
-| 设置页改了没反应 | 那个键是**装载期**读的（见 `SETTINGS.md` 的「改完需重启」）；或该字段只在一处声明却没被读 |
+| 配置卡片整页不出现 | 客户端按 schema 字段集认领 namespace：`FORM_FIELDS` 与 `lib/index.js` 的 `Config` 字段集漂移就会认领失败（**静默**）。`tests/audit-client-runtime.mjs` 会对账这两边 |
+| 在卡片上改完没写进 profile | 那个宿主没有 `configEditor`（headless）—— 配置退回插件自己的 `settings.json`，而**没有程序写它**，那时应手工编辑；卡片底部的「设置位置」一行会说明当前是哪一种 |
+| 卡片改了没反应 | 那个键是**装载期**读的（见 `SETTINGS.md` 的「改完需重启」）；只有 `memoryInjectIndex` / `memoryPersonalSearchable` 是即时生效的 |
 | 版本审计失败 | `package.json` 的 `version` 与 tag / CHANGELOG 不一致；三处要同时改 |
 | 新加的随包技能当场查不到 | 插件自带技能在**插件挂载时**注册；新文件要**重启宿主**才登记（放进 `<DSH_HOME>/skills/` 的则会被文件系统 provider 活查发现） |

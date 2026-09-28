@@ -6,7 +6,7 @@
 | 细节 | 在哪 |
 |---|---|
 | 记录格式、精细度档位、`check`/`lint` 判定 | [worklog-spec.md](worklog-spec.md) |
-| 设置页的三个页签、每个字段的归属、写回通路 | [settings-spec.md](settings-spec.md) |
+| 配置卡片的三个页签、每个字段的归属、写回通路 | [settings-spec.md](settings-spec.md) |
 | 全局记忆的目录、来源分档、索引、`dream`、`inbox` | [memory-spec.md](memory-spec.md) |
 | `目标.md` 的两层表 | [goals-spec.md](goals-spec.md) |
 
@@ -19,11 +19,10 @@
                  ↓ 引擎是 journal.py（stdlib only）
 ② 记忆层    $DSH_HOME/memory/          跨工作区事实 —— 在**所有**工作区之外
                  ↓ 写：CLI ／ 读：插件工具
-③ 运行时层  lib/index.js（宿主半边）     provider ／ 工具 ／ 注入 ／ 设置路由
-            lib/client.js（浏览器半边）  设置页
+③ 运行时层  lib/index.js（宿主半边）     provider ／ 工具 ／ 注入 ／ 只读状态端点
+            lib/client.js（浏览器半边）  插件页上的配置卡片
                  ↓
-④ 配置层    Config.volatile()          官方通路
-            settings.json              设置页写的文件
+④ 配置层    Config.volatile()          官方通路（profile patch；headless 退回 settings.json）
 ```
 
 **依赖只能向下**：技能层不知道 DSH 存在；记忆层不知道插件存在（它只是文件）；
@@ -46,25 +45,30 @@
 
 ## 三、设置的两个面，以及谁说了算
 
-优先级（`settings-spec.md` 已定义，这里记它的**理由**）：
+**2026-09-29 起，配置只有一个事实源：宿主的设置通道。** 分层是宿主的：
 
 ```
-设置文件（设置页写的）  >  row config（cordis.patch.yml）  >  内置默认
+profile patch（用户层，卡片写这里）  >  本包的行配置  >  内置默认
 ```
 
-**为什么是"文件赢"而不是"row 赢"**：bundle 补丁里写死了 `guidelinesEnabled` /
-`guidelinesLanguage` / `skillDir` / `guidelinesDir` 四个键。如果 row 赢，**设置页改什么都无效**。
+**没有 `configEditor` 的宿主**（headless）退回插件自己的文件，此时是插件自己合：
 
-**`Config` 与 `settings.json` 的关系**：`Config` 是**通路**（让宿主的设置投影与服务认识这些
-字段），`settings.json` 是**落点**（用户实际改的值）。两者都合法，且**不冲突**，因为
-`mergeSettings()` 让文件覆盖 row —— 而 `Config` 的默认值正是 row 那一层的来源。
+```
+settings.json（手工编辑）  >  row config（cordis.patch.yml）  >  内置默认
+```
 
-> **要守住的一条**：**新增字段时只挑一个家。** 要么进 `Config`（则它必须同时出现在设置页
-> 的可写面里），要么只进 `settings.json`。**两边都声明、但只有一边被读**，就会造出
-> "改了没反应"的那类问题——本项目已经栽过两次。
->
-> 判定方式：若一个字段在 `Config` 里声明，它在 `KNOWN_CONFIG_KEYS` 或 `STORED_ONLY_KEYS`
-> 里也必须在场，且 `tests/audit-settings.mjs` 会比对两个面。
+**为什么第二种里"文件赢"而不是"row 赢"**：bundle 补丁里写死了 `guidelinesEnabled` /
+`guidelinesLanguage` / `skillDir` / `guidelinesDir` 四个键。如果 row 赢，那个文件就是死的。
+
+**`Config` 与 `settings.json` 的关系（已变）**：`Config` 是**唯一**的声明处 ——
+字段必须先在那里声明，才有官方通道可走。`settings.json` 只是**没有
+`configEditor` 的宿主的退路**，不是第二个声明处。
+
+> **要守住的一条**：**新增字段时只挑一个家。** 一个可配置字段必须先进 `Config`
+> 并标 `.volatile()`（否则官方通道看不见它），同时它的名字必须出现在客户端
+> `lib/client.js` 的 `FORM_FIELDS` 里 —— 否则卡片**认领不到**自己的 namespace，
+> 整页静默消失。`tests/audit-client-runtime.mjs` 从 `lib/index.js` 的源码重新解析
+> `Config` 的 `.volatile()` 字段与 `FORM_FIELDS` 对账。
 
 ## 四、注入：两套接口，按**易变性**分工
 

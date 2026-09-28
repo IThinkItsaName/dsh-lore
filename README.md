@@ -97,16 +97,20 @@ echo /tmp/worklog-trace.log > <包>/lib/.trace
 | 配置项 | 默认 | 作用 |
 |---|---|---|
 | `skillDir` | `skills/project-work-log` | 工作记录技能 bundle 目录（相对本包根目录或绝对路径） |
-| `skillFile` | `SKILL.md` | bundle 内的指令文件名 |
+| `skillFile` | `SKILL.md` | bundle 内的指令文件名（**只能在 `cordis.patch.yml` 里给**，卡片没有它的控件） |
 | `modelInvocable` | `true` | 是否允许模型侧目录 / `skill` 工具加载 |
 | `userInvocable` | `true` | 是否允许人侧入口加载 |
 | `verbose` | `false` | 挂载时每个技能打一行日志 |
 | `guidelinesEnabled` | `true` | 是否同时提供 `reliability-guidelines` |
 | `guidelinesDir` | `skills/reliability-guidelines` | 准则 bundle 目录 |
 | `guidelinesLanguage` | `'zh'` | `'zh'` 或 `'en'`（取不到就回落中文） |
+| `memoryEnabled` | `true` | 全局记忆总开关（关掉后索引不注入、记忆工具不出现） |
+| `memoryInjectIndex` | `true` | 默认把记忆索引注入提示词（用时现读） |
+| `memoryPersonalSearchable` | `false` | 个人目录是否可被检索（用时现读） |
 
-> **改语言/关掉准则**：这三个字段写在 `<profile>/cordis.patch.yml` 里按 id 覆盖即可
-> （profile 补丁在所有 bundle 层之后应用，所以能盖住包内默认值）：
+> **改语言/关掉准则**：直接在本插件的**配置卡片**上改（插件页 → 工作记录），
+> 或写进 `<profile>/cordis.patch.yml` 里按 id 覆盖（profile 补丁在所有 bundle 层之后
+> 应用，所以能盖住包内默认值）：
 >
 > ```yaml
 > - id: dsh-worklog
@@ -115,17 +119,13 @@ echo /tmp/worklog-trace.log > <包>/lib/.trace
 >     guidelinesLanguage: 'en'
 > ```
 >
-> 没有做成界面开关，是因为**树外插件导出不了 `Config`**（见下一段），
-> 而没有 schema 就没有可渲染的设置表单。
+> ⚠ **这些字段现在有 schema 校验**：本插件导出 `Config`（11 个字段全带 `.volatile()`），
+> 所以官方配置通道认识它们，写回前由宿主校验一次。
 >
-> ⚠ **本插件故意不导出 `Config`**，所以上面的字段**没有 schema 校验**：值由插件自己做类型兜底
-> （类型不对就用默认值），认不出的键会在日志里 warn 一行。
->
-> 原因是硬约束：插件装进 profile 后，`import` 是按**它自己的真实路径**解析的，而
-> `@deepseek-ai/schemastery` 只存在于应用的 `app.asar` 里 —— 树外插件**根本 import 不到它**。
-> 一在模块顶层 import 它，整个模块就加载失败（实测：`ERR_MODULE_NOT_FOUND`，DSH 报 `failed to import`）。
-> 与其带一份自己的 schemastery（版本要跟宿主对齐，很容易漂），不如不要这个可选能力，
-> 换来**零依赖、放哪都能加载**。
+> > **本文早先写过「本插件故意不导出 `Config`，因为树外插件根本 import 不到
+> > `@deepseek-ai/schemastery`」——那条已被推翻，见 §支持矩阵上方的 peerDependencies 一段。**
+> > 正确的条件是把宿主包声明成 `peerDependencies`（本包已声明）；
+> > 详细经过见 `work_log/0016` 与 `0022`。
 
 ### pi
 
@@ -330,7 +330,7 @@ npm run audit           # preaudit：端到端——宿主将会 import 什么
 出现在 `peerDependencies` 里时**才走拦截、把它解析到宿主自己那一份；否则退回原生 Node 解析，
 而在链接包内部与 profile 目录下都解析不到（实测 `MODULE_NOT_FOUND`）。
 
-后果不是"少一个字段"，是**条目 `inactive`、插件整体消失**（技能与设置页一起）。
+后果不是"少一个字段"，是**条目 `inactive`、插件整体消失**（技能与配置卡片一起）。
 本次修的就是这个：`lib/index.js` 现在 import `schemastery` 与 `dsh-tools`，而这两个名字此前没声明。
 
 依据：宿主文档 `@deepseek-ai/dsh-app-boot/README.zh.md`「链接目录」一节（peer 包名命中才用运行时包）、

@@ -1,9 +1,18 @@
 # 设置规格
 
-> **状态**：设置页与 `journal.py config` 都已实现；§二已按实现结果更新
-> （两个分页、三个项目级键不再提供控件）。§三 保留原设计，但加了现状说明。
+> **状态**：设置界面与 `journal.py config` 都已实现。
+>
+> **2026-09-29 的两次改动（本规格的 §二/§四/§五 已按结果校正）**：
+> 1. **事实源换成 profile patch**（`work_log/0039` 的 A1）：有 `configEditor` 的宿主以
+>    `<profile>/cordis.patch.yml` 为准，写回由宿主校验；headless 仍读插件自己的文件。
+> 2. **界面换成官方配置卡片**（`work_log/0040` 的 A2+A3）：客户端半边注册进
+>    **`plugins.item`**（插件页条目）而不再是设置页的 `settings.section`；
+>    读写走 `ctx.configForms`，自建 HTTP 路由**只剩一个只读状态端点**。
+>    分页也从两个变成**三个**（技能 / 记忆 / 高级）—— 记忆那三个键此前在规格里根本
+>    没被登记。
 >
 > 前置结论来自对 DSH 插件机制的实测，不是推测；无法确认的地方都标了「**未确认**」。
+> **被推翻过的结论留在原处并标明推翻**（见 §五 末尾与 §六.5）——抹掉它们会让下一个人重踩。
 
 ## 零、为什么要有两个设置面
 
@@ -102,18 +111,23 @@
 `journal.py mode` 读写的是前者（台账）；`.config.json` 的 `mode` 只提供**初始值**。
 用户在项目里显式切过档之后，台账就是权威。
 
-## 二、插件设置页
+## 二、插件配置卡片
 
-### 两个分页：技能 / 其他
+> **2026-09-29 起**：界面是**插件页上的一张卡片**（槽位 `plugins.item`），
+> 不再是设置页的分区。理由见 `SETTINGS.md` §「配置界面」：这一页管的是插件自己的
+> 配置，归属就在插件条目下面，也与官方那几个宿主侧插件的配置页同构。
 
-界面用宿主的 `SegmentedTabs` 分两页，默认停在「技能」。它**只渲染标签栏，面板由
+### 三个分页：技能 / 记忆 / 高级
+
+界面用宿主的 `SegmentedTabs` 分三页，默认停在「技能」。它**只渲染标签栏，面板由
 调用方持有** —— 面板自己带 `role="tabpanel"`、自己的 `id`，以及指回对应标签页的
 `aria-labelledby`；一次只渲染被选中的那一个。
 
 | 分页 | 装什么 |
 |---|---|
 | **技能** | `guidelinesEnabled`、`guidelinesLanguage`，以及收在「路径」折叠区里的 `skillDir` / `guidelinesDir` |
-| **其他** | `verbose`、`modelInvocable`、`userInvocable` |
+| **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable`，外加一个只读的「当前状态」折叠区 |
+| **高级** | `verbose`、`modelInvocable`、`userInvocable` |
 
 ### 能改什么
 
@@ -123,20 +137,24 @@
 | `guidelinesLanguage` | 分段控件：中文 / English | 中文 | 技能 | **插件**（挂载时） |
 | `skillDir` | 文本框 | 包内默认 | 技能 › 路径（默认收起） | **插件**（挂载时） |
 | `guidelinesDir` | 文本框 | 包内默认 | 技能 › 路径（默认收起） | **插件**（挂载时） |
-| `verbose` | 开关 | 关 | 其他 | **插件**（挂载时） |
-| `modelInvocable` | 开关 | 开 | 其他 | **插件**（挂载时） |
-| `userInvocable` | 开关 | 开 | 其他 | **插件**（挂载时） |
-| ~~`container`~~ | — | `work_log` | **界面不再提供** | **`journal.py`** —— 插件只存不读 |
-| ~~`lessons`~~ | — | `lessons` | **界面不再提供** | **`journal.py`** —— 插件只存不读 |
-| ~~`mode`~~ | — | `full` | **界面不再提供** | **`journal.py`** —— 插件只存不读 |
+| `memoryEnabled` | 开关 | 开 | 记忆 | **插件**（挂载时） |
+| `memoryInjectIndex` | 开关 | 开 | 记忆 | **插件**（用时现读） |
+| `memoryPersonalSearchable` | 开关 | 关 | 记忆 | **插件**（用时现读） |
+| `verbose` | 开关 | 关 | 高级 | **插件**（挂载时） |
+| `modelInvocable` | 开关 | 开 | 高级 | **插件**（挂载时） |
+| `userInvocable` | 开关 | 开 | 高级 | **插件**（挂载时） |
+| `skillFile` | — | `SKILL.md` | **界面不提供控件** | **插件**（挂载时）—— 只由行配置给 |
+| ~~`container`~~ | — | `work_log` | **界面不提供** | **`journal.py`** —— 插件不读 |
+| ~~`lessons`~~ | — | `lessons` | **界面不提供** | **`journal.py`** —— 插件不读 |
+| ~~`mode`~~ | — | `full` | **界面不提供** | **`journal.py`** —— 插件不读 |
 
-`verbose` / `modelInvocable` / `userInvocable` 一直由 `effectiveSettings()` 读取，
-但在此之前**页面上没有任何控件**，等于设不了；现在每个都有控件与一句说明。
+**记忆那三个键此前没有登记在规格里** —— 这是规格与实际的一处遗漏，2026-09-29 补上。
+它们都由 `apply()`/工具调用读取，`memoryEnabled` 是装载期，另两个用时现读。
 
-**最后三行是项目级设置**，不是插件设置。它们仍然存在插件设置文件里、路由也仍然用
-`projectDefaults` 回报它们（`appliedByPlugin: false`），但**界面不再提供控件**：
-它们描述的是某个项目自己的 `<容器>/.config.json`，由 `journal.py config` 改。
-让插件设置页也能改同一件事，正是 §零那条规则要避免的。
+**最后三行是项目级设置**，不是插件设置。它们**不在 `Config` 里**，所以既不进
+profile patch，也没有任何界面展示或提交它们；`projectDefaults()` 仍会解析它们
+（`appliedByPlugin: false`），但那从来不是给页面用的 —— 它的作用是让"存着的项目
+默认值"与"插件设置"不可能被混为一谈（`tests/audit-settings.mjs` 钉着这一点）。
 
 > 实现时这条曾被混起来：`effectiveSettings()` 一度返回全部 11 个键，于是
 > `apply()` 的 options 里带着三个模块从不读的键，而路由把这三个也报成
@@ -161,16 +179,21 @@
    （页脚那句说明保留了这个警告，因为改动它们的地方是 `journal.py config`。）
 4. **`guidelinesLanguage` 只影响准则那份技能**（`worklog` 技能本身是中文写死的）。
 
-### 设置文件的落点与优先级
+### 设置存在哪：两种宿主，两个落点
 
-| | |
-|---|---|
-| 落点 | `<DSH_HOME>/worklog/settings.json`（`$DSH_HOME` 否则 `~/.dsh`；`DSH_WORKLOG_SETTINGS` 可整路径覆盖） |
-| 优先级 | **设置文件 > row config（`cordis.patch.yml`）> 内置默认** |
+| 宿主 | 落点 | 谁写 |
+|---|---|---|
+| 有 `configEditor`（桌面 profile） | `<profile>/cordis.patch.yml` 里我们这个条目的 `config:` 块 | **官方通道**：客户端 `ctx.configForms` → 宿主校验 → `dsh-config-editor` |
+| 没有 `configEditor`（headless、测试夹具） | `<DSH_HOME>/worklog/settings.json`（`$DSH_HOME` 否则 `~/.dsh`；`DSH_WORKLOG_SETTINGS` 可整路径覆盖） | 没有程序写它 —— **手工编辑** |
 
-**文件必须赢，这不是口味问题**：bundle 补丁里写死了 `guidelinesEnabled` /
-`guidelinesLanguage` / `skillDir` / `guidelinesDir` 四个键。如果 row 赢，
-**设置页改什么都无效**。
+**有 editor 时分层由宿主解析**：profile patch（用户层）> 本包行配置 > 内置默认。
+
+**没有 editor 时插件自己合**：`设置文件 > 行配置 > 内置默认`。**文件必须赢，这不是
+口味问题**：bundle 补丁里写死了 `guidelinesEnabled` / `guidelinesLanguage` / `skillDir` /
+`guidelinesDir` 四个键，如果行配置赢，那个文件就是死的。
+
+**旧文件一次性迁进 patch**（四条规矩见 `SETTINGS.md`），然后改名成
+`settings.json.migrated` 留档。
 
 **为什么不放在包旁边**：装进 profile 的是指向 git 工作树的 junction，
 写在那里会弄脏工作树、还容易被误提交；而重装/升级会替换那个目录 ——
@@ -210,10 +233,13 @@
 
 ## 四、界面文案
 
-**先只做中文**，跑通后再补英文。
+**先只做中文**，跑通后再补英文 —— 英文词典现已就位（键集与中文一致，
+`tests/audit-client.mjs` 会对账）。
 
-设置页的导航名走 locale 机制（`label: () => st("nav.label")`），
-而包内 `locale/` 已经就位（`en.json` / `zh-cn.json` / `zh.json`），补英文是同一个机制。
+插件页条目名走 locale 机制（注册声明里的 `label: () => t("title")` thunk +
+`locale: SETTINGS_NS`），卡片上每个字段的文案都从同一份词典取。
+包内 `locale/` 是**另一件事**（插件在插件管理器里的显示名与描述，
+`en.json` / `zh-cn.json` / `zh.json`），与界面词典无关。
 
 ## 五、实现约束（实测得来）
 
@@ -253,6 +279,11 @@ window.__ModuleLoader__.load({
 
 ### 挂载点
 
+> **已被取代（2026-09-29）**：下面这段是**旧**设计（设置页分区）。现在的挂载点是
+> 插件页的 `plugins.item`，而且**不是写死 namespace 的** —— 卡片按 schema 字段集
+> 认领自己那一行（`ns` 是部署相关的）。现行写法见 `lib/client.js` 的 `apply()`。
+> 旧写法留在这里，是因为"当初为什么那么挂"与"后来为什么换"是两条不同的信息。
+
 ```js
 ctx.slots.inject("settings.section", () => ctx.slots.register({
   name: "settings.section",
@@ -284,15 +315,20 @@ DisclosureRow({ icon, title, open, expandable, onToggle, …, children? })
 > 这解释了 `dsh-status-rotator` 的 259 KB：它自带了整套 CSS。**我们不必重蹈** ——
 > 用官方组件就自动跟着主题与语言走。
 
-### 配置存取 —— 节点半边起路由
+### 配置存取 —— 现在走官方通道，路由只读
 
-浏览器端碰不到文件系统，所以由**节点半边**把配置服务出去：
+> **已被取代（2026-09-29）**：这一段原本是"节点半边起路由"的完整设计。现在
+> **配置的读写走 `ctx.configForms`**（宿主自己的设置通道），HTTP 上只剩一个
+> **只读状态端点** `GET /plugins/dsh-worklog/status.json`，用来报记忆规模与
+> "设置落在哪"。下面关于路由的两个坑**仍然成立**，只是现在只有那一个只读端点还用它。
+
+浏览器端碰不到文件系统，所以由**节点半边**把运行时状态服务出去：
 
 ```js
 ws = ctx.get("webServer")            // 可选服务：用 ctx.get，不要写进 inject
 routeDisposer = ws.register({
   kind: "exact",
-  path: "/plugins/dsh-worklog/settings.json",
+  path: "/plugins/dsh-worklog/status.json",
   handler: (req, res) => { … },      // 标准 Node http handler
 })
 return () => routeDisposer()          // 必须交回 disposer
@@ -307,16 +343,29 @@ return () => routeDisposer()          // 必须交回 disposer
    这样没有 Web 服务器的 DSH 构建也不会让插件挂掉。
 
 `WebRoute = { kind: 'exact'|'prefix', path, handler: (req, res) => void|Promise<void> }`。
-请求体用 `for await (const chunk of req)` 读，并设上限。
 
-这解释了为什么以前认为的"硬障碍"不成立 —— 我们一直没法导出 `Config`
-（树外插件解析不到 `@deepseek-ai/schemastery`），但**那条路本来就不必走**。
+**这个端点不接受写**：`GET`/`HEAD` 以外一律 405。原因见 `SETTINGS.md`：
+配置已经有一个事实源，再开一个写入口就是本项目按缺陷处理的那类东西。
+（旧设计里"请求体用 `for await (const chunk of req)` 读，并设上限"因此不再适用 ——
+没有请求体要读了。）
+
+**旧结论已作废**：这一段原先接着写「这解释了为什么以前认为的"硬障碍"不成立 ——
+我们一直没法导出 `Config`（树外插件解析不到 `@deepseek-ai/schemastery`），
+但**那条路本来就不必走**」。前半句**被推翻**（`Config` 是能导出的，条件是声明
+peerDependencies），后半句"不必走"也只是当年的权宜 —— 现在正是走那条路。
+见 §六.5 的更正。
 
 ### 验收限制（必须说清）
 
-**设置页是浏览器里的 React，实现者看不到它。** 能机械验证的是：
+**配置卡片是浏览器里的 React，实现者看不到它。** 能机械验证的是：
 语法合法、`exports`/`files`/`dsh.client` 齐全、`require` 的每个 specifier 都在那 9 项里、
-节点侧路由的 GET/PUT 行为、以及节点半边原有行为不回归。
+状态端点的行为、以及节点半边原有行为不回归。
+
+> **2026-09-29 补**：客户端这一面的机械验证**比这段写的时候强得多**了。
+> `tests/audit-client-runtime.mjs` 用桩 `window.__ModuleLoader__` + 自制 React hook
+> 运行时**真的把卡片挂起来跑**：认领 namespace（含对抗性输入）、开关写出的 mutation
+> 形状、路径框"输入不写/失焦才写"、被拒写入的提示与回退、状态读取失败时的降级，
+> 全都断言得到（152 条）。仍属于"只能由人看"的只剩**排版与视觉**。
 
 **渲染效果只能由人刷新页面确认。** 所以按"最小可用先行"推进：
 先只做 `guidelinesEnabled` + `guidelinesLanguage` 两个控件，跑通再加别的。
@@ -393,9 +442,14 @@ export function apply(ctx) { … }
 所以浏览器半边与我们节点半边的 `lib/index.js` **是同一个形状** ——
 都是 `export const inject` + `export function apply(ctx)`。
 
-### 6.4 浏览器端怎么读写配置 —— 已确认
+### 6.4 浏览器端怎么读写配置 —— **已按 2026-09-29 的实现更正**
 
-**用 `ctx.get("webServer")` 注册自己的路由**（见 §五「配置存取」）。服务契约：
+**配置读写现在走官方的 `ctx.configForms`**：客户端从槽位注册的 `inject` 面拿到
+宿主给的表单控制器（`getSnapshot` / `subscribe` / `set` / `unset` / `mutate`），
+**不自己发 HTTP**。宿主的写回路径由 `dsh-config-editor` 落到 profile patch。
+
+**HTTP 只剩一个只读状态端点**（`ctx.get("webServer")` 注册，见 §五「配置存取」）。
+服务契约未变：
 
 ```ts
 register(route: WebRoute): () => void
@@ -409,12 +463,27 @@ WebRoute = { kind: 'exact'|'prefix', path: string,
 > 至此 §六 四条**全部确认**。剩下的只是"第一次真跑会不会撞到签名细节" ——
 > 所以仍按"最小可用先行"推进。
 
+### 6.5 「树外插件导不出 `Config`」—— **这条结论是错的**
+
+`docs/plugin-spec.md` 与本文早先都写过：树外插件解析不到 `@deepseek-ai/schemastery`
+（它只在 `app.asar` 里），所以 `Config` 导不出来，配置只能自建通道。
+
+**它是拿"手放目录"测出来的** —— 量错了对象。装进 profile 的插件由宿主按自己的
+锚点解析依赖，`Config` 照常工作；条件是把宿主包声明成 **`peerDependencies`**
+（不声明时链接安装下会 `MODULE_NOT_FOUND`，那是另一回事，见 `work_log/0021`）。
+
+实测终点（`work_log/0022`、`0031`）：`Config.listConfigs{name:"dsh-worklog"}` →
+`schema`，11 个字段全带 `x-cordis.volatile: true`。
+教训写在 `work_log/0016`：**一条错误结论会被固化进门禁与文档，并且很难再被发现**。
+
 ## 七、实现顺序
 
 1. ~~**项目配置文件 + `journal.py`**~~ —— **已实现**（`config` 子命令；自测 288/288；
    三个真实语料的 `check --strict` 前后完全一致）
-2. **插件设置页** —— 先做一个最小可用的（一个开关 + 一个下拉），确认能注册、
-   能存取、能显示，再加别的
+2. ~~**插件配置界面** —— 先做一个最小可用的（一个开关 + 一个下拉），确认能注册、
+   能存取、能显示，再加别的~~ —— **已实现**，并且走完了一条更长的路：
+   自建设置页 → 换事实源到 profile patch → 换成官方 `configForms` 驱动的插件页卡片
+   （`work_log/0038`、`0039`、`0040`）。
 
 > 第一次真跑仍可能撞到意外（`ctx.slots.inject` 的签名细节、`ctx.effect` 的清理语义）。
 > 上面的结论来自**读源码，不是实跑** —— 所以第 2 步按"最小可用先行"推进。

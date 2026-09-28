@@ -1,7 +1,6 @@
 # 插件设置
 
-本文记录 **DSH 插件半边**（`lib/`）的设置面。它是 `README.md` 之外新增的一份说明，
-因为实现里出现了两个必须被写下来的东西：设置文件的位置，以及两个环境变量。
+本文记录 **DSH 插件半边**（`lib/`）的设置面：设置存在哪、谁能编辑、什么时候生效。
 
 项目的配置（`<容器>/.config.json`）不在这里 —— 它是 `journal.py` 的事，
 见 [docs/settings-spec.md](docs/settings-spec.md) 第一节。
@@ -10,26 +9,26 @@
 
 | 设置面 | 管什么 | 存哪 | 改完何时生效 |
 |---|---|---|---|
-| **插件设置页 / 官方配置表单** | 插件自身的装载行为 | **profile 的 `cordis.patch.yml`**（没有 `configEditor` 的宿主退回 `<DSH_HOME>/worklog/settings.json`） | 需重启 DSH |
+| **本插件的配置卡片**（插件页） | 插件自身的装载行为 | **profile 的 `cordis.patch.yml`**；没有 `configEditor` 的宿主退回 `<DSH_HOME>/worklog/settings.json` | 见「改完需重启到底是不是硬限制」 |
 | **项目配置文件** | `journal.py` 的行为 | `<容器>/.config.json` | 立即生效 |
 
-**这条规则现在是硬边界，没有例外。** 设置页曾经收集三个项目侧默认值
+**这条规则是硬边界，没有例外。** 卡片曾经收集三个项目侧默认值
 （`container` / `lessons` / `mode`）并给它们标上「插件不读」；那一组已经整个撤掉 ——
-见下面的「项目侧默认值：存着，但不提供控件」。文档里仍留着这套键的名字，
-是因为节点半边仍然存它们、也仍然在路由里回报它们。
+见下面的「项目侧默认值：不提供控件」。文档里仍留着这三个键的名字，是因为
+`projectDefaults()` 仍会解析它们（供别处引用），只是**没有任何界面再展示或提交它们**。
 
+## 配置存在哪：profile patch 是**正式位置**（2026-09-29 起）
 
-## 设置存在哪：profile patch 是**正式位置**（2026-09-29 起）
-
-插件现在导出 `Config`（10 个字段全带 `.volatile()`），所以设置归**宿主**管：
+插件导出 `Config`（**11 个**字段，全部 `.volatile()`），所以设置归**宿主**管：
 
 | 宿主 | 存哪 | 谁写 |
 |---|---|---|
-| 有 `configEditor`（桌面 profile 都是） | `<profile>/cordis.patch.yml` 里我们这个条目的 `config:` 块 | 官方配置表单、本插件设置页，**都走 `configEditor.edit()`** |
-| 没有 `configEditor`（headless、测试夹具） | `<DSH_HOME>/worklog/settings.json` | 本插件设置页自己写（老路径，**保留**：没有 editor 的宿主没别处可放） |
+| 有 `configEditor`（桌面 profile 都是） | `<profile>/cordis.patch.yml` 里我们这个条目的 `config:` 块 | **官方通道**：客户端 `ctx.configForms` 的 `set`/`unset` → 宿主校验后由 `dsh-config-editor` 落盘 |
+| 没有 `configEditor`（headless、测试夹具） | `<DSH_HOME>/worklog/settings.json` | **没有程序写它** —— 手工编辑（headless 的正当路径，不是待删的兼容层） |
 
-**为什么换**：`profile patch` 是 DSH 里所有设置面共用的一处，换过去之后**别的界面也认识这些字段**
-（官方 Plugins 卡片直接渲染），而不是只有本插件那一页知道。
+**为什么换**：profile patch 是 DSH 里所有设置面共用的一处。换过去之后别的界面也认识这些
+字段，写回也由宿主校验（`configEditor` 拿 `Config` 校验一次 mutation 才落盘），
+而不是靠插件自己写文件。
 
 **一次性迁移**：升上来的第一版会在 `apply()` 时发现旧 `settings.json` 有值、而 profile 里没写我们这些键，
 就用官方通道把它写进 patch，然后把旧文件改名成 `settings.json.migrated` 留档。四条规矩：
@@ -38,9 +37,6 @@
 2. **profile 已经写了我们的键 → 不覆盖**（显式配置永远优先），只把旧文件归档；
 3. 写 profile 失败 → **文件原样留着**并告警（半迁移比不迁移更糟：下一次挂载会两个副本都不敢信）；
 4. 没有可寻址的条目 → 告警并继续读旧文件。
-
-**改完仍需重启**：这些是**装载期**读的选项（技能挂哪个目录、guidelines 开不开、verbose 等），
-所以官方表单与本插件页面都只是"把值写对"，生效在下次挂载 —— 两个界面都这么写，没有哪个在偷偷承诺即时生效。
 
 ## 装/改之后要**硬刷新页面**
 
@@ -91,11 +87,11 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 |---|---|
 | `dsh-status-rotator` | 建 `<style>` 后加一行 `el.setAttribute('data-plugin', 'dsh-status-rotator')`。宿主注释写着"预标记的标签会带上它"，说明**打标记是受支持的做法** |
 | 宿主 | `claimStyles` 的时间窗太宽：应只认领**工厂体运行期间**新增的标签，而不是"当下所有无主" |
-| 本插件 | **保持零 `<style>` 注入** —— 这是能做的最干净的防御，因为不注入就没有可被误认领的东西 |
+| 本插件 | **保持零 `<style>` 注入** —— 这是能做的最干净的一种防御，因为不注入就没有可被误认领的东西 |
 
 **不要**在本插件里扫描并"修复"别人的标签：那要写死别的插件的 id，脆弱且越界。
 
-## 设置文件在哪
+## 设置文件在哪（headless 那条路）
 
 ```
 <DSH_HOME>/worklog/settings.json
@@ -105,17 +101,23 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 - **不放在包目录里**：profile 用 `link:` 把包链到一份 checkout 上，包目录通常就是
   一个 git 工作树 —— 往那儿写会弄脏工作树，还容易被误提交；而升级/重装会替换那个
   目录，恰恰是最不希望丢设置的时候。
-- 文件是**可选**的：不存在就是"全用默认值"，第一次保存时创建。
-- 文件坏掉（JSON 不合法、不是对象）**永不致命**：报出来，退回内置默认，技能照常挂载。
-- 手写进去的、插件不认识的键**会被保留**，不会被一次保存悄悄删掉。
+- 文件是**可选**的：不存在就是"全用 row config 与内置默认值"。
+- 文件坏掉（JSON 不合法、不是对象）**永不致命**：报出来（状态接口的 `error`、宿主日志一条 warn），
+  退回 row config 与内置默认，技能照常挂载。
+- 手写进去的、插件不认识的键会被忽略但**不会被删** —— 插件现在不写这个文件了。
 
 ### 优先级
 
+**有 `configEditor` 时，分层是宿主的**：profile patch（用户层）> 本包的行配置 > 内置默认，
+由 DSH 自己解析完交给 `apply()`。
+
+**没有 `configEditor` 时**（headless），插件自己合：
+
 ```
-设置文件（设置页写的）  >  行配置（cordis.patch.yml 的 config）  >  内置默认
+设置文件  >  行配置（cordis.patch.yml 的 config）  >  内置默认
 ```
 
-设置文件必须压过行配置，否则设置页是死的：本包的补丁行把
+设置文件必须压过行配置，否则那个文件是死的：本包的补丁行把
 `guidelinesEnabled` / `guidelinesLanguage` / `skillDir` / `guidelinesDir`
 都写死了，行配置永远有值。
 
@@ -130,121 +132,136 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 
 ## 已知配置键
 
-插件行配置（`cordis.patch.yml` 的 `config`）与设置文件共用同一套键名。
-`skillFile` 只能在行配置里给：设置页没有它的控件，保存也不会把它删掉。
-表里其余每个键在设置页上都有控件 —— `verbose` / `modelInvocable` / `userInvocable`
-在「其他」页，另外四个在「技能」页。
+`Config` 声明了 **11 个**字段，全部 `.volatile()`。卡片上有控件的是其中 **10 个**：
+`skillFile` 只能由行配置给（卡片没有它的控件，所以任何界面都不会把它改掉或删掉）。
 
-| 键 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `skillDir` | string | `skills/project-work-log` | 工作记录技能目录。相对路径从**包根**算起，绝对路径原样使用。 |
-| `skillFile` | string | `SKILL.md` | 技能目录里的指令文件名。仅行配置。 |
-| `modelInvocable` | boolean | `true` | 是否允许模型自动调用这两个技能。 |
-| `userInvocable` | boolean | `true` | 是否允许用户手动调用。 |
-| `verbose` | boolean | `false` | 装载时多打一行日志。 |
-| `guidelinesEnabled` | boolean | `true` | 是否登记 `reliability-guidelines` 技能。 |
-| `guidelinesDir` | string | `skills/reliability-guidelines` | 准则技能目录，解析规则同 `skillDir`。 |
-| `guidelinesLanguage` | `'zh'` / `'en'` | `'zh'` | 只影响准则那一份技能；`project-work-log` 本身固定是中文。 |
+| 键 | 类型 | 默认 | 卡片上 | 说明 |
+|---|---|---|---|---|
+| `skillDir` | string | `skills/project-work-log` | 「技能 › 路径」 | 工作记录技能目录。相对路径从**包根**算起，绝对路径原样使用。 |
+| `skillFile` | string | `SKILL.md` | **无控件** | 技能目录里的指令文件名。仅行配置。 |
+| `modelInvocable` | boolean | `true` | 「高级」 | 是否允许模型自动调用这两个技能。 |
+| `userInvocable` | boolean | `true` | 「高级」 | 是否允许用户手动调用。 |
+| `verbose` | boolean | `false` | 「高级」 | 装载时多打一行日志。 |
+| `guidelinesEnabled` | boolean | `true` | 「技能」 | 是否登记 `reliability-guidelines` 技能。 |
+| `guidelinesDir` | string | `skills/reliability-guidelines` | 「技能 › 路径」 | 准则技能目录，解析规则同 `skillDir`。 |
+| `guidelinesLanguage` | `'zh'` / `'en'` | `'zh'` | 「技能」 | 只影响准则那一份技能；`project-work-log` 本身固定是中文。 |
+| `memoryEnabled` | boolean | `true` | 「记忆」 | 全局记忆总开关：关闭后索引不注入、`worklog_memory` 工具也不注册。 |
+| `memoryInjectIndex` | boolean | `true` | 「记忆」 | 是否默认把索引段注入提示词（用时现读）。 |
+| `memoryPersonalSearchable` | boolean | `false` | 「记忆」 | 个人目录是否可被检索（用时现读）。 |
 
-设置页还收集过三个**项目侧默认值** —— `container`（`work_log`）、
-`lessons`（`lessons`）、`mode`（`full`）。**它们仍然存在设置文件里、路由也仍然回报
-它们，但设置页不再为它们提供控件** —— 见下一节。
-
-## 项目侧默认值：存着，但不提供控件
+## 项目侧默认值：不提供控件
 
 `container` / `lessons` / `mode` 是**项目级**设置：它们描述的是某个项目自己的
 `<容器>/.config.json`，那个文件由 `journal.py` 读、由 `journal.py config` 改。
 
-- **仍然存着**：三个键留在插件设置文件里（`knownSettingsKeys()` 里仍然校验它们），
-  路由的 `GET` / `POST` 响应里也仍然有 `projectDefaults`，带
-  `appliedByPlugin: false`，与 `effective`（插件真正读的键）分开报告。
-  这样任何读这层接口的人都无法把它们当成"插件会这么做"。
-- **不再提供控件**：设置页既不显示它们，也不把它们发回服务端（请求体只有七个
-  装载键）。路由按补丁合并（`sanitizeSettings` 把请求体并进磁盘上的文档），
-  所以文件里已有的值原样保留，一次保存不会抹掉它们。
-- **为什么不提供**：它们归项目的 `.config.json` 管。让插件设置页也能改同一件事，
+- **不在 `Config` 里**：它们不是插件配置，所以既不进 profile patch，也不出现在卡片上。
+- **不再有控件**：卡片既不显示它们，也不提交它们。
+  `projectDefaults()` 仍然会解析这三个键（带 `appliedByPlugin: false`），
+  任何读到它的代码都无法把它们当成"插件会这么做"。
+- **为什么不提供**：它们归项目的 `.config.json` 管。让插件配置卡片也能改同一件事，
   正是上面那条「两个设置面不许管同一件事」要避免的。曾经的做法是显示它们、
   标一句「插件不读」—— 那仍然是把项目级的东西摆在插件设置页上。
 - **已经在跑的项目不会被追溯改变**：`journal.py` 始终只读项目文件，不去问插件。
 
-设置页底部留了一句兼容性说明，把这些键指到 `journal.py config`，但页面上没有
-任何控件与它们对应（`tests/audit-client-runtime.mjs` 按结构断言这一点）。
+卡片底部留了一句兼容性说明，把这些键指到 `journal.py config`，但页面上**没有任何控件**
+与它们对应（`tests/audit-client-runtime.mjs` 按结构断言这一点：断言的是"没有名为容器 /
+经验目录 / 精细度的控件"，不是"页面文本里没有这些字"—— 兼容性说明里本来就有）。
 
-## 设置页
+## 配置界面：插件页上的一张卡片
 
-设置页是客户端半边 `lib/client.js`，挂在设置面板的 `settings.section` 槽上
-（id `dsh-worklog`，导航名走 locale）。它不能碰文件系统，所以通过节点半边起的
-一个 HTTP 端点读写设置文件：
+界面是客户端半边 `lib/client.js`。它**注册进 `plugins.item`**（插件页的条目），
+与官方那几个宿主侧插件的配置卡片同构（`web-search` / `shell` / `subagent` / `agent-loop`
+各有一份伴生客户端包）。它**不是**设置页的一个分区：管的是插件自己的配置，
+归属就在插件条目下面。
 
-```
-GET  /plugins/dsh-worklog/settings.json   读；回报三组东西：`settings`（磁盘上的文档）、
-                                          `effective`（插件真正读取的键）、
-                                          `projectDefaults`（只存不读的项目默认值，
-                                          带 `appliedByPlugin: false`；页面**忽略**它）
-POST /plugins/dsh-worklog/settings.json   写；整份表单，逐字段校验，返回同一组字段
-```
+### 认领自己的 namespace：按 schema，不按 id
 
-### 两个分页：技能 / 其他
+宿主给每个带 `.volatile()` 字段的插件投影一份"设置命名空间"，id 是
+`entry.options.id` —— 那是**部署相关**的：本机是 `include:dsh-worklog`，换个挂法就变。
+所以卡片不写死 id，而是**按字段集认领**：投影 schema 只含 `.volatile()` 字段，
+于是"我们那 11 个名字齐了"就是指纹（`lib/client.js` 的 `FORM_FIELDS`）。
 
-界面用宿主的 `SegmentedTabs`（`@deepseek-ai/dsh-client-ui-primitives`）分两页，
+- 认领不到 → **什么都不注册**（宁可这一页不出现，也不要在别人的命名空间上挂一张会写错地方的卡片）。
+- 命名空间消失 → 卡片撤下；再出现 → 重新挂上。
+- **`FORM_FIELDS` 与 `Config` 会漂移**：少一个字段就永远认领不到、卡片静默消失。
+  所以 `tests/audit-client-runtime.mjs` 从 `lib/index.js` 的源码里重新解析一遍
+  `Config` 的 `.volatile()` 字段，与 `FORM_FIELDS` 对账。
+
+### 写回：`ctx.configForms`
+
+卡片通过槽位注册的 `inject` 面拿到宿主给的表单控制器（`getSnapshot` / `subscribe` /
+`set` / `unset`），**不自己发 HTTP**。三条后果值得知道：
+
+1. **显示的是宿主的真实值**：开关读的是生效值；路径框读的是**用户层**
+   （profile patch）里的值，留空即"用下层的值"，右侧出现「已覆盖 / 恢复默认」。
+2. **被拒绝的写入会说出来**：`set`/`unset` 返回"宿主有没有接受"，被拒（含 revision
+   冲突）时卡片显示失败原因，并**把输入框退回真实存着的值** —— 不留"看着保存成功了"的假象。
+3. **路径框是敲完才写**：输入过程只更新草稿，失焦或回车才提交。逐字符写会让宿主把
+   patch 文件原子重写几十遍（以及编辑器的备份文件）。
+
+### 三个页签
+
+界面用宿主的 `SegmentedTabs`（`@deepseek-ai/dsh-client-ui-primitives`）分三页，
 默认停在「技能」。它**只渲染标签栏，面板由页面自己给** —— 所以面板那边自己带
 `role="tabpanel"`、自己的 `id`，以及指回对应标签页的 `aria-labelledby`；
 一次只渲染被选中的那一个。
 
-| 分页 | 装什么 |
+| 页签 | 装什么 |
 |---|---|
 | **技能** | `guidelinesEnabled`（开关）、`guidelinesLanguage`（中文 / English 分段控件），以及收在「路径」折叠区里的 `skillDir` 与 `guidelinesDir` |
-| **其他** | `verbose`、`modelInvocable`、`userInvocable` —— 三个开关 |
+| **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable` 三个开关；再收一个「当前状态」折叠区（只读，见下） |
+| **高级** | `verbose`、`modelInvocable`、`userInvocable` —— 三个开关 |
 
-后三个键一直由 `effectiveSettings()` 读取，但在此之前设置页**没有任何控件**能设它们；
-现在每个都配了一句说明。
-
-「路径」用 `DisclosureRow`（默认收起）：两个技能目录是装载参数，只是不常改。
-收起时那两行**不在 DOM 里**（该组件只在 `open` 时渲染 children）。
+「路径」与「当前状态」用 `DisclosureRow`（默认收起）：前者是装载参数（不常改），
+后者不属于这一页的语义但很有用（"我到底登记没登记"）。收起时内容**不在渲染树里**。
 
 中文文案是完整的；英文词典也已就位（键集与中文一致，
 `tests/audit-client.mjs` 会核对）。
 
+### 只读状态端点
+
+卡片上唯一还会发 HTTP 的地方，是「记忆」页的只读状态块：
+
+```
+GET /plugins/dsh-worklog/status.json   → { source, path, memory, error }
+```
+
+- `source` / `path`：设置**落在哪**（profile patch，还是插件自己的文件）。卡片把它显示出来 ——
+  官方通道下用户否则只能猜该改哪个文件。
+- `memory`：记忆系统的规模（已登记工作区 / 待收 / 索引字数）。读不到就是 `null`，
+  卡片显示"未读取"而**不是 0**："0 个工作区"和"没读"是两个不同的断言。
+- `error`：只在文件那条路上有意义（文件坏了会在这里报出来）。
+- **没有写动词**：`GET`/`HEAD` 以外一律 405（`allow: GET, HEAD`）。配置不再走 HTTP ——
+  留着 POST 就是给同一个事实源开第二个写入口，那正是本项目按缺陷处理的那类东西。
+
+这个端点**是可选的**：没有 web server 的宿主照样挂载技能；状态读不到时卡片照常可编辑，
+只在状态块里说"读不到"。
+
 ## 「改完需重启」到底是不是硬限制
 
-**先纠正本文早先的一个错说法。** 这里原来说「树外插件解析不到 `@deepseek-ai/schemastery`，
-所以导不出 `Config`，所以改完必须重启」。**那是推断，不是实测，而且已被反证。**
+**本节早先有一个错说法**：原来说「树外插件解析不到 `@deepseek-ai/schemastery`，
+所以导不出 `Config`，所以改完必须重启」。**那是推断，不是实测，而且已被反证** ——
+正确的做法是把它声明成 peerDependency（见 `work_log/0016`、`0021`、`0022`）。
+反过来，本文件更早还写过「完全没有 `Config` 导出」，同样作废。
 
-实测（活体 `Config` inspect）：
+现在的实测状态：
 
-| 插件 | Config 状态 |
+| 事实 | 状态 |
 |---|---|
-| `dsh-ds-balance` | **`schema`** —— 完整的 JSON Schema，字段带 `x-cordis.volatile: true` |
-| `dsh-status-rotator` | `absent` |
-| `dsh-worklog`（我们） | `absent` |
+| `Config` 被宿主认成 `schema`（字段带 `x-cordis.volatile: true`） | **已验证**（活体 `Config.listConfigs{name:"dsh-worklog"}`） |
+| 值能被官方通道写进 profile patch 并读回 | **已验证**（`apply()` 的选项、卡片显示的值同源） |
+| 我们的选项**改完即时生效** | **没有**。这些选项是**装载期**读的（技能挂哪个目录、guidelines 开不开、记忆总开关），所以界面按页标明"需重启" |
 
-- `require.resolve('@deepseek-ai/schemastery')` 从 profile 与插件目录**都解析不到** ——
-  **连 `dsh-ds-balance` 自己也解析不到**。
-- 但它把 `@deepseek-ai/schemastery` 声明为 **peerDependency**，且运行时可用。
+**两条读法要分清**：
 
-**结论**：`absent` 是**「没写」而不是「写不了」**。DSH 的 Loader 自己处理这些内建
-specifier，不走 Node 的解析。所以「导不出 `Config`」不是硬限制。
-
-**官方那条不重启的路**（`docs/cordis-tutorial/05-config.zh.md`）：给 `Config` schema
-的字段加 `.volatile()`，值活在 `apply()` 收到的引用里，变更由 `loader/volatile-update`
-事件告知，写回走 `ctx.settings.mutate(id, ops)`，**不重新挂载插件**。
-`dsh-ds-balance` 的 `config-service` 一句话总结：**「不缓存 —— 用户改设置要立刻生效」**。
-
-### 我们现在的两种做法
-
-| 做法 | 适用 | 代价 |
+| 类 | 例 | 改完 |
 |---|---|---|
-| **用时现读**：`apply()` 不缓存，需要时再读设置文件 | **任何"读了就用"的开关**（如记忆的三个默认项） | 零。`readStoredSettings()` 本来就是现读，只要别把它缓存进 `apply()` |
-| **schema + `.volatile()`** | 必须在 `apply()` 时交给注册表的项（如技能目录） | 要导出 `Config`、要实测那条路通不通 |
+| 装载期读的（`apply()` 里读一次就交给注册表） | `skillDir`、`guidelinesEnabled`、`verbose`、`modelInvocable`、`userInvocable`、`memoryEnabled` | 需重启 DSH |
+| 用时现读的（每次工具调用现读） | `memoryInjectIndex`、`memoryPersonalSearchable` | 即时生效 |
 
-**所以「改完需重启」只对第二类成立**，而它是否真的需要重启，取决于 Loader 会不会
-重跑 `apply()` —— 这一点**尚未实测**。在那之前，界面按项标明重启要求，**不再整页一句**。
-
-**尚未兑现的待办**：我打算用一个一次性探针插件实测「树外插件能否导出 `Config`
-并被认成 `schema`」。计划里记着这件事；**在它验完之前，本文不再声称任何一边是硬限制。**
-
-`dsh-status-rotator` 走的是第三条路：客户端半边 + 自建 HTTP 路由，**不导出 schema**。
-那是可行的（它就在跑），只是拿不到 volatile 的即时生效。
+**未兑现的待办**：要真正做到"全部即时"，需要监听 `loader/volatile-update` 并重建
+provider（当前 `mount()` 丢掉了 `registerProvider` 的 disposer，重建前必须先收集，
+否则同层重名会让注册表抛错）。台账里记着这件事，**在那之前本文不声称任何一项即时生效**。
 
 ## 界面样式走宿主的设计令牌
 

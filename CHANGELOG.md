@@ -8,6 +8,42 @@
 
 ## [未发布]
 
+### 变更（界面 + 通道）：配置改走官方通道，界面搬到插件页的一张卡片
+
+- **界面换了落脚点**：自建的 36 KB 设置页（注册进设置页的 `settings.section`）换成
+  **插件页条目上的一张卡片**（`plugins.item`），与官方那几个宿主侧插件的配置页同构
+  （web-search / shell / subagent / agent-loop 各有一份伴生客户端包）。
+  理由：这一页管的是插件自己的配置，归属就在插件条目下面。
+- **读写走官方通道**：卡片通过槽位注入的 `form` 控制器（`getSnapshot` / `subscribe` /
+  `set` / `unset`）读写，写回由 `dsh-config-editor` 落到 profile patch。
+  **不写死 namespace**：宿主给的 `ns` 是部署相关的（本机是 `include:dsh-worklog`），
+  所以卡片按**投影 schema 的字段集**认领自己那一行；认领不到就**什么都不注册**。
+- **HTTP 只剩一个只读状态端点** `GET /plugins/dsh-worklog/status.json`
+  （`{source, path, memory, error}`）：写动词一律 405。配置不再经 HTTP 写 ——
+  留着 POST 等于给同一个事实源开第二个写入口。
+  随之删掉失去意义的代码：`writeStoredSettings` / `sanitizeSettings` / `coerceSetting` /
+  `readBody` 与请求体上限。
+- **三个页签（技能 / 记忆 / 高级）搬进卡片**，按页的重启提示保留，「记忆」页多一个只读状态块
+  （记忆规模 + 设置落在哪）。路径字段改成**失焦/回车才写**：逐字符写会让宿主的 patch 文件
+  被原子重写几十遍。
+- **被拒绝或失败的写入会说出来**：控制器返回"宿主有没有接受"，被拒（含 revision 冲突）时
+  卡片显示原因，并把输入框退回真实存着的值 —— 不留"看着保存成功了"的假象。
+- **测试**：`audit-client-runtime.mjs` 从 117 条涨到 **152 条**（用桩 `configForms` 真的把卡片
+  挂起来跑：认领 namespace 的对抗性输入、写出的 mutation 形状、输入不写/失焦才写、
+  失败提示与回退、状态读取失败时的降级）；`audit-settings.mjs` 从 104 条压到 **80 条**
+  （写路径的断言随功能一起删除，新增"没有写动词""不再是第二个事实源""记忆读数是 null 而不是 0"）。
+
+### 文档修正：三处与代码相反的说法
+
+- `lib/index.js` 顶部曾写「**故意不导出 `Config`**、没有 `node:` 之外的 import」——
+  同一个文件里就 `import z from '@deepseek-ai/schemastery'` 并 `export const Config`。
+  这是 `work_log/0016` 那条错误结论的残留（拿"手放目录"量出来的）。
+- `README.md` 曾写「树外插件根本 import 不到 `schemastery`，所以不导出 `Config`」，
+  而同一份 README 下面又写着「修法就是声明 peerDependencies」—— 两段互相矛盾。
+- `docs/settings-spec.md` 曾以「那条路本来就不必走」收尾；现已更正并保留原文与撤回说明。
+- `SETTINGS.md` 重写：**三个**页签（原文写两个）、**11 个** `Config` 字段
+  （原文写 10 个，且漏掉记忆那三个键）。
+
 ### 变更（行为）：插件设置改存 profile patch，旧设置文件自动迁移
 
 - 插件导出的 `Config`（字段全带 `.volatile()`）现在**真正被当作事实源**：有 `configEditor` 的宿主

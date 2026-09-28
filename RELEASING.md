@@ -59,7 +59,16 @@ python skills/project-work-log/scripts/journal.py check --strict --quiet "<每�
 
 ```bash
 python skills/project-work-log/scripts/journal.py check --strict "<该工作区根>"
+python skills/project-work-log/scripts/journal.py lint --strict "<该工作区根>"
 ```
+
+> **`lint` 这一行是 2026-09-28 补的**：那个工作区自己的容器里有 **7 条** lint ERROR
+> 一直没人看见，根因不是"写错了"而是**从没有人跑过它**——`check` 与 `lint` 是两道门，
+> 前者只管结构（章节、死链、编号），后者管内容质量（结论有没有可核对的信息、有没有空小节）。
+> 只跑一道，另一道的错就会一直攒着。
+>
+> 加这一行的代价：**记录写得含糊会让发版变红**。这正是想要的——否则"结论：已完成"
+> 这种句子会一直混过去，而它恰好是本项目记录里最没用的那种。
 
 ## 版本号与 CHANGELOG
 

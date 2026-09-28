@@ -13,10 +13,16 @@
 //
 // Deliberately NOT attempted: asserting that every identifier named in a comment
 // still exists. Measured false-positive rate was unusable — comments legitimately
-// name things that must NOT exist here (`Config`, which the plugin cannot export),
+// name things that must NOT exist here (`createRequire`, absent from an ESM entry),
 // names from the registry it depends on (`waitWithAbort`), and plain language or
 // keywords (`skill`, `runtime`, `undefined`, `async`). A check that noisy teaches
 // people to ignore it.
+//
+// The document list below is **the whole of `docs/` plus the three root documents**.
+// It used to name only `docs/worklog-spec.md`, which left three design specs —
+// including the memory spec — outside every gate. That is exactly the shape of
+// failure this repository keeps meeting: an authority nobody checks drifts from the
+// code, and the drift is found by a human reading carefully rather than by a test.
 //
 //   node tests/audit-doc-consistency.mjs
 import { readFileSync } from 'node:fs'
@@ -31,16 +37,31 @@ const ok = (condition, label, detail = '') => {
 const ENTRY = `${PKG}/lib/index.js`
 const src = readFileSync(ENTRY, 'utf8')
 
-// What counts as "the documentation" is the file list below. `SETTINGS.md` is
-// the plugin-settings reference added alongside the settings page; the other three
-// are the pre-existing documents.
+// What counts as "the documentation": every file under `docs/` plus the three root
+// documents. `SETTINGS.md` is the plugin-settings reference added alongside the settings
+// page; the `docs/*-spec.md` files are the design authorities, and a design authority that
+// no gate reads is a design authority that drifts.
 //
 const DOCS = [
   `${PKG}/README.md`,
   `${PKG}/PUBLISHING.md`,
   `${PKG}/SETTINGS.md`,
   `${PKG}/docs/worklog-spec.md`,
+  `${PKG}/docs/settings-spec.md`,
+  `${PKG}/docs/memory-spec.md`,
+  `${PKG}/docs/goals-spec.md`,
 ]
+// A listed document that has been renamed or deleted must be reported, not silently skipped:
+// reading a missing file as `''` would quietly shrink the surface this audit covers, which is
+// the very failure it exists to prevent.
+for (const file of DOCS) {
+  try {
+    readFileSync(file, 'utf8')
+  } catch {
+    problems.push(`listed document exists: ${file}`)
+    console.log(`FAIL  listed document exists -- ${file}`)
+  }
+}
 const docText = DOCS.map((file) => {
   try { return readFileSync(file, 'utf8') } catch { return '' }
 }).join('\n')

@@ -22,7 +22,7 @@
 // could never change anything.
 //
 //   node tests/audit-settings.mjs
-import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -403,6 +403,124 @@ async function call(method, body) {
     ok(patch.includes(`${key}:`), `the bundle patch still declares ${key}`,
       'the precedence check above is only meaningful while the row states the key')
   }
+}
+
+
+/* ==========================================================================================
+ * The official path: when the host provides `configEditor`, the profile patch is the store.
+ *
+ * Everything above exercises the **fallback** — a host without the editor, where this plugin's
+ * own file is the only place these values can live (a headless profile; the harness itself). Both
+ * paths have to keep working, and they are not the same feature: the fallback is not a shim to
+ * delete later, and the official path is where a desktop profile now keeps its settings.
+ *
+ * What is pinned below, in order: the route reads the config rather than a stale file; a save goes
+ * through `configEditor.edit()` and never touches the file; `apply()` resolves its options from the
+ * config; and a pre-existing settings file is migrated into the profile once — then archived, so
+ * the user's configuration is neither lost nor silently ignored afterwards.
+ * ========================================================================================== */
+
+/** A `configEditor` fake: one addressable entry for this package, plus a recording `edit()`. */
+function fakeEditor(config) {
+  const entry = { options: { id: 'include:dsh-worklog', name: 'dsh-worklog', config } }
+  const calls = []
+  return {
+    entry,
+    calls,
+    documentPath: join(sandbox, 'cordis.patch.yml'),
+    entries: () => [entry],
+    async edit(target, change) {
+      const next = change(structuredClone(config), {})
+      calls.push({ target, next })
+      Object.assign(config, next)
+    },
+  }
+}
+
+{
+  // A stale file must lose to the profile: that is the whole point of moving the store.
+  writeFileSync(settingsPath, JSON.stringify({ guidelinesLanguage: 'zh', mode: 'digest' }), 'utf8')
+  const editor = fakeEditor({ guidelinesLanguage: 'en', verbose: true })
+  const handler = mod.createSettingsRouteHandler(() => {}, { configEditor: editor })
+
+  const getRes = fakeResponse()
+  await handler(fakeRequest('GET'), getRes)
+  const got = JSON.parse(getRes.body)
+  ok(got.source === 'config', 'GET says the config is the source', JSON.stringify(got.source))
+  ok(got.settings.guidelinesLanguage === 'en',
+    'GET reads the profile config, not the stale settings file', JSON.stringify(got.settings))
+  ok(got.effective.guidelinesLanguage === 'en', 'and the effective values follow the config')
+  ok(String(got.path).includes('cordis.patch.yml'),
+    'and it names the patch as the file a write would go to', String(got.path))
+
+  const before = readFileSync(settingsPath, 'utf8')
+  const postRes = fakeResponse()
+  await handler(fakeRequest('POST', JSON.stringify({ guidelinesLanguage: 'zh' })), postRes)
+  ok(postRes.status === 200, 'a save through the official path answers 200', String(postRes.status))
+  ok(editor.calls.length === 1, 'and goes through configEditor.edit exactly once',
+    String(editor.calls.length))
+  ok(editor.calls[0].next.guidelinesLanguage === 'zh',
+    'carrying the new value', JSON.stringify(editor.calls[0].next))
+  ok(readFileSync(settingsPath, 'utf8') === before,
+    'while the plugin\u2019s own settings file is left untouched')
+
+  // `apply()` has to resolve its options from the same place. `verbose` is the observable one:
+  // it is what prints the "serving skill" line at mount.
+  //
+  // The values go in as the **row config** — that is the object the loader hands `apply()`, and the
+  // one this module reads its options from. The editor is the *write* path (and a second view of the
+  // same entry), so it gets the same keys and stays quiet.
+  const archived = `${settingsPath}.migrated`
+  renameSync(settingsPath, archived)          // nothing left to migrate → deterministic mount
+  const logs = []
+  const applyEditor = fakeEditor({ verbose: true, skillDir: 'skills/project-work-log' })
+  mod.apply({
+    logger: {
+      info: (m) => logs.push(['I', String(m)]),
+      warn: (m) => logs.push(['W', String(m)]),
+      error: (m) => logs.push(['E', String(m)]),
+    },
+    skills: { registerProvider: () => () => {} },
+    effect: (callback) => { callback() },
+    configEditor: applyEditor,
+  }, { verbose: true, skillDir: 'skills/project-work-log' })
+  ok(logs.some(([level, message]) => level === 'I' && message.includes('serving skill')),
+    'apply() reads verbose from the profile config', JSON.stringify(logs))
+  ok(!logs.some(([level]) => level === 'E'), 'and logs no error on the official path',
+    JSON.stringify(logs))
+
+  /* ---- migration: a pre-Config settings file is folded into the patch, once ---- */
+  writeFileSync(settingsPath, JSON.stringify({ mode: 'digest', guidelinesLanguage: 'en' }), 'utf8')
+  const moving = fakeEditor({})
+  const outcome = await mod.migrateLegacySettings(moving, () => {})
+  ok(moving.calls.length === 1, 'the legacy file is written into the profile once',
+    String(moving.calls.length))
+  ok(moving.calls[0].next.mode === 'digest' && moving.calls[0].next.guidelinesLanguage === 'en',
+    'with the file\u2019s values', JSON.stringify(moving.calls[0].next))
+  ok(!existsSync(settingsPath) && existsSync(`${settingsPath}.migrated`),
+    'and the file is archived rather than deleted', outcome)
+  const again = await mod.migrateLegacySettings(moving, () => {})
+  ok(moving.calls.length === 1 && again === 'nothing to migrate',
+    'running it again is a no-op', again)
+
+  // A profile that already states a key wins: migration must never overwrite an explicit value.
+  writeFileSync(settingsPath, JSON.stringify({ mode: 'digest' }), 'utf8')
+  const owner = fakeEditor({ mode: 'full' })
+  const owned = await mod.migrateLegacySettings(owner, () => {})
+  ok(owner.calls.length === 0, 'an existing profile value is never overwritten by the file', owned)
+
+  // And a failed write leaves the file exactly where it was: a half-migrated store is worse than
+  // no migration, because the next mount would read neither copy with confidence.
+  writeFileSync(settingsPath, JSON.stringify({ mode: 'digest' }), 'utf8')
+  const broken = fakeEditor({})
+  broken.edit = async () => { throw new Error('profile write failed') }
+  const failed = []
+  const failedOutcome = await mod.migrateLegacySettings(broken, (level, message) => failed.push([level, message]))
+  ok(failedOutcome === 'failed' && existsSync(settingsPath),
+    'a failed migration keeps the file and reports failure', `${failedOutcome} / ${String(existsSync(settingsPath))}`)
+  ok(failed.some(([level, message]) => level === 'warn' && message.includes('could not migrate')),
+    'and warns loudly about it', JSON.stringify(failed))
+  rmSync(settingsPath, { force: true })
 }
 
 rmSync(sandbox, { recursive: true, force: true })

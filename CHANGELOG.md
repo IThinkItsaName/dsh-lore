@@ -8,6 +8,18 @@
 
 ## [未发布]
 
+### 变更（行为）：插件设置改存 profile patch，旧设置文件自动迁移
+
+- 插件导出的 `Config`（字段全带 `.volatile()`）现在**真正被当作事实源**：有 `configEditor` 的宿主
+  把设置存在 `<profile>/cordis.patch.yml` 里我们这个条目的 `config:` 块，官方配置表单与插件设置页
+  **走同一条写路径**（`configEditor.edit()`）—— 别的界面从此也认识这些字段。
+- **没有 `configEditor` 的宿主保留老路径**（`<DSH_HOME>/worklog/settings.json`）：headless profile
+  没别处可放，这不是待删的兼容层。
+- **一次性迁移**：旧 `settings.json` 里的值会被写进 patch，然后把文件改名成 `settings.json.migrated`。
+  profile 已显式写了某个键时**不覆盖**；写失败时**文件原样保留并告警**（半迁移比不迁移更糟）。
+- 路由的响应新增 `source: 'config' | 'file'`，页面因此知道自己在显示哪一处，而不是假设。
+- 仍是**装载期**读的选项：改完需重启 —— 官方表单与插件页面对此说法一致。
+
 ## [未发布]
 
 ### 修复：随包技能不止两个时，`skills/` 里多出来的 bundle 是**惰性**的

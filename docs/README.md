@@ -4,6 +4,10 @@
 `tests/audit-doc-consistency.mjs` 的审计清单里（改名前它只审计 `worklog-spec.md`，
 另外三份——包括记忆规格——不受任何门禁约束，这正是本仓库反复出现的那类失效）。
 
+同一份 harness 现在还管**技能层**的文档：`skills/project-work-log/SKILL.md` 与
+`references/` 下的五份。两套语料按**各自的权威**审计——插件文档对插件（环境变量、配置键），
+技能文档对它描述的那个 CLI（`journal.py` 的子命令与文档互链），详见该 harness 的文件头。
+
 **规格与使用说明的分界**：`docs/` 是给**维护者**看的「为什么这样设计」；
 包根下的 `README.md` / `SETTINGS.md` / `PUBLISHING.md` 是给**使用者**看的「怎么用」。
 两者都要改，但改的理由不同。

@@ -20,7 +20,7 @@
 ② 记忆层    $DSH_HOME/memory/          跨工作区事实 —— 在**所有**工作区之外
                  ↓ 写：CLI ／ 读：插件工具
 ③ 运行时层  lib/index.js（宿主半边）     provider ／ 工具 ／ 注入 ／ 只读状态端点
-            lib/client.js（浏览器半边）  插件页上的配置卡片
+            lib/client.js（浏览器半边）  本 bundle 那一页上的配置卡片
                  ↓
 ④ 配置层    Config.volatile()          官方通路（profile patch；headless 退回 settings.json）
 ```

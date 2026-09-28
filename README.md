@@ -108,7 +108,8 @@ echo /tmp/worklog-trace.log > <包>/lib/.trace
 | `memoryInjectIndex` | `true` | 默认把记忆索引注入提示词（用时现读） |
 | `memoryPersonalSearchable` | `false` | 个人目录是否可被检索（用时现读） |
 
-> **改语言/关掉准则**：直接在本插件的**配置卡片**上改（插件页 → 工作记录），
+> **改语言/关掉准则**：直接在本插件的**配置卡片**上改（插件页 → `dsh-worklog` 这个 bundle
+> 自己的页面 → 描述与行列表之间那一块），
 > 或写进 `<profile>/cordis.patch.yml` 里按 id 覆盖（profile 补丁在所有 bundle 层之后
 > 应用，所以能盖住包内默认值）：
 >

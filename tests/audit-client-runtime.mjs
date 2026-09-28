@@ -564,8 +564,9 @@ function makeUseHook(store) {
   const world = createWorld({ [SERVED_NS]: { value: { guidelinesEnabled: true }, base: {} } })
   clientExports.apply(world.ctx)
 
-  ok(world.bound.join(',') === 'dsh-worklog.settings',
-    'apply() binds exactly one locale namespace', world.bound.join(','))
+  ok(world.bound.length === 0,
+    'apply() binds no t of its own (the slot registration\'s `locale` is what injects it)',
+    world.bound.join(','))
   ok(world.dictionaries.size === 1, 'apply() registers exactly one dictionary set')
   const dicts = world.dictionaries.get('dsh-worklog.settings')
   ok(dicts?.zh !== undefined && dicts?.en !== undefined,
@@ -585,17 +586,21 @@ function makeUseHook(store) {
   world.mirror.publish({ namespaces: [namespaceRow('somebody-else', ['endpoint']), namespaceRow(SERVED_NS, CONFIG_VOLATILE_FIELDS)] })
   ok(world.registered.length === 1, 'once our namespace is served, exactly one card is registered',
     String(world.registered.length))
-  ok(world.injections.length === 1 && world.injections[0].name === 'plugins.item',
-    'the card is injected into the Plugins page slot (plugins.item)', world.injections.map((i) => i.name).join(','))
+  ok(world.injections.length === 1 && world.injections[0].name === 'plugins.bundle.config',
+    'the card goes into the BUNDLE page slot (plugins.bundle.config), not the Official group',
+    world.injections.map((i) => i.name).join(','))
 
   const options = world.registered[0].options
-  ok(options?.name === 'plugins.item', 'the registration names plugins.item', String(options?.name))
-  ok(options?.id === 'dsh-worklog', 'the card id is the package name', String(options?.id))
-  ok(options?.order === 50, 'the card order is 50', String(options?.order))
+  ok(options?.name === 'plugins.bundle.config',
+    'the registration names plugins.bundle.config', String(options?.name))
+  ok(options?.key === 'dsh-worklog',
+    'a keyed slot is addressed by the BUNDLE package name (what the manager looks up)',
+    String(options?.key))
+  ok(options?.id === undefined && options?.order === undefined,
+    'and it carries no id/order: this slot is keyed, not ordered',
+    `id=${String(options?.id)} order=${String(options?.order)}`)
   ok(options?.locale === 'dsh-worklog.settings',
     'the registration declares its locale namespace (this is what injects t)', String(options?.locale))
-  ok(typeof options?.label === 'function', 'label is a thunk (the shell re-evaluates it on locale change)')
-  ok(options?.label() === '工作记录', 'the item label resolves through the dictionary', String(options?.label()))
   ok(typeof world.registered[0].component === 'function',
     'the registration carries a function component', typeof world.registered[0].component)
 
@@ -622,9 +627,13 @@ function makeUseHook(store) {
     'and it comes back when the namespace returns',
     `${world.registered.length} registration(s)`)
 
-  // The surface itself: it must NOT also claim a Settings navigation entry.
+  // The surface itself: it must NOT claim a Settings navigation entry, and it must NOT squat the
+  // Official group either — `plugins.item` is "One OFFICIAL plugin the Plugins page lists in its
+  // Official group", and a bundle's configuration belongs on the bundle's own page.
   ok(world.registered.every((row) => row.options.name !== 'settings.section'),
-    'the client registers no settings.section entry (the surface moved to the Plugins page)')
+    'the client registers no settings.section entry (the settings nav is not our surface)')
+  ok(world.registered.every((row) => row.options.name !== 'plugins.item'),
+    'and it never registers into plugins.item (that slot is the OFFICIAL group, for host-plane plugins)')
 }
 
 /* ===================== 4. the card, mounted and driven ===================== */

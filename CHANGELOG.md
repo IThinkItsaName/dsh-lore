@@ -8,6 +8,23 @@
 
 ## [未发布]
 
+### 修复：卡片挂错了槽位，把自己塞进了插件页的**官方**那一组
+
+- **症状**（用户当场发现）：卡片确实出现了，但它出现在插件页的**官方插件**组里 —— 我们是第三方
+  bundle，不该在那儿。
+- **根因**：挂的是 `plugins.item`。那个槽位的 purpose 原文是
+  *"One **official** plugin the Plugins page lists in its **Official group**"*，
+  它的 catalog 更直接：*"a bundle's configuration belongs in `plugins.bundle.config` or
+  `plugins.row.config` instead"* —— **这句话当时读过却没照做**，选槽位靠的是"哪个官方插件长得像"，
+  不是槽位自己的契约。官方那几个用 `plugins.item` 的是**宿主侧官方插件的伴生包**，不是 bundle。
+- **改成 `plugins.bundle.config`**，`key` = 本包包名：插件管理页按
+  `configured: ledger.bundles.has(openPkg.name)` 寻址，渲染在 bundle 页的描述与行列表之间。
+  同工作区的 `dsh-ds-balance` 与官方 `@deepseek-ai/dsh-experimental-voice-input-bundle` 都在这里。
+- 顺带删掉随槽位失去意义的东西：`id`/`order`/`label`（keyed 槽位只认 `key`）、
+  `locale.bind` 那一行，以及词典里再没人读的 `title`。
+- 真机复验：`plugins.bundle.config` 出现 `{registrant: dsh-worklog, key: dsh-worklog}`；
+  `plugins.item` 回到官方四个。两者都是**热重载**生效，没有刷新页面。
+
 ### 修复：配置卡片在真机上**从未注册过**（判据读的 `schema.properties` 根本不存在）
 
 - **实测**（2026-09-29，插件重新启用后）：宿主半边一切正常 —— 新的只读状态端点返回

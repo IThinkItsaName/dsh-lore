@@ -9,7 +9,7 @@
 
 | 设置面 | 管什么 | 存哪 | 改完何时生效 |
 |---|---|---|---|
-| **本插件的配置卡片**（插件页） | 插件自身的装载行为 | **profile 的 `cordis.patch.yml`**；没有 `configEditor` 的宿主退回 `<DSH_HOME>/worklog/settings.json` | 见「改完需重启到底是不是硬限制」 |
+| **本插件的配置卡片**（插件页 → 本 bundle 的页面） | 插件自身的装载行为 | **profile 的 `cordis.patch.yml`**；没有 `configEditor` 的宿主退回 `<DSH_HOME>/worklog/settings.json` | 见「改完需重启到底是不是硬限制」 |
 | **项目配置文件** | `journal.py` 的行为 | `<容器>/.config.json` | 立即生效 |
 
 **这条规则是硬边界，没有例外。** 卡片曾经收集三个项目侧默认值
@@ -167,12 +167,18 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 与它们对应（`tests/audit-client-runtime.mjs` 按结构断言这一点：断言的是"没有名为容器 /
 经验目录 / 精细度的控件"，不是"页面文本里没有这些字"—— 兼容性说明里本来就有）。
 
-## 配置界面：插件页上的一张卡片
+## 配置界面：**本 bundle 自己那一页**上的一张卡片
 
-界面是客户端半边 `lib/client.js`。它**注册进 `plugins.item`**（插件页的条目），
-与官方那几个宿主侧插件的配置卡片同构（`web-search` / `shell` / `subagent` / `agent-loop`
-各有一份伴生客户端包）。它**不是**设置页的一个分区：管的是插件自己的配置，
-归属就在插件条目下面。
+界面是客户端半边 `lib/client.js`。它注册进 **`plugins.bundle.config`**，`key` = **本包的包名**
+（`dsh-worklog`）—— 插件管理页就是这么寻址的：`configured: ledger.bundles.has(openPkg.name)`，
+渲染在 bundle 页的**描述与行列表之间**。同工作区的 `dsh-ds-balance` 与官方那支
+`@deepseek-ai/dsh-experimental-voice-input-bundle` 都挂在这里。
+
+它**不是**设置页的分区（那属于产品设置），也**不是** `plugins.item` —— 后者是插件页的
+**官方那一组**，槽位说明原文就是 *"One **official** plugin the Plugins page lists in its
+**Official group**"*，它的 catalog 还写着 *"a bundle's configuration belongs in
+`plugins.bundle.config` or `plugins.row.config` instead"*。**我们是 bundle，所以挂在这里。**
+（第一版挂错了 `plugins.item`，于是它出现在官方那一组里；见 `work_log/0043`。）
 
 ### 认领自己的 namespace：按字段集，不按 id
 

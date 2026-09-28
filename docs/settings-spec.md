@@ -6,7 +6,7 @@
 > 1. **事实源换成 profile patch**（`work_log/0039` 的 A1）：有 `configEditor` 的宿主以
 >    `<profile>/cordis.patch.yml` 为准，写回由宿主校验；headless 仍读插件自己的文件。
 > 2. **界面换成官方配置卡片**（`work_log/0040` 的 A2+A3）：客户端半边注册进
->    **`plugins.item`**（插件页条目）而不再是设置页的 `settings.section`；
+>    **`plugins.bundle.config`**（本 bundle 自己那一页）而不再是设置页的 `settings.section`；
 >    读写走 `ctx.configForms`，自建 HTTP 路由**只剩一个只读状态端点**。
 >    分页也从两个变成**三个**（技能 / 记忆 / 高级）—— 记忆那三个键此前在规格里根本
 >    没被登记。
@@ -113,9 +113,11 @@
 
 ## 二、插件配置卡片
 
-> **2026-09-29 起**：界面是**插件页上的一张卡片**（槽位 `plugins.item`），
-> 不再是设置页的分区。理由见 `SETTINGS.md` §「配置界面」：这一页管的是插件自己的
-> 配置，归属就在插件条目下面，也与官方那几个宿主侧插件的配置页同构。
+> **2026-09-29 起**：界面是**本 bundle 自己那一页**上的一张卡片
+> （槽位 `plugins.bundle.config`，`key` = 本包包名），不再是设置页的分区。
+> 理由见 `SETTINGS.md` §「配置界面」：这一页管的是插件自己的配置，归属就在它的 bundle 页上。
+> **不是 `plugins.item`** —— 那是插件页的**官方**组，catalog 明写 "a bundle's configuration
+> belongs in `plugins.bundle.config` or `plugins.row.config` instead"（`work_log/0043`）。
 
 ### 三个分页：技能 / 记忆 / 高级
 
@@ -236,8 +238,8 @@ profile patch，也没有任何界面展示或提交它们；`projectDefaults()`
 **先只做中文**，跑通后再补英文 —— 英文词典现已就位（键集与中文一致，
 `tests/audit-client.mjs` 会对账）。
 
-插件页条目名走 locale 机制（注册声明里的 `label: () => t("title")` thunk +
-`locale: SETTINGS_NS`），卡片上每个字段的文案都从同一份词典取。
+插件页里本 bundle 那一页的显示名走**包内 `locale/`**（`meta.title`）；卡片上每个字段的文案
+从注册声明里的 `locale: SETTINGS_NS` 所指向的那份词典取（keyed 槽位没有 `label` thunk）。
 包内 `locale/` 是**另一件事**（插件在插件管理器里的显示名与描述，
 `en.json` / `zh-cn.json` / `zh.json`），与界面词典无关。
 
@@ -280,8 +282,9 @@ window.__ModuleLoader__.load({
 ### 挂载点
 
 > **已被取代（2026-09-29）**：下面这段是**旧**设计（设置页分区）。现在的挂载点是
-> 插件页的 `plugins.item`，而且**不是写死 namespace 的** —— 卡片按这一行投影出来的
-> **`value`**（生效配置）是否带齐那 11 个字段来认领自己那一行（`ns` 是部署相关的）。
+> **本 bundle 那一页**的 `plugins.bundle.config`（keyed，`key` = 包名），而且**不是写死
+> namespace 的** —— 卡片按这一行投影出来的 **`value`**（生效配置）是否带齐那 11 个字段来认领
+> 自己那一行（`ns` 是部署相关的）。
 > **注意不是 `schema`**：宿主发的是 schemastery 的 `{uid, refs}` 信封、顶层没有
 > `properties`，第一版就是栽在这里（`work_log/0042`）。现行写法见 `lib/client.js` 的 `apply()`。
 > 旧写法留在这里，是因为"当初为什么那么挂"与"后来为什么换"是两条不同的信息。

@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [0.6.0] - 2026-09-29
+
 ### 修复：卡片挂错了槽位，把自己塞进了插件页的**官方**那一组
 
 - **症状**（用户当场发现）：卡片确实出现了，但它出现在插件页的**官方插件**组里 —— 我们是第三方
@@ -120,8 +122,6 @@
   profile 已显式写了某个键时**不覆盖**；写失败时**文件原样保留并告警**（半迁移比不迁移更糟）。
 - 路由的响应新增 `source: 'config' | 'file'`，页面因此知道自己在显示哪一处，而不是假设。
 - 仍是**装载期**读的选项：改完需重启 —— 官方表单与插件页面对此说法一致。
-
-## [未发布]
 
 ### 修复：随包技能不止两个时，`skills/` 里多出来的 bundle 是**惰性**的
 
@@ -906,7 +906,8 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.5.1...HEAD
+[未发布]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.4.0...v0.5.0
 [0.3.1]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.3.0...v0.3.1

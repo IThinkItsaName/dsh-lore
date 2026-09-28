@@ -180,18 +180,46 @@ POST /plugins/dsh-worklog/settings.json   写；整份表单，逐字段校验�
 中文文案是完整的；英文词典也已就位（键集与中文一致，
 `tests/audit-client.mjs` 会核对）。
 
-## 为什么「改完需重启」是硬限制
+## 「改完需重启」到底是不是硬限制
 
-Cordis 官方**是支持不重启改配置的** —— 见 `docs/cordis-tutorial/05-config.zh.md`
-的 volatile 字段：给 `Config` schema 里的字段加 `.volatile()`，用 `.get()` 读，
-字段变化会更新引用并发 `loader/volatile-update`，**不重新挂载插件**。
+**先纠正本文早先的一个错说法。** 这里原来说「树外插件解析不到 `@deepseek-ai/schemastery`，
+所以导不出 `Config`，所以改完必须重启」。**那是推断，不是实测，而且已被反证。**
 
-**但那条路要求插件导出 `Config` schema**，而树外插件解析不到 `@deepseek-ai/schemastery`
-（它在应用的 asar 里）。`tests/run.mjs` 专门断言本插件**不导出 `Config`**，
-所以界面上那句「改完需重启 DSH」不是偷懒，是这条边界的结果。
+实测（活体 `Config` inspect）：
 
-`dsh-status-rotator` 面对同一限制，做法也一样：客户端半边 + 自建 HTTP 路由，
-而不是 schema。
+| 插件 | Config 状态 |
+|---|---|
+| `dsh-ds-balance` | **`schema`** —— 完整的 JSON Schema，字段带 `x-cordis.volatile: true` |
+| `dsh-status-rotator` | `absent` |
+| `dsh-worklog`（我们） | `absent` |
+
+- `require.resolve('@deepseek-ai/schemastery')` 从 profile 与插件目录**都解析不到** ——
+  **连 `dsh-ds-balance` 自己也解析不到**。
+- 但它把 `@deepseek-ai/schemastery` 声明为 **peerDependency**，且运行时可用。
+
+**结论**：`absent` 是**「没写」而不是「写不了」**。DSH 的 Loader 自己处理这些内建
+specifier，不走 Node 的解析。所以「导不出 `Config`」不是硬限制。
+
+**官方那条不重启的路**（`docs/cordis-tutorial/05-config.zh.md`）：给 `Config` schema
+的字段加 `.volatile()`，值活在 `apply()` 收到的引用里，变更由 `loader/volatile-update`
+事件告知，写回走 `ctx.settings.mutate(id, ops)`，**不重新挂载插件**。
+`dsh-ds-balance` 的 `config-service` 一句话总结：**「不缓存 —— 用户改设置要立刻生效」**。
+
+### 我们现在的两种做法
+
+| 做法 | 适用 | 代价 |
+|---|---|---|
+| **用时现读**：`apply()` 不缓存，需要时再读设置文件 | **任何"读了就用"的开关**（如记忆的三个默认项） | 零。`readStoredSettings()` 本来就是现读，只要别把它缓存进 `apply()` |
+| **schema + `.volatile()`** | 必须在 `apply()` 时交给注册表的项（如技能目录） | 要导出 `Config`、要实测那条路通不通 |
+
+**所以「改完需重启」只对第二类成立**，而它是否真的需要重启，取决于 Loader 会不会
+重跑 `apply()` —— 这一点**尚未实测**。在那之前，界面按项标明重启要求，**不再整页一句**。
+
+**尚未兑现的待办**：我打算用一个一次性探针插件实测「树外插件能否导出 `Config`
+并被认成 `schema`」。计划里记着这件事；**在它验完之前，本文不再声称任何一边是硬限制。**
+
+`dsh-status-rotator` 走的是第三条路：客户端半边 + 自建 HTTP 路由，**不导出 schema**。
+那是可行的（它就在跑），只是拿不到 volatile 的即时生效。
 
 ## 界面样式走宿主的设计令牌
 

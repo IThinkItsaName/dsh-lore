@@ -66,7 +66,37 @@ function isPromise(value) {
 ok(typeof mod.name === 'string' && mod.name.length > 0, 'exports a plugin name', String(mod.name))
 ok(Array.isArray(mod.inject) && mod.inject.includes('skills'), 'injects the skills service')
 ok(typeof mod.apply === 'function', 'exports apply()')
-ok(mod.Config === undefined, 'exports NO Config (an out-of-tree plugin cannot build a Schemastery schema)')
+
+/*
+ * `Config` — optional, but if present it must be a real schema.
+ *
+ * This assertion USED to read `mod.Config === undefined` with the reason "an out-of-tree
+ * plugin cannot build a Schemastery schema". That reason was wrong, and it was wrong in a
+ * way that mattered: it was an inference, never measured, and `dsh-ds-balance` disproves it
+ * (live Config inspect reports it as `status: schema`, with all fields marked
+ * `x-cordis.volatile`). `require.resolve('@deepseek-ai/schemastery')` fails for THIS plugin
+ * **and for that one too** — the host's Loader handles those builtin specifiers itself, so
+ * `absent` means "not written", not "cannot be written".
+ *
+ * Asserting the absence would therefore freeze stale knowledge into the gate, and the
+ * gate's own message would then explain itself with a falsehood. What is actually worth
+ * pinning is that a Config, IF one appears, is a validator rather than a plain object —
+ * because the tutorial is explicit that exporting a plain object does NOT work.
+ */
+if (mod.Config === undefined) {
+  ok(true, 'Config is absent (allowed — but see the note in the source)')
+} else {
+  // The tutorial is explicit that exporting a plain object does NOT work, so the one thing
+  // worth pinning here is that whatever appears is not merely a data literal.
+  const plainObject = mod.Config !== null
+    && typeof mod.Config === 'object'
+    && !Array.isArray(mod.Config)
+    && Object.getPrototypeOf(mod.Config) === Object.prototype
+    && typeof mod.Config.parse !== 'function'
+  ok(!plainObject,
+     'an exported Config is a validator, not a plain object',
+     'the tutorial states a plain object does not work as a Config')
+}
 
 /* ------------------------------------------------- frontmatter parsing */
 

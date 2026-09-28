@@ -3833,6 +3833,22 @@ def memory_source_in_index(source: str) -> bool:
     return tier == "record" or tier in MEMORY_SOURCES_IN_INDEX
 
 
+def _looks_like_path(value: str) -> bool:
+    """这个位置参数看起来是不是一个**路径**（而不是一句教训）。
+
+    只用于 `memory add` 的位置参数顺序迁移防呆：判据取"是个已存在的目录，或是个绝对路径"。
+    教训正文几乎不可能长这样，所以误伤面极小；而它要挡的那个错误**是静默的**
+    （`manual:*` 来源用不到根目录，于是旧写法会把路径安静地写成正文）。
+
+    `.` 与空串**不算路径**：那是根目录的默认值，不是用户打进来的路径。
+    这一条必须写死，否则默认值会让判据永远为真（第一版就栽在这里——
+    而且我是拿 `abspath` **之后**的值去判的，任何文本经 abspath 都成了绝对路径）。
+    """
+    if value in ("", "."):
+        return False
+    return os.path.isdir(value) or os.path.isabs(value)
+
+
 def resolve_record_ref(root: str, ref: str) -> tuple[str | None, str]:
     """把一个**工作区内**的记录引用核到真实记录。
 
@@ -4459,7 +4475,18 @@ def cmd_memory_add(args: argparse.Namespace) -> int:
     if not MEMORY_ID_RE.match(eid):
         print(f"ERROR: id `{args.id}` 不合法：只认小写拉丁 / 数字 / 连字符（如 `host-style-claiming`）")
         return 1
-    root = os.path.abspath(args.root)
+    # 防呆要拿**用户原样输入的**两个位置参数去判：`abspath` 之后任何文本都成了绝对路径，
+    # 判据就永远为假（第一版就是这么失效的——命令照旧成功，还把路径写进了记忆）。
+    raw_root, raw_text = args.root, args.text
+    root = os.path.abspath(raw_root)
+    # 迁移防呆：根目录**从本版本起放在正文之前**（与其它命令一致）。
+    # 旧写法 `add "文本" <根>` 在这个顺序下会让 `text` 收到**路径**；而对 `manual:*` 来源
+    # 根目录根本用不到，于是它会安静地成功、把路径写进记忆（实测过）。
+    if _looks_like_path(raw_text) and not _looks_like_path(raw_root):
+        print("ERROR: 看起来你把**根目录**写在了正文之后：`memory add \"文本\" <根>`。")
+        print("       本版本起与其它命令一致，根目录在正文**之前**："
+              "`memory add <根> \"文本\" --source …`（--source 与 --id 照旧）")
+        return 1
     registry = load_registry(memory)
     ok_src, tier, why = resolve_memory_source(root, args.source, registry)
     if not ok_src:
@@ -5342,9 +5369,14 @@ mode 同样只提供**新项目的初始档位**：台账 `## 当前状态` 有 
     p.set_defaults(func=cmd_memory_collect)
 
     p = msub.add_parser("add", help="新增一条记忆（来源必须能分档）")
-    p.add_argument("text", help="一句话教训（症状 → 根因 → 做法）")
+    # 根目录**声明在 text 之前**，与其它命令一致（`add <根> "文本"`）。
+    # argparse 对此形状的处理正好是我们要的：只给一个位置参数时它归 `text`，
+    # 根取默认 `.`（实测三种参数组合）——所以"不带根"的常用写法不会坏。
+    # 反过来写（text 在前）会让根的写法变成 `add "文本" <根>`，与全 CLI 相反；
+    # 整体功能实跑时我就是照"根在前"的直觉写，拿到一个指错方向的报错。
     _add_common(p)
     _add_root(p)
+    p.add_argument("text", help="一句话教训（症状 → 根因 → 做法）")
     _add_memory(p)
     p.add_argument("--source", required=True,
                    help="`<工作区>/wl/NNNN` 或 `wl/NNNN`（本工作区），或 manual:tested / manual:read / manual:inferred")

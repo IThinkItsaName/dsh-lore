@@ -1947,6 +1947,39 @@ def memory_phase(parent: str) -> None:
                  "做法：键里加环境。（`wl/0002`）\n")
     wsB = mem_ws(base, "wsB", "# 01 · 构建与环境\n\n- 无来源的结论不进经验层。\n")
 
+    # 位置参数顺序：根目录在**正文之前**（与全 CLI 一致）-------------------------
+    #
+    # 起因：整体功能实跑时按"根在前"的直觉写，拿到一个指错方向的报错——`memory add` 当时把
+    # `text` 声明在 `root` 之前。改顺序本身有个**静默陷阱**：旧写法下 `text` 收到的是路径，
+    # 而 `manual:*` 来源根本用不到根目录，于是它会安静地成功、把路径写成正文（实测过）。
+    # 所以三条都要钉住，且单独用一个记忆根，免得扰动后面的条目计数。
+    mem2 = os.path.join(base, "mem-order")
+    os.makedirs(mem2)
+
+    def m2(cwd: str, *argv: str) -> subprocess.CompletedProcess:
+        return run(cwd, *argv, "--memory", mem2)
+
+    # ① 根在前是**有效**的：用 `wl/NNNN` 来源逼出根目录的解析（manual 档不看根，测不出来）
+    r = m2(parent, "memory", "add", wsA, "指向本工作区记录的一条。", "--source", "wl/0001",
+           "--id", "root-first")
+    ok(r.returncode == 0,
+       "memory: the root argument comes before the text, and it is honoured", r.stdout + r.stderr)
+    entries = JOURNAL.load_memory_entries(mem2)
+    ok(any(e["id"] == "root-first" and e["body"] == ["指向本工作区记录的一条。"] for e in entries),
+       "memory: the prose lands in the entry, the root does not",
+       str([e for e in entries if e["id"] == "root-first"]))
+    # ② 旧写法（文本在前、根在后）必须被拦下，而不是把路径存成正文
+    r = m2(parent, "memory", "add", "一句教训文本", wsA,
+           "--source", "manual:tested", "--id", "root-last")
+    ok(r.returncode != 0 and "根目录" in r.stdout,
+       "memory: the old order is refused instead of silently storing the path", r.stdout + r.stderr)
+    ok(all(e["id"] != "root-last" for e in JOURNAL.load_memory_entries(mem2)),
+       "memory: and the refused call wrote nothing")
+    # ③ 只给一个路径（把根当成正文）同样拦下，并给出正确写法
+    r = m2(parent, "memory", "add", wsA, "--source", "manual:tested", "--id", "only-a-path")
+    ok(r.returncode != 0 and "正文" in r.stdout,
+       "memory: a bare path as the only positional is refused as well", r.stdout + r.stderr)
+
     # 认不出的来源 → 拒绝
     r = m(wsA, "memory", "add", "来源认不出的东西。", "--source", "wiki:something",
           "--id", "bad-source")

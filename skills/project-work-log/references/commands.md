@@ -20,7 +20,7 @@
 | 大多数顶层命令（`check` / `lint` / `brief` / `snapshot` / `outline` / `show` / `search` / `stats` / `topics` / `export` / `digest` / `retro` / `status` / `mode` / `config` / `todo` / `archive` / `split` / `prune` / `new` / `append` / `dream`） | **第一个位置** | `check --strict <ROOT>` |
 | `index` | 挂在**父级** | `index <ROOT> sync`（不是 `index sync <ROOT>`） |
 | `lesson` | 挂在**父级** | `lesson <ROOT> add --volume …`（不是 `lesson add <ROOT>`） |
-| `memory publish\|collect\|add\|search\|index\|lint\|status` | 挂在**叶子** | `memory lint <ROOT> --strict`；**`add` 例外**：`text` 在前、`ROOT` 在后 —— `memory add "一句话" <ROOT> --source …` |
+| `memory publish\|collect\|add\|search\|index\|lint\|status` | 挂在**叶子** | `memory lint <ROOT> --strict`、`memory add <ROOT> "一句话" --source … --id …`（**根一律在前**） |
 | `inbox put\|list\|sweep\|count` | **没有 `ROOT`**（信箱在记忆侧，用 `--memory`） | `inbox count --memory <MEM>` |
 | `inbox take` | 挂在叶子，且**在条目名之后** | `inbox take <条目名> [<ROOT>]` |
 | `promote suggest` | **没有 `ROOT`**（靠当前目录） | `cd <ROOT> && promote suggest --all` |
@@ -458,7 +458,17 @@ MEMORY  C:\Users\me\.dsh\memory
 ```bash
 python scripts/journal.py memory add "构建缓存要带上环境维度。" \
     --source wl/0002 --id cache-key-env --applies-to python-stdlib-tooling
+
+# 根目录（可省，默认当前目录）**写在正文之前**，与其它命令一致：
+python scripts/journal.py memory add <ROOT> "构建缓存要带上环境维度。" \
+    --source wl/0002 --id cache-key-env
 ```
+
+> **位置参数顺序**：正文是第一个位置参数，根目录在它**之前**（`add [ROOT] "文本"`）。
+> 只给一个参数时它归正文、根取默认 `.`——所以"在工程根目录里直接写"这种最常用的形式不受影响。
+> 2026-09-28 之前顺序是反的（`add "文本" <ROOT>`）；旧写法现在会被**明确拦下**
+> 并告诉你正确写法，而不是把路径当成正文写进记忆（`manual:*` 来源用不到根目录，
+> 那正是它当时能静默成功的原因）。
 
 ```
 已加入 01-python-stdlib-tooling.md

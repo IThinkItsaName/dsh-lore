@@ -1138,10 +1138,11 @@ def gate_phase(parent: str) -> None:
     # 顺带把"两种位置能不能同时支持"钉住——实测结论是不能（见 commands.md 的三类说明）。
     from argparse import _SubParsersAction  # 只有这条断言需要它，故局部导入
 
-    def root_sets() -> tuple[set[str], set[str], set[str]]:
+    def root_sets() -> tuple[set[str], set[str], set[str], set[str]]:
         leaf: set[str] = set()
         on_parent: set[str] = set()
         no_root: set[str] = set()
+        with_option: set[str] = set()
 
         def walk(parser, path: list[str], ancestor_has_root: bool) -> None:
             own = any(a.dest == "root" and not a.option_strings for a in parser._actions)
@@ -1149,6 +1150,11 @@ def gate_phase(parent: str) -> None:
                 not a.option_strings and a.dest != "root"
                 and getattr(a, "nargs", None) in ("*", "+")
                 for a in parser._actions
+            )
+            # 同时钉**拼写**（`--root` 是写进文档的对外接口）与 **dest**（`main()` 靠它合并）：
+            # 只查 dest 的话，把选项改名成 `--root-path` 这种破坏就漏过去了（实测漏过一次）。
+            has_option = any(
+                "--root" in a.option_strings and a.dest == "root_opt" for a in parser._actions
             )
             if path and callable(parser._defaults.get("func")):
                 key = " ".join(path)
@@ -1158,15 +1164,17 @@ def gate_phase(parent: str) -> None:
                     on_parent.add(key)
                 else:
                     no_root.add(key)
+                if has_option:
+                    with_option.add(key)
             for action in parser._actions:
                 if isinstance(action, _SubParsersAction):
                     for name, sub in action.choices.items():
                         walk(sub, path + [name], ancestor_has_root or own or helper)
 
         walk(JOURNAL.build_parser(), [], False)
-        return leaf, on_parent, no_root
+        return leaf, on_parent, no_root, with_option
 
-    leaf_set, parent_set, none_set = root_sets()
+    leaf_set, parent_set, none_set, opt_set = root_sets()
     ok(len(leaf_set) + len(parent_set) + len(none_set) >= 30,
        "gates: walked the command tree for the ROOT matrix",
        f"叶子 {len(leaf_set)} / 父级 {len(parent_set)} / 无根 {len(none_set)}")
@@ -1184,6 +1192,45 @@ def gate_phase(parent: str) -> None:
         ok(listed == derived,
            f"gates: the ROOT matrix lists exactly the {kind}-root commands",
            f"文档独有 {sorted(listed - derived)}；解析树独有 {sorted(derived - listed)}")
+
+    # 10) `--root` 选项：与位置根**同落点**，且不许空承诺 ----------------------
+    #
+    # 位置根挂的层不一样（`index <ROOT> sync` 而不是 `index sync <ROOT>`），叶子再加一个位置根
+    # 又做不到（见上面那段实测）。`--root` 选项不受这个限制，出现在哪儿都算——这就是加它的理由。
+    # 不变量：**有 `--root`  ⟺  有位置根**（自己的或父级的）。两种破法都要红：
+    #   该有的缺了（子命令族仍然只能把根写在前面）、给做不到的命令发了空头支票（记忆侧那些）。
+    positional_root_set = leaf_set | parent_set
+    ok(opt_set == positional_root_set,
+       "gates: `--root` exists exactly where a positional root does",
+       f"缺选项 {sorted(positional_root_set - opt_set)}；空承诺 {sorted(opt_set - positional_root_set)}")
+
+    neutral = os.path.join(parent, "root-opt-neutral")
+    os.makedirs(neutral, exist_ok=True)
+    ws = mem_ws(parent, "root-opt-ws", "# 01 · 主题\n\n- **教训**：根要能指定。做法：加选项。（`wl/0001`）\n")
+
+    # ① 子命令族：根写在**子命令之后**也能到位（加这个选项的全部意义）
+    #    判据取"从**非工作区**目录跑、退出码为 0"——这正是"根被用上了"的证据
+    #    （根若没被采纳，cwd 不是工作区就会报错）。口径不要绑在某句提示文案上。
+    r = run(neutral, "index", "sync", "--root", ws)
+    ok(r.returncode == 0,
+       "gates: `index sync --root <ROOT>` reaches the workspace", r.stdout + r.stderr)
+    r = run(neutral, "index", "sync", "--root", neutral)
+    err = r.stdout + r.stderr
+    ok(r.returncode != 0 and "ERROR" in err,
+       "gates: and a --root that is not a workspace is refused", err)
+    # ② 同一个根写成位置参数（父级）仍然可用
+    r = run(neutral, "index", ws, "sync")
+    ok(r.returncode == 0, "gates: `index <ROOT> sync` still works", r.stdout + r.stderr)
+    # ③ 两者都给时**选项优先**：位置参数指向一个不是工作区的目录，仍应成功
+    r = run(neutral, "check", "--strict", "--quiet", "--root", ws, neutral)
+    ok(r.returncode == 0, "gates: `--root` beats the positional root", r.stdout + r.stderr)
+    # ④ 空承诺：没有工作区根概念的命令**不该**接受它（拒绝了才是对的）
+    for argv in (("promote", "suggest", "--root", ws), ("inbox", "count", "--root", ws),
+                 ("memory", "index", "--root", ws)):
+        r = run(neutral, *argv)
+        ok(r.returncode != 0 and "--root" in (r.stdout + r.stderr),
+           f"gates: `{' '.join(argv[:2])}` refuses --root (it has no workspace root to honour)",
+           r.stdout + r.stderr)
 
 
 def link_phase(parent: str) -> None:

@@ -5103,6 +5103,17 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--lessons", default=None,
                    help="容器内的经验目录名，默认 lessons/（也认配置文件里的 lessons；"
                         "目录实际存在才作数，顺序：命令行 → 配置 → <容器>/lessons/ → <根>/lessons/）")
+    # `--root` 是位置参数 `[ROOT]` 的**选项**形式，两者等价（都给了以选项为准）。
+    # 为什么要它：位置根在各命令族里挂的层不一样——`index sync` / `lesson add` 的根在**父级**，
+    # 只能写成 `index <ROOT> sync`，而叶子再挂一个根是**做不到**的（叶子的默认值会覆盖父级解析结果，
+    # 见 commands.md 的实测）。选项不受这个限制，出现在哪儿都算，于是：
+    #     index sync --root <ROOT>      lesson add --root <ROOT> …      check --strict --root <ROOT>
+    # 落点由 `_add_common` 决定：**加了这个 helper 的解析器 = 面向工作区的解析器**，
+    # 所以记忆侧那些没有工作区根概念的命令（`inbox put|list|sweep|count`、`memory search|index`、
+    # `promote suggest`）不会拿到它——**给了也做不到，那就是空承诺**。
+    p.add_argument("--root", dest="root_opt", default=None, metavar="P",
+                   help="项目根，等价于位置参数 `[ROOT]`（默认当前目录）；两者都给时以本选项为准。"
+                        "子命令族用它最省事：`index sync --root <项目根>`、`lesson add --root <项目根> …`")
 
 
 def _add_legacy(p: argparse.ArgumentParser) -> None:
@@ -5551,6 +5562,11 @@ def main(argv: list[str] | None = None) -> int:
     # `--work-log` 是 `--journal` 的正式名；两者同名一个 dest，这里统一。
     if getattr(args, "work_log", None):
         args.journal = args.work_log
+    # `--root` 与位置参数 `[ROOT]` 是同一件事的两个入口，这里合并成一个 `args.root`：
+    # 后面所有命令只认 `args.root`，不必关心根是从哪儿来的。两者都给时以**选项**为准
+    # （选项是显式点名的那个，位置参数可能只是默认值 `.`）。
+    if getattr(args, "root_opt", None):
+        args.root = args.root_opt
     if getattr(args, "date", None) == "today":
         args.date = today()
     try:

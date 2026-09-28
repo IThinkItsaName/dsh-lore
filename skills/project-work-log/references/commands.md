@@ -33,8 +33,24 @@
   **不是** `index sync <ROOT>`：那种写法在 argparse 里会先把 `sync` 当成根、再把 `<ROOT>` 当成子命令名，
   报 `invalid choice`。两种位置**不能同时支持**——实测过：给叶子也加上根之后，叶子的默认值 `.`
   会覆盖父级拿到的值，把 `index <ROOT> sync` 弄坏。
-- **没有根**（7 条）：`memory search` / `memory index` 与 `inbox put|list|sweep|count` 是**记忆侧**命令
-  （它们看的是 `--memory`，与工作区根无关）；`promote suggest` 靠当前目录。
+- **没有根**（7 条）：`memory search` / `memory index`、`inbox put|list|sweep|count` 与
+  `promote suggest` 都是**记忆侧**命令——它们看的是 `--memory`（记忆库），与工作区根无关，
+  所以它们**不需要**根，`promote suggest` 也不例外（它只读记忆库与状态计数，不看当前目录）。
+
+#### 不想记位置就加 `--root`
+
+上面那些**有**根的命令（位置根在叶子上或在父级上，共 31 条）都可以改用选项形式：
+
+```bash
+python scripts/journal.py index sync --root <项目根>            # 子命令族：这是唯一能在后面给根的写法
+python scripts/journal.py lesson add --root <项目根> --volume … # 同上
+python scripts/journal.py check --strict --root <项目根>        # 顶层命令照常
+```
+
+`--root` 与位置参数 `[ROOT]` **等价**，出现在命令行的任何位置都算；两者都给时以**选项**为准
+（选项是显式点名的那个，位置参数可能只是默认值）。没有根的那 7 条**不接受**它——
+给了也做不到，那是空承诺，所以解析器里根本没有这个选项（自测把"有 `--root` ⟺ 有位置根"
+两个方向都钉住了）。
 
 > **不想记这张表就一律走当前目录**：`cd <ROOT>` 之后不加任何 `ROOT`，三类全都按默认值工作。
 > 这也是文档里绝大多数示例的写法。

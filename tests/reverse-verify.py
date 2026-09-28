@@ -370,6 +370,14 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      '    _add_root(p_lesson)\n',
      '',
      "gates: the ROOT matrix lists exactly the 父级-root commands"),
+    ("gates", "`--root` 选项改名（有位置根的地方就没有根选项了）",
+     '    p.add_argument("--root", dest="root_opt", default=None, metavar="P",',
+     '    p.add_argument("--root-path", dest="root_opt", default=None, metavar="P",',
+     "gates: `--root` exists exactly where a positional root does"),
+    ("gates", "给一条没有工作区根的命令也发 `--root`（空承诺）",
+     '    p = psub.add_parser("suggest", help="列出够格升格的条目")\n    _add_memory(p)',
+     '    p = psub.add_parser("suggest", help="列出够格升格的条目")\n    _add_common(p)\n    _add_memory(p)',
+     "gates: `--root` exists exactly where a positional root does"),
 
     # ── links：链接目标的三种写法（裸 / 尖括号 / %转义）走同一套解析 ──────────────
     # 这一相的核心不变量：**写出来的、检查得到的、折叠得动的，必须是同一批目标**。

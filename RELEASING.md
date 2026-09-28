@@ -52,9 +52,16 @@ python skills/project-work-log/scripts/journal.py check --strict --quiet "<每�
 ```
 
 基线（**数字变了就是回归**）：`comfy` `0/0/0`；`dsh_from_github` `7/0/130`；
-`embeding try` 下六条分别为 `_shared 1/0/0`、`1_minimind_main 0/0/9`、
+`embeding try` 下七条分别为 `_shared 1/0/0`、`1_minimind_main 0/0/9`、
 `2_multi_attention 0/0/10`、`3_param_block 0/0/11`、`4_block_math 1/0/0`、
 `5_diffusion 0/0/2`、`6_block_wiring 1/0/3`。
+
+> **三份语料的绝对路径**（2026-09-29 补写：原先没记，`embeding try` 一挪窝就得满盘找）：
+> `D:\Program Files (x86)\comfy`、`D:\Program Files (x86)\dsh_from_github`、
+> `D:\Program Files (x86)\project_of_agent\embeding try`。
+> 最后一份**挪过位置**（曾经直接躺在 `Program Files (x86)` 下），按那几个特征子目录名
+> （`1_minimind_main` 等）找最快；它下面另有 `_lessons`、`7_jev_decision` 两个**基线没记**的子目录，
+> 属于语料后长的部分，不影响上面那七条基线。
 
 **本容器自己也要干净**（在装了这套东西的工作区里）：
 

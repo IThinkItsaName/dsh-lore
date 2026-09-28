@@ -22,7 +22,7 @@
 |---|---|
 | **叶子** | `new`、`check`、`lint`、`brief`、`snapshot`、`outline`、`show`、`search`、`stats`、`topics`、`export`、`digest`、`retro`、`status`、`mode`、`config`、`todo`、`archive`、`split`、`prune`、`append`、`dream`、`memory publish`、`memory collect`、`memory add`、`memory lint`、`memory status`、`inbox take` |
 | **父级** | `index sync`、`index compact`、`lesson add` |
-| **没有根** | `inbox put`、`inbox list`、`inbox sweep`、`inbox count`、`memory search`、`memory index`、`promote suggest` |
+| **没有根** | `inbox put`、`inbox list`、`inbox sweep`、`inbox count`、`memory search`、`memory index`、`promote suggest`、`promote scaffold` |
 
 三类各自的写法与理由：
 
@@ -643,13 +643,56 @@ PROMOTE  C:\Users\me\.dsh\memory
     ✓ 是一套过程（步骤）：先
     ✓ 是一套过程（验证）：验证
     ✓ 已真实执行过：manual:tested
-    ✓ 有重复需求（≥2 个工作区引用 或 ≥2 次命中）：cited-by 2 / 命中 0
+    ✓ 有重复需求（≥2 个工作区引用 或 ≥2 天命中）：cited-by 2 / 命中 0 次（跨 0 天）
 
 提示：**只报候选，不自动打包**。分界是「一条事实进记忆，一套过程进技能」；升格时必须同时交一个能变红能变绿的最简自测。
+      打包骨架用：`promote scaffold <id> --out <目录>`
 ```
 
 三条件**同时**满足才够格（判据表见 [memory.md](memory.md) §十三）。
 `promote` **只给建议**：唯一硬规则是**技能只许「教」，不许「管」**。
+
+> **第 3 条看"跨天复发"，不看次数**：`hits` 是"检索命中过"，为了验证门禁搜两次就能凑到 2，
+> 所以门槛落在 `.state.json` 记的 `days`（≥2 天）。旧数据没有 `days`，要再在另一天命中一次才算够格。
+
+### `promote scaffold` —— 把"够格"变成能用的骨架（**先红后绿**）
+
+`promote suggest` 之后那条路原先全靠手写。现在生成骨架：
+
+```bash
+python scripts/journal.py promote scaffold require-whitelist --out ../skills/require-whitelist
+python scripts/journal.py promote scaffold require-whitelist --out /tmp/x --name my-skill --dry-run
+```
+
+```
+SKILL  scaffold  require-whitelist   （条目 require-whitelist，来源 wl/0002）
+  输出：…/skills/require-whitelist
+  够格：四条件都满足
+  created SKILL.md
+  created selftest.py
+  created verify-command.txt
+  created fixtures/ok/、fixtures/bad/（空目录：往里放样本）
+```
+
+| 参数 | 说明 |
+|---|---|
+| `<id>` | 记忆条目 id（`promote suggest` 报出来的那个） |
+| `--out` | **必填**：输出目录；已存在且非空时**拒绝覆盖** |
+| `--name` | 技能名，默认取条目 id（只认小写拉丁 / 数字 / 连字符） |
+| `--dry-run` | 只列将要创建什么 |
+
+生成的四样与"先红后绿"的用法：`SKILL.md`（触发/做法/验证/边界四节，正文用条目起头）、
+`selftest.py`（一条命令、两条断言）、`verify-command.txt`（待填一行命令，`{fixture}` 替换成样本路径）、
+`fixtures/ok/` 与 `fixtures/bad/`。**生成出来就是红的**（缺命令或缺夹具就红着告诉你缺哪样）——
+一份从来没见过红的自测等于没有自测。作者的活是把它变绿：
+
+```bash
+# 1) verify-command.txt 写一行：python check.py {fixture}
+# 2) fixtures/ok/ 放应当通过的样本；fixtures/bad/ 放应当失败的
+python selftest.py          # 骨架自己的自测：两条断言都过（好样本绿、坏样本红）
+```
+
+装到宿主能看见的地方是 `<DSH_HOME>/skills/<name>/`（放好**当场**就能被 `skill` 工具取到，不必重启）。
 
 ## 七、组合套路（省上下文的标准动作）
 

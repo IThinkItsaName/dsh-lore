@@ -310,6 +310,22 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "    if _looks_like_path(raw_text) and not _looks_like_path(root):",
      "memory: the old order is refused instead of silently storing the path"),
 
+    # ── memory 续：升格（条件③看跨天 + scaffold 先红后绿）────────────────────
+    # 这一组钉的是 `0034` 量出来的洞：`hits` 是"检索命中过"，为了验证门禁搜两次就能凑够，
+    # 所以门槛必须落在**日子**上；而骨架的"先红"是它的定义性质，不能悄悄变绿。
+    ("memory", "条件③又只看命中次数（同一天搜两次也算复发）",
+     "    repeat = cited >= MEMORY_PROMOTE_CITES or len(days) >= MEMORY_PROMOTE_DAYS",
+     "    repeat = cited >= MEMORY_PROMOTE_CITES or hits >= MEMORY_PROMOTE_HITS",
+     "memory: 同一天命中 9 次**不算**重复需求（次数能被验证动作凑出来）"),
+    ("memory", "命中时不再记下『哪一天』",
+     "            days.append(day)",
+     "            pass",
+     "memory: 同一天命中两次只记一个日子"),
+    ("memory", "生成的骨架不再先红（缺东西也返回 0）",
+     '        print("\\\\n补完之后再跑一次：python selftest.py")\n        return 1',
+     '        print("\\\\n补完之后再跑一次：python selftest.py")\n        return 0',
+     "memory: 骨架生成出来就是红的，并指出缺哪样"),
+
     # ── config：项目配置文件（三层优先级：命令行 > .config.json > 内置默认）──────────
     # 这一相的核心不变量就是那条优先级。下面几条各破坏它的一面。
     ("config", "配置文件里的 mode 不再标成来自文件",
@@ -422,10 +438,16 @@ def main() -> int:
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--phase", choices=sorted(PHASES), default=None,
                     help="only one phase (default: all)")
+    ap.add_argument("--only", default=None, metavar="SUBSTR",
+                    help="只跑名字里含这段字的一条/几条变异。整相跑一遍要几十分钟，"
+                         "改了一处想当场确认那一条时用它（名字用 --list 看）")
     args = ap.parse_args()
 
     if args.list:
         for phase, name, _old, _new, expect in MUTATIONS:
+            # `--only` 对列表也生效：列出来的是"这次会跑的"，不是"全部"，免得误读。
+            if args.only is not None and args.only not in name:
+                continue
             print(f"[{phase}] {name}\n    → 期望变红：{expect}")
         return 0
 
@@ -450,7 +472,13 @@ def main() -> int:
     missed: list[str] = []
     broken: list[str] = []
     hits = 0
-    selected = [m for m in MUTATIONS if args.phase in (None, m[0])]
+    selected = [m for m in MUTATIONS if args.phase in (None, m[0])
+                and (args.only is None or args.only in m[1])]
+    if args.only is not None and not selected:
+        print(f"没有名字含 `{args.only}` 的变异（用 --list 看全部名字）")
+        return 2
+    if len(selected) != len(MUTATIONS):
+        print(f"（只跑选中的 {len(selected)} 条变异）")
     for i, (phase, name, old, new, expect) in enumerate(selected):
         n = original.count(old)
         if n != 1:

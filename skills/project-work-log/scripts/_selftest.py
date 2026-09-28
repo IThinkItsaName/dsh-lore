@@ -2421,6 +2421,92 @@ def memory_phase(parent: str) -> None:
     r = m(wsA, "memory", "status", wsA, "--verbose")
     ok(wsA in r.stdout, "memory: status --verbose 才把路径列出来", r.stdout)
 
+    # --- 9b) promote：条件③看「跨天复发」，不看次数（`0034` 量出来的洞）---------
+    #
+    # 洞是这样：`hits` 记的是"检索命中过"，而**为了验证门禁去搜两次**就能把它凑到 2 ——
+    # 一条刚写下的条目在同一分钟里两次检索就成了"够格"。同一份数据在 `memory search` 那边
+    # 被注释成"弱且危险、绝不据此降级"，拿它当门槛是自相矛盾。现在门槛落在 `.state.json`
+    # 记的 `days`（命中发生在哪些日子）上：同一天搜十次也只算一天。
+    entry_proc = {"id": "proc-demo", "source": "manual:tested", "cited_by": [], "applies_to": [],
+                  "state": "active", "personal": False, "title": "",
+                  "body": ["当遇到 X 时，先做 A，再做 B，最后跑一次检查命令验证；"]}
+    _, same_day_marks = JOURNAL.promote_conditions(
+        entry_proc, {"proc-demo": {"hits": 9, "days": ["2026-09-29"]}})
+    repeat_same_day = next(m for m in same_day_marks if m[0].startswith("有重复需求"))
+    ok(not repeat_same_day[1],
+       "memory: 同一天命中 9 次**不算**重复需求（次数能被验证动作凑出来）", repeat_same_day[2])
+    _, two_day_marks = JOURNAL.promote_conditions(
+        entry_proc, {"proc-demo": {"hits": 2, "days": ["2026-09-28", "2026-09-29"]}})
+    repeat_two_day = next(m for m in two_day_marks if m[0].startswith("有重复需求"))
+    ok(repeat_two_day[1], "memory: 跨 2 天命中才算重复需求", repeat_two_day[2])
+    ok(JOURNAL.promote_conditions(entry_proc, {})[0] is False,
+       "memory: 旧数据（没有 days）不因历史 hits 而算够格")
+
+    # 命中时真的把「日子」记下来（且同一天只算一天）
+    mem_days = os.path.join(base, "mem-days")
+    os.makedirs(mem_days, exist_ok=True)
+    JOURNAL.note_usage(mem_days, "proc-demo", hit=True)
+    JOURNAL.note_usage(mem_days, "proc-demo", hit=True)
+    days_now = JOURNAL.usage_hit_days(JOURNAL.load_state(mem_days)["usage"]["proc-demo"])
+    ok(len(days_now) == 1, "memory: 同一天命中两次只记一个日子", str(days_now))
+    state = JOURNAL.load_state(mem_days)
+    state["usage"]["proc-demo"]["days"] = ["2026-09-01", days_now[0]]
+    JOURNAL.save_state(mem_days, state)
+    ok(len(JOURNAL.usage_hit_days(state["usage"]["proc-demo"])) == 2,
+       "memory: usage_hit_days 能读出跨天")
+
+    # 命令行口径：够格判据的文案要写明「天命中」（次数不再是门槛）
+    r = m(wsA, "promote", "suggest", "--all")
+    ok("天命中" in r.stdout, "memory: 够格判据的文案写明「天命中」", r.stdout)
+    ok("命中" in r.stdout, "memory: 并报出命中次数与跨天数", r.stdout)
+
+    # --- 9c) promote scaffold：生成骨架，**先红后绿** -------------------------
+    scaffold_out = os.path.join(base, "scaffold-out")
+    r = m(wsA, "promote", "scaffold", "host-style-claiming", "--out", scaffold_out)
+    ok(r.returncode == 0, "memory: promote scaffold 生成骨架", r.stdout + r.stderr)
+    for rel in ("SKILL.md", "selftest.py", "verify-command.txt"):
+        ok(os.path.isfile(os.path.join(scaffold_out, rel)), f"memory: 骨架里有 {rel}")
+    ok(os.path.isdir(os.path.join(scaffold_out, "fixtures", "ok"))
+       and os.path.isdir(os.path.join(scaffold_out, "fixtures", "bad")),
+       "memory: 骨架里建好了两个夹具目录")
+    ok("[骨架待改]" in read(os.path.join(scaffold_out, "SKILL.md")),
+       "memory: description 留了显式待改标记，而不是自动编一句像成品的话")
+
+    # `--out` 必填、且不覆盖非空目录
+    r = m(wsA, "promote", "scaffold", "host-style-claiming")
+    ok(r.returncode != 0, "memory: scaffold 的 --out 是必填的", r.stdout + r.stderr)
+    r = m(wsA, "promote", "scaffold", "host-style-claiming", "--out", scaffold_out)
+    ok(r.returncode != 0 and "非空" in (r.stdout + r.stderr),
+       "memory: scaffold 拒绝覆盖非空目录", r.stdout + r.stderr)
+
+    # **生成即红**：缺命令 / 缺夹具时自测必须红，并说清缺什么
+    r = subprocess.run([sys.executable, os.path.join(scaffold_out, "selftest.py")],
+                       capture_output=True, cwd=scaffold_out)
+    red_out = (r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace")
+    ok(r.returncode != 0 and "verify-command.txt" in red_out,
+       "memory: 骨架生成出来就是红的，并指出缺哪样", red_out)
+
+    # 作者补齐之后必须变绿（用一份最小样本走完整条路）
+    write(os.path.join(scaffold_out, "check.py"),
+          'import sys\n'
+          'text = open(sys.argv[1], encoding="utf-8").read()\n'
+          'sys.exit(1 if "BAD" in text else 0)\n')
+    write(os.path.join(scaffold_out, "verify-command.txt"),
+          "# 示例：{fixture} 会被替换成样本路径\npython check.py {fixture}\n")
+    write(os.path.join(scaffold_out, "fixtures", "ok", "good.txt"), "干净\n")
+    write(os.path.join(scaffold_out, "fixtures", "bad", "bad.txt"), "这里有 BAD\n")
+    r = subprocess.run([sys.executable, os.path.join(scaffold_out, "selftest.py")],
+                       capture_output=True, cwd=scaffold_out)
+    green_out = (r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace")
+    ok(r.returncode == 0 and "2/2 passed" in green_out,
+       "memory: 补齐命令与夹具之后骨架变绿（先红后绿闭环）", green_out)
+
+    # 名字不合法要拒（技能名与记忆 id 同一套形状）
+    r = m(wsA, "promote", "scaffold", "host-style-claiming", "--out", scaffold_out + "-x",
+          "--name", "Bad Name")
+    ok(r.returncode != 0 and "不合法" in (r.stdout + r.stderr),
+       "memory: scaffold 拒绝不合法的技能名", r.stdout + r.stderr)
+
     # --- 10) dream：回指校验是机械的 ----------------------------------------
     wsT = mem_ws(base, "wsT", "# 01 · T\n\n- x。（`wl/0001`）\n")
     r = jr(wsT, "dream")

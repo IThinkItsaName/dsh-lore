@@ -347,9 +347,19 @@ MEMORY_PROCEDURE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 # 第 2 条「已真实执行过」：来源必须是"做过"的那两档。
 MEMORY_EXECUTED_SOURCES = ("tested",)
-# 第 3 条「有重复需求」：被多少个工作区引用、或同一工作区命中多少次。
+# 第 3 条「有重复需求」：被多少个工作区引用、或同一工作区在**多少个日子**被命中过。
+#
+# 为什么不是"命中次数"：`hits` 记的是"检索命中过"，而**为了验证门禁去搜两次**就能把它凑到 2 ——
+# `0034` 实测就是这么把一条刚写的条目推成"够格"的（同一分钟内两次）。而同一份数据在
+# `cmd_memory_search` 里被注释成"弱且危险、绝不据此降级"，拿它当门槛是自相矛盾。
+# 需求要看**复发**，所以门槛落在"跨了几天的命中"上：同一天搜十次也只算一天。
+# 代价说清楚：旧 `.state.json` 里没有 `days`（那时只记次数），于是旧条目**暂时不算够格** ——
+# 这不是退步，是原来的门槛本来就不该那样算；再在另一天命中一次即可。
 MEMORY_PROMOTE_CITES = 2
 MEMORY_PROMOTE_HITS = 2
+MEMORY_PROMOTE_DAYS = 2
+# `days` 只留最近这么多个，够算门槛即可，避免 `.state.json` 无限长。
+MEMORY_STATE_DAYS_KEEP = 10
 
 # ---- 渐进原则（老记录只报不拦）----
 # 依据是**显式清单**，不是日期启发式：日期不可靠（实测同一份语料里日期字段只覆盖一半），
@@ -3907,9 +3917,12 @@ def save_candidates(memory: str, data: dict) -> bool:
 def load_state(memory: str) -> dict:
     """`.state.json`：各工作区清单的摘要哈希 + 检索命中计数。
 
-    形状：`{"workspaces": {<路径>: {"digest":…, "at":…}}, "usage": {<id>: {"hits":…, "first":…, "last":…}}}`。
-    命中计数**只用来给 `lint` 提建议**，绝不自动降级（见 references/memory.md「生命周期」）。
-    放进同一个文件是为了不多开第三个簿记文件，代价是读的人要知道它有两段。
+    形状：`{"workspaces": {<路径>: {"digest":…, "at":…}},
+    "usage": {<id>: {"hits":…, "first":…, "last":…, "days": ["YYYY-MM-DD", …]}}}`。
+    命中计数**只用来给 `lint` 提建议**，绝不自动降级（见 references/memory.md「生命周期」）；
+    而 `days`（命中发生在哪些日子）另有一处用途：`promote suggest` 拿它判"需求是否跨天复发"，
+    因为次数可以被"为了验证门禁去搜两次"凑出来，日子不行。放进同一个文件是为了不多开第三个
+    簿记文件，代价是读的人要知道它有两段。
     """
     data = _memory_json_read(memory_state_path(memory), {})
     ws = data.get("workspaces")
@@ -3922,14 +3935,29 @@ def save_state(memory: str, data: dict) -> bool:
     return _memory_json_write(memory_state_path(memory), data)
 
 
+def usage_hit_days(rec: dict | None) -> list[str]:
+    """这条命中记录落在哪几个**日子**上（去重、排序；旧数据没有 `days` 就是空表）。"""
+    raw = (rec or {}).get("days")
+    if not isinstance(raw, list):
+        return []
+    return sorted({str(d)[:10] for d in raw if str(d).strip()})
+
+
 def note_usage(memory: str, entry_id: str, hit: bool = False) -> None:
     state = load_state(memory)
     rec = state["usage"].get(entry_id)
     if not isinstance(rec, dict):
         rec = {"hits": 0, "first": _memory_now(), "last": ""}
     if hit:
+        now = _memory_now()
         rec["hits"] = int(rec.get("hits", 0) or 0) + 1
-        rec["last"] = _memory_now()
+        rec["last"] = now
+        # 记"哪几天命中过"：`promote suggest` 判需求复发用的就是它（见 constants 里的说明）。
+        days = usage_hit_days(rec)
+        day = now[:10]
+        if day not in days:
+            days.append(day)
+        rec["days"] = days[-MEMORY_STATE_DAYS_KEEP:]
     state["usage"][entry_id] = rec
     save_state(memory, state)
 
@@ -4299,11 +4327,17 @@ def promote_conditions(entry: dict, usage: dict) -> tuple[bool, list[tuple[str, 
     tier = memory_source_tier(entry["source"])
     executed = tier in ("tested", "record")
     marks.append(("已真实执行过", executed, entry["source"] or "(无来源)"))
-    hits = int((usage.get(entry["id"]) or {}).get("hits", 0) or 0)
+    rec = usage.get(entry["id"]) or {}
+    hits = int(rec.get("hits", 0) or 0)
     cited = len(entry["cited_by"])
-    marks.append((f"有重复需求（≥{MEMORY_PROMOTE_CITES} 个工作区引用 或 ≥{MEMORY_PROMOTE_HITS} 次命中）",
-                  cited >= MEMORY_PROMOTE_CITES or hits >= MEMORY_PROMOTE_HITS,
-                  f"cited-by {cited} / 命中 {hits}"))
+    days = usage_hit_days(rec)
+    # 需求看**跨天复发**，不看次数（次数能被"为验证门禁搜两次"凑出来，见 constants 的说明）。
+    repeat = cited >= MEMORY_PROMOTE_CITES or len(days) >= MEMORY_PROMOTE_DAYS
+    why = f"cited-by {cited} / 命中 {hits} 次（跨 {len(days)} 天）"
+    if not repeat and hits >= MEMORY_PROMOTE_HITS and not days:
+        why += "；同一天的命中不算复发，旧数据没有日期记录"
+    marks.append((f"有重复需求（≥{MEMORY_PROMOTE_CITES} 个工作区引用 或 ≥{MEMORY_PROMOTE_DAYS} 天命中）",
+                  repeat, why))
     return all(m[1] for m in marks), marks
 
 
@@ -5088,6 +5122,231 @@ def cmd_promote_suggest(args: argparse.Namespace) -> int:
                 print(f"    - {e['id']}：缺 {'、'.join(missing)}")
     print("\n提示：**只报候选，不自动打包**。分界是「一条事实进记忆，一套过程进技能」；"
           "升格时必须同时交一个能变红能变绿的最简自测。")
+    print("      打包骨架用：`promote scaffold <id> --out <目录>`")
+    return 0
+
+
+# `promote scaffold` 生成的三份东西。放在模块级常量里，是为了让自测能直接引用同一份文本
+# （否则"生成的骨架"与"文档里承诺的骨架"会各写一份，两边必然会漂）。
+SCAFFOLD_SELFTEST = '''#!/usr/bin/env python3
+"""__NAME__ 的最简自测：**能变红能变绿**。
+
+契约（三步）：
+
+  1. `verify-command.txt` 写一行命令，`{fixture}` 会被替换成被测样本的路径。
+     例如：`python scripts/check.py {fixture}`
+  2. `fixtures/ok/`  放一个**应当通过**（退出码 0）的样本；
+  3. `fixtures/bad/` 放一个**应当失败**（非零退出）的样本。
+
+三样齐了它就是绿的。缺哪一样就红着并告诉你缺什么 —— **骨架生成出来就是红的，这是故意的**：
+一份从来没见过红的自测，等于没有自测。
+"""
+import os
+import locale
+import shlex
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def read_command():
+    path = os.path.join(HERE, "verify-command.txt")
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                return line
+    return None
+
+
+def fixtures(kind):
+    d = os.path.join(HERE, "fixtures", kind)
+    if not os.path.isdir(d):
+        return []
+    return sorted(os.path.join(d, n) for n in os.listdir(d) if not n.startswith("."))
+
+
+def run(command, fixture):
+    argv = [part.replace("{fixture}", fixture) for part in shlex.split(command)]
+    try:
+        proc = subprocess.run(argv, cwd=HERE, capture_output=True)
+    except FileNotFoundError as exc:
+        return None, f"命令跑不起来：{exc}"
+    return proc.returncode, decode(proc.stdout) + decode(proc.stderr)
+
+
+def decode(raw):
+    """把子进程输出解成人看的样子。
+
+    **不能**直接 `text=True, encoding="utf-8"`：被测命令可能按本机编码（Windows 上是 GBK）输出，
+    硬按 UTF-8 解会在读线程里抛 UnicodeDecodeError（实测踩过，报错还出现在子线程里，很难联想到）。
+    所以先按 UTF-8 严格试，不行就退回本机编码并容错替换 —— 显示而已，不许因为编码把自测搞崩。
+    """
+    if not raw:
+        return ""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode(locale.getpreferredencoding(False), errors="replace")
+
+
+def main():
+    command = read_command()
+    good = fixtures("ok")
+    bad = fixtures("bad")
+    missing = []
+    if not command:
+        missing.append("`verify-command.txt` 里还没有一行可用的命令")
+    if not good:
+        missing.append("`fixtures/ok/` 里还没有样本")
+    if not bad:
+        missing.append("`fixtures/bad/` 里还没有样本")
+
+    checks = []
+    if not missing:
+        code, out = run(command, good[0])
+        checks.append(("好样本必须通过", code == 0, f"退出码 {code}\\n{out.strip()[:400]}"))
+        code, out = run(command, bad[0])
+        checks.append(("坏样本必须失败", code not in (0, None), f"退出码 {code}\\n{out.strip()[:400]}"))
+
+    failed = 0
+    for label, ok, detail in checks:
+        print(("PASS  " if ok else "FAIL  ") + label)
+        if not ok:
+            print("      " + detail.replace("\\n", "\\n      "))
+            failed += 1
+
+    if missing:
+        print("这个技能还没长齐（骨架先红后绿，这是设计）：")
+        for item in missing:
+            print("  - " + item)
+        print("\\n补完之后再跑一次：python selftest.py")
+        return 1
+
+    print(f"\\n{len(checks) - failed}/{len(checks)} passed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+SCAFFOLD_VERIFY_TXT = '''# 写一行命令，`{fixture}` 会被替换成被测样本的路径。例如：
+#
+#   python scripts/check.py {fixture}
+#
+# 约定：好样本必须退出码 0，坏样本必须非零退出。
+# 这个文件里没有一行**非注释**内容时，自测会红着说"还没填"（骨架先红后绿）。
+'''
+
+SCAFFOLD_SKILL_MD = '''---
+name: __NAME__
+description: __DESC__
+---
+
+# __NAME__
+
+> 由 `journal.py promote scaffold __ENTRY__` 从记忆条目生成（来源 `__SOURCE__`）。
+> **技能只许「教」，不许「管」**：写"这类问题怎么诊断"没问题，写"你必须先做 X"就越界了。
+
+## 触发场景
+
+__BODY__
+
+## 做法
+
+1. 第一步：先做什么（写清起点，别写"视情况而定"）；
+2. 第二步：再做什么；
+3. 第三步：最后做什么 —— 每步都可以被读者独立执行。
+
+## 验证
+
+```bash
+python selftest.py        # 期望 2/2 passed（现在是红的：先补 verify-command.txt 与两个夹具）
+```
+
+自测就是这条过程的证据：`fixtures/ok/` 必须绿、`fixtures/bad/` 必须红。
+**没见它红过不算数** —— 故意改坏一次被测行为，确认它真的会红。
+
+## 边界
+
+- 什么情况下**不适用**这条过程；
+- 过程里依赖的常量 / 名单会不会随宿主或项目版本变？变了怎么重核。
+'''
+
+# 技能名与记忆 id 用同一套形状（小写拉丁 / 数字 / 连字符），这样 frontmatter 里不用引号包。
+MEMORY_ID_RE_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
+
+
+def _scaffold_description(entry: dict, name: str) -> str:
+    """给 frontmatter 的 `description` 出一个**明显还没写完**的一行。
+
+    为什么不自动编一句像样的：`description` 是技能在会话目录里唯一的曝光面，它该写"**什么时候用**这个技能"，
+    那是作者才知道的事。自动生成一句"由条目 X 升格的过程：<正文>"看着完整，实际上**没有触发信息**，
+    反而会让一份没写完的骨架在目录里显得像成品。所以这里明确留个待改标记。
+    """
+    body = " ".join(memory_body_line(entry).split())
+    body = body.replace(":", "：").replace('"', "")
+    if len(body) > 140:
+        body = body[:140].rstrip() + "…"
+    return f"[骨架待改] 还没写触发条件；过程大意：{body}（来源 {entry['source'] or '无'}）"
+
+
+def cmd_promote_scaffold(args: argparse.Namespace) -> int:
+    memory = memory_root(args.memory)
+    entry = next((e for e in load_memory_entries(memory) if e["id"] == args.entry), None)
+    if entry is None:
+        print(f"ERROR: 记忆库里没有 id `{args.entry}`（先 `memory search` 看看）")
+        return 1
+    name = (args.name or entry["id"]).strip()
+    if not re.match(MEMORY_ID_RE_PATTERN, name):
+        print(f"ERROR: 技能名 `{name}` 不合法：只认小写拉丁 / 数字 / 连字符（如 `require-whitelist`）")
+        return 1
+    out = os.path.abspath(args.out)
+    if os.path.isfile(out) or (os.path.isdir(out) and os.listdir(out)):
+        print(f"ERROR: `{out}` 已存在且非空 —— 骨架**不覆盖**已有内容（要重建就换个目录或先清空）")
+        return 1
+
+    # 够不够格只**提示**，不拦：条件①是措辞代理，作者可能比代理更清楚；但既然报了，就该说清。
+    usage = load_state(memory).get("usage", {})
+    qualified, marks = promote_conditions(entry, usage)
+    missing = [m[0] for m in marks if not m[1]]
+
+    files = {
+        "SKILL.md": SCAFFOLD_SKILL_MD
+        .replace("__NAME__", name)
+        .replace("__DESC__", _scaffold_description(entry, name))
+        .replace("__ENTRY__", entry["id"])
+        .replace("__SOURCE__", entry["source"] or "(无来源)")
+        .replace("__BODY__", memory_body_line(entry)),
+        "selftest.py": SCAFFOLD_SELFTEST.replace("__NAME__", name),
+        "verify-command.txt": SCAFFOLD_VERIFY_TXT,
+    }
+    print(f"SKILL  scaffold  {name}   （条目 {entry['id']}，来源 {entry['source']}）")
+    print(f"  输出：{out}")
+    if qualified:
+        print("  够格：四条件都满足")
+    else:
+        print(f"  注意：`promote suggest` 认为还差 {'、'.join(missing)} —— 只提示，不拦")
+    if args.dry_run:
+        for rel in list(files) + ["fixtures/ok/", "fixtures/bad/"]:
+            print(f"  [dry-run] 将创建 {rel}")
+        return 0
+
+    os.makedirs(os.path.join(out, "fixtures", "ok"), exist_ok=True)
+    os.makedirs(os.path.join(out, "fixtures", "bad"), exist_ok=True)
+    for rel, text in files.items():
+        write_raw(os.path.join(out, rel), text)
+        print(f"  created {rel}")
+    print("  created fixtures/ok/、fixtures/bad/（空目录：往里放样本）")
+    print("\n接下来（骨架**现在是红的**，这是故意的）：")
+    print("  1. 在 `verify-command.txt` 里写一行命令，用 `{fixture}` 当被测路径；")
+    print("  2. `fixtures/ok/` 放一个应当通过的样本，`fixtures/bad/` 放一个应当失败的；")
+    print("  3. `python selftest.py` 跑到 2/2，再把 `SKILL.md` 的正文写成人能照着做的过程。")
+    print(f"  4. 装到宿主能看见的地方：`<DSH_HOME>/skills/{name}/`（放好当场就能被 `skill` 工具取到，不必重启）。")
     return 0
 
 
@@ -5517,6 +5776,20 @@ mode 同样只提供**新项目的初始档位**：台账 `## 当前状态` 有 
     _add_memory(p)
     p.add_argument("--all", action="store_true", help="连未够格的一起列，并写明缺哪一条")
     p.set_defaults(func=cmd_promote_suggest)
+
+    p = psub.add_parser("scaffold", help="给一条够格的条目生成技能骨架（含自测模板，**先红后绿**）",
+                        formatter_class=argparse.RawDescriptionHelpFormatter,
+                        description="把「够格」到「一个能用的技能包」之间那段手写活儿变成骨架：\n"
+                                    "`SKILL.md`（用条目正文起头）+ `selftest.py` + `verify-command.txt`\n"
+                                    "+ `fixtures/ok/` 与 `fixtures/bad/`。\n"
+                                    "**生成出来就是红的**（缺验证命令、缺夹具），作者把它变绿 —— 这是故意的。")
+    _add_memory(p)
+    p.add_argument("entry", help="记忆条目 id（`promote suggest` 报出来的那个）")
+    p.add_argument("--out", required=True, metavar="DIR",
+                   help="输出目录（必填：不在你不知道的地方建目录；已存在且非空则拒绝覆盖）")
+    p.add_argument("--name", default=None, help="技能名，默认取条目 id（只认小写拉丁 / 数字 / 连字符）")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_promote_scaffold)
 
     return ap
 

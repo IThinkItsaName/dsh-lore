@@ -1131,6 +1131,60 @@ def gate_phase(parent: str) -> None:
        "gates: every _mark_legacy call passes a RULE_* constant, never a literal",
        "; ".join(c.strip() for c in bad_calls) or "(all good)")
 
+    # 9) `ROOT` 位置矩阵必须与解析树一致 --------------------------------------
+    #
+    # 这张表以前是手写的，而手写会漂：`0021` 那版就把 `memory add` 的顺序写反过，
+    # 于是下一个人照文档写就撞上误导性报错。现在表由**解析树推导**，自测逐条对账。
+    # 顺带把"两种位置能不能同时支持"钉住——实测结论是不能（见 commands.md 的三类说明）。
+    from argparse import _SubParsersAction  # 只有这条断言需要它，故局部导入
+
+    def root_sets() -> tuple[set[str], set[str], set[str]]:
+        leaf: set[str] = set()
+        on_parent: set[str] = set()
+        no_root: set[str] = set()
+
+        def walk(parser, path: list[str], ancestor_has_root: bool) -> None:
+            own = any(a.dest == "root" and not a.option_strings for a in parser._actions)
+            helper = any(
+                not a.option_strings and a.dest != "root"
+                and getattr(a, "nargs", None) in ("*", "+")
+                for a in parser._actions
+            )
+            if path and callable(parser._defaults.get("func")):
+                key = " ".join(path)
+                if own or helper:
+                    leaf.add(key)
+                elif ancestor_has_root:
+                    on_parent.add(key)
+                else:
+                    no_root.add(key)
+            for action in parser._actions:
+                if isinstance(action, _SubParsersAction):
+                    for name, sub in action.choices.items():
+                        walk(sub, path + [name], ancestor_has_root or own or helper)
+
+        walk(JOURNAL.build_parser(), [], False)
+        return leaf, on_parent, no_root
+
+    leaf_set, parent_set, none_set = root_sets()
+    ok(len(leaf_set) + len(parent_set) + len(none_set) >= 30,
+       "gates: walked the command tree for the ROOT matrix",
+       f"叶子 {len(leaf_set)} / 父级 {len(parent_set)} / 无根 {len(none_set)}")
+
+    def documented(kind: str) -> set[str]:
+        found: set[str] = set()
+        for line in doc_src.splitlines():
+            m = re.match(r"^\|\s*\*\*(叶子|父级|没有根)\*\*\s*\|\s*(.+?)\s*\|\s*$", line)
+            if m and m.group(1) == kind:
+                found |= set(re.findall(r"`([^`]+)`", m.group(2)))
+        return found
+
+    for kind, derived in (("叶子", leaf_set), ("父级", parent_set), ("没有根", none_set)):
+        listed = documented(kind)
+        ok(listed == derived,
+           f"gates: the ROOT matrix lists exactly the {kind}-root commands",
+           f"文档独有 {sorted(listed - derived)}；解析树独有 {sorted(derived - listed)}")
+
 
 def link_phase(parent: str) -> None:
     """链接目标的三种写法必须走**同一套**解析：裸、尖括号（含空格）、百分号转义。

@@ -362,6 +362,14 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      '                                       + " / ".join(VERIFY_WORDS[:12]) + " 之一，h2–h4 都算）")\n'
      '            _mark_legacy(rep, i, legacy_rec, "验证小节")',
      "gates: every _mark_legacy call passes a RULE_* constant, never a literal"),
+    ("gates", "给一条「没有根」的命令偷偷加上根",
+     '    p = psub.add_parser("suggest", help="列出够格升格的条目")\n    _add_memory(p)',
+     '    p = psub.add_parser("suggest", help="列出够格升格的条目")\n    _add_root(p)\n    _add_memory(p)',
+     "gates: the ROOT matrix lists exactly the 没有根-root commands"),
+    ("gates", "把 `lesson` 父级的根删掉（该命令族就没有根了）",
+     '    _add_root(p_lesson)\n',
+     '',
+     "gates: the ROOT matrix lists exactly the 父级-root commands"),
 
     # ── links：链接目标的三种写法（裸 / 尖括号 / %转义）走同一套解析 ──────────────
     # 这一相的核心不变量：**写出来的、检查得到的、折叠得动的，必须是同一批目标**。
@@ -424,7 +432,10 @@ def main() -> int:
     if not os.path.isdir(base):
         print(f"ERROR: --root 不是一个已存在的目录：{base}")
         return 2
-    scratch_root = os.path.join(base, "reverse-verify")
+    # 按 PID 隔离：同一时刻只跑一相时无所谓，但"后台跑着整相、前台再跑一相"就会撞——
+    # 实测撞过（`os.makedirs` 报 FileExistsError，因为两边共用同一个目录）。
+    # 夹具本来就是可再生的，按 PID 分开互不影响，跑完各自清理自己那份。
+    scratch_root = os.path.join(base, f"reverse-verify-{os.getpid()}")
     shutil.rmtree(scratch_root, ignore_errors=True)
     os.makedirs(scratch_root)
 

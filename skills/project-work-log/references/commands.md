@@ -15,18 +15,29 @@
 但它在各命令族里挂在不同的层上。写错位置的报错往往是误导性的（`unrecognized arguments`
 或"当前目录不是工作区"，而当前目录明明就是工作区）。
 
-| 命令族 | `ROOT` 放哪 | 例 |
-|---|---|---|
-| 大多数顶层命令（`check` / `lint` / `brief` / `snapshot` / `outline` / `show` / `search` / `stats` / `topics` / `export` / `digest` / `retro` / `status` / `mode` / `config` / `todo` / `archive` / `split` / `prune` / `new` / `append` / `dream`） | **第一个位置** | `check --strict <ROOT>` |
-| `index` | 挂在**父级** | `index <ROOT> sync`（不是 `index sync <ROOT>`） |
-| `lesson` | 挂在**父级** | `lesson <ROOT> add --volume …`（不是 `lesson add <ROOT>`） |
-| `memory publish\|collect\|add\|search\|index\|lint\|status` | 挂在**叶子** | `memory lint <ROOT> --strict`、`memory add <ROOT> "一句话" --source … --id …`（**根一律在前**） |
-| `inbox put\|list\|sweep\|count` | **没有 `ROOT`**（信箱在记忆侧，用 `--memory`） | `inbox count --memory <MEM>` |
-| `inbox take` | 挂在叶子，且**在条目名之后** | `inbox take <条目名> [<ROOT>]` |
-| `promote suggest` | **没有 `ROOT`**（靠当前目录） | `cd <ROOT> && promote suggest --all` |
+**这张表是机械推导的**（走 argparse 的解析树，只统计可运行的命令路径），而且**有门禁对账**：
+自测会把下面三行的命令清单与解析树逐条比对，对不上就红。所以它不会像手写表格那样悄悄过期。
 
-> **不想记这张表就一律走当前目录**：`cd <ROOT>` 之后不加任何 `ROOT`，所有命令都按默认值工作
-> （上面每一行都成立）。这也是文档里绝大多数示例的写法。
+| 根在哪 | 命令（解析树里的路径） |
+|---|---|
+| **叶子** | `new`、`check`、`lint`、`brief`、`snapshot`、`outline`、`show`、`search`、`stats`、`topics`、`export`、`digest`、`retro`、`status`、`mode`、`config`、`todo`、`archive`、`split`、`prune`、`append`、`dream`、`memory publish`、`memory collect`、`memory add`、`memory lint`、`memory status`、`inbox take` |
+| **父级** | `index sync`、`index compact`、`lesson add` |
+| **没有根** | `inbox put`、`inbox list`、`inbox sweep`、`inbox count`、`memory search`、`memory index`、`promote suggest` |
+
+三类各自的写法与理由：
+
+- **叶子有根**（28 条）：`<命令> <ROOT> [参数]`。其中两个要特别注意 ——
+  `inbox take` 的根在**条目名之后**（`inbox take <条目名> [<ROOT>]`，根只用于 `--into-record`）；
+  `show` / `append` 把"根 + 键"收在一起（`show <ROOT> 42`、`append <ROOT> 42 --section …`）。
+- **父级有根**（3 条）：根写在**子命令之前** —— `index <ROOT> sync`、`lesson <ROOT> add`。
+  **不是** `index sync <ROOT>`：那种写法在 argparse 里会先把 `sync` 当成根、再把 `<ROOT>` 当成子命令名，
+  报 `invalid choice`。两种位置**不能同时支持**——实测过：给叶子也加上根之后，叶子的默认值 `.`
+  会覆盖父级拿到的值，把 `index <ROOT> sync` 弄坏。
+- **没有根**（7 条）：`memory search` / `memory index` 与 `inbox put|list|sweep|count` 是**记忆侧**命令
+  （它们看的是 `--memory`，与工作区根无关）；`promote suggest` 靠当前目录。
+
+> **不想记这张表就一律走当前目录**：`cd <ROOT>` 之后不加任何 `ROOT`，三类全都按默认值工作。
+> 这也是文档里绝大多数示例的写法。
 > 只有 `memory *` 与 `inbox *` 的 `--memory` 指**记忆根**，与工作区根无关。
 
 > 旧项目（`journal/` + 顶层 `lessons/`）**不改名、不迁移、不警告**，直接就能用；

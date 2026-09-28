@@ -207,6 +207,97 @@ GOALS_STATUSES = ("未开始", "进行中", "已完成", "已放弃")
 # 目标表的列。表头认得出哪几列就校验哪几列（见 parse_goals）。
 GOALS_COLUMNS = ("目标", "阶段", "状态", "相关记录")
 
+# ---- 全局记忆（跨工作区，见 references/memory.md）----
+# 落在 DSH home 下、与**插件目录平级**，不放进 worklog 插件自己的目录：
+# 记忆是跨插件的公共知识，不该锁在一个插件的私有柜子里（卸载 worklog 也不该带走它）。
+MEMORY_DIR_NAME = "memory"
+# 注入用的索引。**生成物，不手写** —— 手写的索引与正文一定会分叉。
+MEMORY_INDEX_NAME = "INDEX.md"
+# 个人内容单设目录：不进 git、不进索引、不被默认检索。
+# 与「一条事实只有一个家」不冲突：这里放的是**另一类**内容，不是同一条内容的副本。
+MEMORY_PERSONAL_DIR = "personal"
+# 跨工作区信箱：不进 git。它**不是记忆**，是通信 —— 阅后即删或转移为记录。
+MEMORY_INBOX_DIR = "inbox"
+# 名册与候选。工具**没有跨工作区读文件的权限**，无法自行发现工作区，
+# 所以只能靠工作区自己 `memory publish` 时登记；候选只提示、不自动收录。
+MEMORY_REGISTRY_NAME = "workspaces.json"
+MEMORY_CANDIDATES_NAME = "candidates.json"
+# 机器生成：各工作区发布清单的摘要哈希，用来判断"有没有新东西"。
+MEMORY_STATE_NAME = ".state.json"
+# 工作区**唯一**获准被全局层读取的文件，也是双向白名单：
+# 不在清单里的教训永远不会离开那个工作区。
+MEMORY_MANIFEST_NAME = "发布.md"
+
+# 来源分档。**准入靠分档，不靠"看起来重要吗"** —— 后者等于预测未来，
+# 而且会系统性地偏向"听起来宏大的话"，正好与实战教训相反。
+# `wl/NNNN` 走既有校验（篇号必须真实存在）；`manual:*` 四档按下表判：
+#   tested   有人实际验证过（做过、量过、跑过）→ 进索引
+#   read     从文档/源码读来的                 → 进索引
+#   inferred 推断的，**未经验证**              → 允许，但强制标注且**不进索引**
+# 留 `inferred` 一档而不是堵死，是因为堵死的结果不是"没有推断"，
+# 而是**推断被伪装成"读过"** —— 错误的机制比没有机制更糟。
+MEMORY_SOURCE_MANUAL = ("tested", "read", "inferred")
+MEMORY_SOURCES_IN_INDEX = ("tested", "read")
+
+# 生命周期三态。**只自动处理"被取代"**（那是事实判断，不是价值判断）；
+# 其余降级要人显式点 —— 因为「只会在极罕见情况下救命的教训，命中次数天然是 0」，
+# 用命中次数自动降级会系统性删掉最珍贵的保险、留下最常被问的常识。
+MEMORY_STATES = ("active", "stale", "retired")
+MEMORY_RETIRED_DEFAULT = "active"
+
+# 注入索引的字数预算。**按字计不按行计**：一行的长度可以差十倍，
+# 按行限等于没限。超硬上限**报错而不截断** —— 静默截断会让记忆悄悄变得不完整，
+# 那是这套东西最不该有的失效方式。
+MEMORY_INDEX_SOFT_CHARS = 800
+MEMORY_INDEX_HARD_CHARS = 1500
+
+# `applies-to` 的合法标签：小写拉丁 + 数字 + 连字符。
+# 只认这一种写法，是因为标签会被**跨工作区取交集**：`Dsh-Plugin` 与 `dsh-plugin`
+# 是两个标签还是一回事，机器判不出来；要求一种写法，交集就是确定的。
+MEMORY_TAG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+# 长期未命中的判据（只用于 `lint` 的 INFO 建议，**绝不自动降级**）。
+# 日期取自 `.state.json` 里该条第一次出现的日子；无记录就不报。
+MEMORY_STALE_HIT_DAYS = 180
+
+# ---- 信箱（`<记忆根>/inbox/`）——它不是记忆，是通信 ----
+# 硬上限。**写满就报错，不静默堆积**：信箱一旦无限增长，它就变成了一个没人读的
+# 日志，而"阅后即删"的承诺随之失效。这几个数是这么定的：
+#   * 条数 200：一次会话塞进去的零散消息通常个位数；200 条足够"几天没看"。
+#   * 单条 16 KiB：够放一段命令输出或一份差异，又不至于把一条消息变成文件传输
+#     （真要传文件，应该进工作区、进记录，而不是走后门进信箱）。
+#   * 总量 256 KiB：任何编辑器/一次模型注入都能吞下，超了说明该 sweep 了。
+MEMORY_INBOX_MAX_ITEMS = 200
+MEMORY_INBOX_ITEM_MAX_BYTES = 16 * 1024
+MEMORY_INBOX_MAX_BYTES = 256 * 1024
+# `sweep` 的默认天数：超过它还没被取走的，默认就不是"没来得及看"，而是没人要了。
+# 默认只**报告**，`--apply` 才真删（与 `prune` 同一个规矩：先让人看一眼）。
+MEMORY_INBOX_SWEEP_DAYS = 30
+
+# ---- dream：把一个项目的记录收敛成摘要（见 references/memory.md「收敛」）----
+# **摘要不是新事实**，是一条指向记录的收敛视图：每条断言都必须能下钻一层到来源。
+# 脚本负责机械的那半（挑记录、分组、发骨架、校验回指、写回），模型负责总结那半。
+# 骨架与成品分两个文件：骨架可随时重发，成品只在**回指校验全过**之后才写。
+MEMORY_DREAM_DRAFT = "摘要.draft.md"
+MEMORY_DREAM_SUMMARY = "摘要.md"
+# 骨架里每条断言的位置占位符。成品里它必须被换成一个指向记录的 markdown 链接。
+MEMORY_DREAM_SLOT = "<记录文件名>"
+
+# ---- promote：升格为技能（只报候选，**不自动打包**）----
+# 三条件**同时**满足才够格。第 2、3 条是机械的；第 1 条（"是一套过程"）判定不了，
+# 只好用一个**措辞代理**：正文里同时出现触发词、步骤词、验证词。
+# 代理会漏报，这正是可接受的失效方向 —— promote 只给建议，漏报不会造成破坏。
+MEMORY_PROCEDURE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("触发", ("当", "如果", "遇到", "一旦", "触发", "场景", "前提")),
+    ("步骤", ("步骤", "先", "再", "然后", "接着", "最后", "做法", "流程", "第 1", "第1")),
+    ("验证", ("验证", "检查", "确认", "自测", "命令", "核对", "复现")),
+)
+# 第 2 条「已真实执行过」：来源必须是"做过"的那两档。
+MEMORY_EXECUTED_SOURCES = ("tested",)
+# 第 3 条「有重复需求」：被多少个工作区引用、或同一工作区命中多少次。
+MEMORY_PROMOTE_CITES = 2
+MEMORY_PROMOTE_HITS = 2
+
 # ---- 渐进原则（老记录只报不拦）----
 # 依据是**显式清单**，不是日期启发式：日期不可靠（实测同一份语料里日期字段只覆盖一半），
 # 而「这条记录是改动之前写的」只有人能确定。三处来源，优先级从高到低：
@@ -663,6 +754,73 @@ def legacy_decl_path(container: str) -> str:
 def goals_path(container: str) -> str:
     """容器根的 `目标.md` 落点。**缺它是正常的**——三个真实语料里一个都没有。"""
     return os.path.join(container, GOALS_FILE)
+
+
+# --------------------------------------------------------------------------- #
+# 全局记忆的落点
+# --------------------------------------------------------------------------- #
+def dsh_home() -> str:
+    """DSH home：`$DSH_HOME`，没设时 `~/.dsh`。
+
+    与宿主、与我们插件自己的 `settings.json` 同一套约定（`DSH_HOME` 优先级高于 `~/.dsh`），
+    这样用户只要记住一个地方。
+    """
+    override = os.environ.get("DSH_HOME", "").strip()
+    if override:
+        return override
+    return os.path.join(os.path.expanduser("~"), ".dsh")
+
+
+def memory_root(explicit: str | None = None) -> str:
+    """全局记忆的根目录。三级：`--memory` > `$DSH_WORKLOG_MEMORY` > `$DSH_HOME/memory`。
+
+    环境变量那一档是为**测试隔离**留的：harness 必须能指向一个临时目录，
+    否则跑一次测试就会动到用户真实的记忆库 —— 这个坑我们在设置文件上已经踩过一次
+    （见 tests/_pkg.mjs 里那段注释）。
+    """
+    if explicit:
+        return os.path.abspath(explicit)
+    env = os.environ.get("DSH_WORKLOG_MEMORY", "").strip()
+    if env:
+        return os.path.abspath(env)
+    return os.path.join(dsh_home(), MEMORY_DIR_NAME)
+
+
+def memory_index_path(root: str) -> str:
+    """注入用的索引。**生成物**：内容由正文分册推出，`memory index` 重建。"""
+    return os.path.join(root, MEMORY_INDEX_NAME)
+
+
+def memory_registry_path(root: str) -> str:
+    return os.path.join(root, MEMORY_REGISTRY_NAME)
+
+
+def memory_candidates_path(root: str) -> str:
+    return os.path.join(root, MEMORY_CANDIDATES_NAME)
+
+
+def memory_state_path(root: str) -> str:
+    return os.path.join(root, MEMORY_STATE_NAME)
+
+
+def memory_personal_dir(root: str) -> str:
+    return os.path.join(root, MEMORY_PERSONAL_DIR)
+
+
+def memory_inbox_dir(root: str) -> str:
+    return os.path.join(root, MEMORY_INBOX_DIR)
+
+
+def memory_manifest_path(workspace: str, container: str | None = None) -> str:
+    """某个工作区的发布清单落点：`<容器>/发布.md`。
+
+    容器名按既有回退发现（`--work-log` → `work_log/` → `journal/` → `work-log/`），
+    与工作区里其它命令**走同一条发现逻辑** —— 清单在哪儿，取决于容器在哪儿。
+    """
+    if container:
+        return os.path.join(container, MEMORY_MANIFEST_NAME)
+    found = resolve_dir(workspace, None, ("work_log", "journal", "work-log"))
+    return os.path.join(found or os.path.join(workspace, "work_log"), MEMORY_MANIFEST_NAME)
 
 
 def legacy_decl_patterns(container: str) -> list[str]:
@@ -3284,6 +3442,1490 @@ def cmd_retro(args: argparse.Namespace) -> int:
         print(f"wrote {args.out} ({len(picked)} entries, {leaves} open items)")
     else:
         print(body)
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# 全局记忆（跨工作区，见 references/memory.md）
+#
+# 这一层把工作区的**经验层**延伸到工作区之外：一条在一个工作区里确证过的教训，
+# 能在**另一个**工作区被用到。三条设计约束，下面每处代码都受它们约束：
+#
+#   1. **准入靠分档，不靠"看起来重要吗"** —— 后者等于预测未来，而且会系统性地
+#      偏向"听起来宏大的话"，正好与实战教训相反（见 MEMORY_SOURCE_MANUAL）。
+#   2. **工具没有跨工作区读文件的权限** —— 唯一获准读的工作区文件是
+#      `<工作区>/<容器>/发布.md`。所以"来源真实存在"这件事，在别的工作区里
+#      只能靠那份清单核；只有在本工作区里才核得到真实记录（见 resolve_record_ref）。
+#   3. **超限报错，绝不静默截断** —— 记忆悄悄变得不完整，是这套东西最不该有的
+#      失效方式：`lint` 报 ERROR，`index` 返回非零，但一个字都不删。
+# --------------------------------------------------------------------------- #
+MEMORY_FIELD_KEYS = ("id", "applies-to", "state", "source", "cited-by")
+MEMORY_ENTRY_START_RE = re.compile(r"^-\s*id\s*:\s*(.*?)\s*$")
+MEMORY_FIELD_RE = re.compile(r"^([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.*)$")
+MEMORY_VOLUME_RE = re.compile(r"^(\d{1,2})-(.+)\.md$")
+MEMORY_TAG_SPLIT_RE = re.compile(r"[,，、;；\s]+")
+MEMORY_WL_REF_RE = re.compile(r"^wl/(\d{1,6})$")
+MEMORY_DATE_REF_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[^\s/\\]*\.md$")
+MEMORY_SOURCE_WL_RE = re.compile(r"^(?:([^\s/\\]+)/)?wl/(\d{1,6})$")
+MEMORY_SOURCE_DATE_RE = re.compile(r"^(?:([^\s/\\]+)/)?(\d{4}-\d{2}-\d{2}[^\s/\\]*\.md)$")
+MEMORY_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+MEMORY_MANIFEST_ITEM_RE = re.compile(r"^-\s+(\S+)\s*(.*)$")
+MEMORY_MANIFEST_ID_RE = re.compile(r"→\s*id\s*[:：]\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*$")
+# 近似重复的阈值：标题规范化 + 正文 trigram 的 Dice 系数。**只出 WARN**，
+# `--strict` 才抬成 ERROR —— 判不准的一律不判死刑，是本项目的既有规矩。
+MEMORY_DUP_THRESHOLD = 0.7
+
+
+def _memory_now() -> str:
+    return _dt.datetime.now().replace(microsecond=0).isoformat()
+
+
+def _memory_sha1(text: str) -> str:
+    import hashlib
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def _memory_json_read(path: str, default):
+    """读一个簿记用的 JSON。**读不出来不是错误** —— 退回默认值继续干活。
+
+    簿记文件（名册 / 候选 / 状态）是工具自己的，不是用户的记录；
+    它坏了最多是"这次得多干一点"，不该让任何命令失败。
+    """
+    if not os.path.isfile(path):
+        return default
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return default
+    if not isinstance(data, type(default)):
+        return default
+    return data
+
+
+def _memory_json_write(path: str, data) -> bool:
+    """写簿记 JSON，**内容不变就一个字节都不写**（幂等的前提）。
+
+    键排序 + 固定缩进：这样"内容没变"与"字节没变"是同一件事。
+    先写临时文件再 `os.replace`：两个工作区同时写也不会有半截文件。
+    """
+    text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if os.path.isfile(path) and read_raw(path) == text:
+        return False
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+    return True
+
+
+# ---- 分册与条目 ---------------------------------------------------------- #
+def memory_blocks(text: str) -> list[tuple[int, int]]:
+    """把一个分册切成条目块，返回 `[(起, 止)`] 半开区间的行下标。
+
+    一条 = `- id:` 那一行 + 紧跟的缩进行。空行或非缩进行结束这一条。
+    这条判据同时被解析与**外科式改写**用，所以只写一份。
+    """
+    lines = text.splitlines(keepends=True)
+    blocks: list[tuple[int, int]] = []
+    i = 0
+    while i < len(lines):
+        if MEMORY_ENTRY_START_RE.match(lines[i]):
+            j = i + 1
+            while j < len(lines) and lines[j].strip() and lines[j][:1].isspace():
+                j += 1
+            blocks.append((i, j))
+            i = j
+        else:
+            i += 1
+    return blocks
+
+
+def _memory_block_fields(block: list[str]) -> tuple[dict[str, str], list[str]]:
+    """一个条目块 → (字段表, 正文行)。
+
+    字段只认 `MEMORY_FIELD_KEYS` 那五个：正文里写一个 `做法：…` 不会被误当成字段，
+    因为 `做法` 不在表里。代价写在明处：**正文别以这五个字段名开头**。
+    """
+    fields: dict[str, str] = {}
+    body: list[str] = []
+    for k, raw in enumerate(block):
+        s = raw.strip()
+        if not s:
+            continue
+        if k == 0:
+            m = MEMORY_ENTRY_START_RE.match(raw)
+            if m:
+                fields["id"] = m.group(1).strip()
+            continue
+        m = MEMORY_FIELD_RE.match(s)
+        if m and m.group(1).lower() in MEMORY_FIELD_KEYS:
+            fields[m.group(1).lower()] = m.group(2).strip()
+        else:
+            body.append(s)
+    return fields, body
+
+
+def _memory_list_cell(value: str) -> list[str]:
+    """`[a, b]` / `a, b` / 空 → 列表。中英文逗号、顿号、分号、空白都当分隔符。"""
+    v = value.strip()
+    if v.startswith("["):
+        v = v[1:]
+    if v.endswith("]"):
+        v = v[:-1]
+    return [t for t in MEMORY_TAG_SPLIT_RE.split(v) if t]
+
+
+def memory_volumes(root: str, personal: bool = False) -> list[tuple[str, str, str]]:
+    """正文分册：`<记忆根>/NN-<领域>.md`（`personal/` 下同形）。
+
+    只认**直下**一级、且名字形如 `NN-<领域>.md` 的文件。`INDEX.md` 与
+    名册/候选/状态那些 JSON 都不在这个形状里，所以不必逐个排除。
+    """
+    base = memory_personal_dir(root) if personal else root
+    if not os.path.isdir(base):
+        return []
+    out: list[tuple[str, str, str]] = []
+    for name in sorted(os.listdir(base)):
+        m = MEMORY_VOLUME_RE.match(name)
+        path = os.path.join(base, name)
+        if m and os.path.isfile(path):
+            out.append((m.group(1), m.group(2), path))
+    return out
+
+
+def parse_memory_volume(text: str, volume: str, domain: str, personal: bool = False,
+                        where: str = "") -> list[dict]:
+    """一个分册 → 条目表。**只解析、不判断**（合法性全部交给 `memory lint`）。"""
+    lines = text.splitlines(keepends=True)
+    out: list[dict] = []
+    for start, end in memory_blocks(text):
+        fields, body = _memory_block_fields(lines[start:end])
+        state = fields.get("state", "").strip() or MEMORY_RETIRED_DEFAULT
+        out.append({
+            "id": fields.get("id", "").strip(),
+            "applies_to": _memory_list_cell(fields.get("applies-to", "")),
+            "state": state,
+            "source": fields.get("source", "").strip(),
+            "cited_by": _memory_list_cell(fields.get("cited-by", "")),
+            "body": body,
+            "where": where or volume,
+            "ln": start + 1,
+            "volume": volume,
+            "domain": domain,
+            "personal": personal,
+            "start": start,
+            "end": end,
+        })
+    return out
+
+
+def load_memory_entries(root: str, include_personal: bool = True) -> list[dict]:
+    """整个记忆库的条目。`personal/` 里的**只在使用方显式要时**才读。"""
+    out: list[dict] = []
+    for _num, domain, path in memory_volumes(root):
+        out.extend(parse_memory_volume(read(path), os.path.basename(path), domain,
+                                       False, os.path.basename(path)))
+    if include_personal:
+        for _num, domain, path in memory_volumes(root, personal=True):
+            out.extend(parse_memory_volume(read(path), os.path.join(MEMORY_PERSONAL_DIR,
+                                                                   os.path.basename(path)),
+                                           domain, True,
+                                           os.path.join(MEMORY_PERSONAL_DIR,
+                                                        os.path.basename(path))))
+    return out
+
+
+def memory_body_line(entry: dict) -> str:
+    return " ".join(l.strip() for l in entry["body"] if l.strip())
+
+
+def render_memory_entry(entry: dict) -> str:
+    """按约定格式渲染一条（`index` 与 `add` 写出去的就是这个形状）。"""
+    out = [f"- id: {entry['id']}",
+           f"  applies-to: {', '.join(entry['applies_to'])}",
+           f"  state: {entry['state']}",
+           f"  source: {entry['source']}",
+           f"  cited-by: [{', '.join(entry['cited_by'])}]"]
+    out += ["  " + l for l in entry["body"]]
+    return "\n".join(out) + "\n"
+
+
+def _memory_cited_by_line(names: list[str]) -> str:
+    return f"cited-by: [{', '.join(names)}]"
+
+
+def upsert_memory_entry(memory: str, entry: dict, update_cited_by: bool = True) -> bool:
+    """把一条写进它的分册。**只动该动的那一行**，其余字节原样留着。
+
+    已存在时（`collect` 重复收集同一个 id）只更新 `cited-by`：条目本身是
+    人维护的（`state` 可能被人工改成 `stale`），收集不该覆盖它。
+    返回是否真的改了文件。
+    """
+    volume_path = os.path.join(memory_personal_dir(memory) if entry["personal"] else memory,
+                               entry["volume"])
+    exists = os.path.isfile(volume_path)
+    text = read_raw(volume_path) if exists else ""
+    nl = nl_of(text) if text else "\n"
+    lines = text.splitlines(keepends=True)
+
+    for start, end in memory_blocks(text):
+        fields, _body = _memory_block_fields(lines[start:end])
+        if fields.get("id") != entry["id"]:
+            continue
+        if not update_cited_by:
+            return False
+        want = _memory_cited_by_line(entry["cited_by"])
+        for k in range(start, end):
+            m = re.match(r"^(\s*)cited-by\s*:\s*(.*?)\s*$", lines[k].rstrip("\r\n"))
+            if m:
+                new = f"{m.group(1)}{want}"
+                if lines[k].rstrip("\r\n") == new:
+                    return False
+                lines[k] = new + nl
+                write_raw(volume_path, "".join(lines))
+                return True
+        # 没有 `cited-by` 行：插在字段块末尾（第一条正文行之前）。
+        at = end
+        for k in range(start + 1, end):
+            s = lines[k].strip()
+            f = MEMORY_FIELD_RE.match(s)
+            if not (f and f.group(1).lower() in MEMORY_FIELD_KEYS):
+                at = k
+                break
+        lines.insert(at, "  " + want + nl)
+        write_raw(volume_path, "".join(lines))
+        return True
+
+    num = entry["volume"].split("-", 1)[0] if "-" in entry["volume"] else "01"
+    if not exists:
+        text = f"# {num} · {entry['domain']}{nl}{nl}"
+        os.makedirs(os.path.dirname(volume_path) or ".", exist_ok=True)
+    elif text.strip():
+        if not text.endswith("\n"):
+            text += nl
+        text += nl
+    write_raw(volume_path, text + render_memory_entry(entry))
+    return True
+
+
+# ---- 来源分档 ------------------------------------------------------------ #
+def parse_record_source(source: str):
+    """`<工作区>/wl/NNNN` 或 `wl/NNNN`（日期式同理）→ `(工作区, 引用)`；不是记录来源返回 None。
+
+    工作区为空串表示"本工作区自己的引用" —— 那种引用能核到真实记录。
+    """
+    s = (source or "").strip()
+    m = MEMORY_SOURCE_WL_RE.match(s)
+    if m:
+        return (m.group(1) or ""), f"wl/{int(m.group(2)):04d}"
+    m = MEMORY_SOURCE_DATE_RE.match(s)
+    if m:
+        return (m.group(1) or ""), m.group(2)
+    return None
+
+
+def memory_source_tier(source: str) -> str:
+    """来源分档 → 档名；认不出返回空串。
+
+    `tested` / `read` / `inferred` 三档进不进索引由 `MEMORY_SOURCES_IN_INDEX` 定；
+    记录来源（`wl/NNNN`、日期式文件名）单独一档 `record`，它永远进索引 ——
+    它指向的是**真的发生过的事**，准入理由最硬。
+    """
+    s = (source or "").strip()
+    if not s:
+        return ""
+    if s.startswith("manual:"):
+        name = s.split(":", 1)[1].strip()
+        return name if name in MEMORY_SOURCE_MANUAL else ""
+    return "record" if parse_record_source(s) else ""
+
+
+def memory_source_in_index(source: str) -> bool:
+    tier = memory_source_tier(source)
+    return tier == "record" or tier in MEMORY_SOURCES_IN_INDEX
+
+
+def resolve_record_ref(root: str, ref: str) -> tuple[str | None, str]:
+    """把一个**工作区内**的记录引用核到真实记录。
+
+    复用既有的记录发现逻辑（`find_entries` / `find_records` / `is_record_name`）：
+    `lesson add` 的来源校验与 `目标.md` 的「相关记录」校验走的就是它，
+    这里不另写一套解析 —— 两套解析必然会在某次改动后给出两个答案。
+    """
+    journal, lessons = resolve_layout(root, None, None)
+    if not journal:
+        return None, "当前目录不是工作区（没有 work_log/ 容器）"
+    r = (ref or "").strip()
+    m = MEMORY_WL_REF_RE.match(r)
+    if m:
+        num = int(m.group(1))
+        paths = find_entries(journal, lessons_skip(lessons)).get(num)
+        if not paths:
+            return None, f"`{r}` 在记录目录里不存在"
+        return paths[0], ""
+    if MEMORY_DATE_REF_RE.match(r):
+        for rec in find_records(journal, lessons_skip(lessons)):
+            if rec["name"] == r:
+                return rec["path"], ""
+        return None, f"`{r}` 在记录目录里不存在"
+    return None, f"`{r}` 不是可识别的记录引用（编号式写 `wl/NNNN`，日期式写文件名）"
+
+
+# ---- 名册 / 候选 / 状态 --------------------------------------------------- #
+def memory_workspace_name(path: str) -> str:
+    """工作区的显示名 = 目录名。`cited-by` 与 `--source` 都用它，不用绝对路径。
+
+    代价写在明处：两个不同路径的工作区**同名**时无法区分 —— `lint` 会为此报一条
+    WARN，而不是假装能分辨。
+    """
+    return os.path.basename(os.path.normpath(os.path.abspath(path)))
+
+
+def load_registry(memory: str) -> dict:
+    return _memory_json_read(memory_registry_path(memory), {})
+
+
+def save_registry(memory: str, data: dict) -> bool:
+    return _memory_json_write(memory_registry_path(memory), data)
+
+
+def load_candidates(memory: str) -> dict:
+    return _memory_json_read(memory_candidates_path(memory), {})
+
+
+def save_candidates(memory: str, data: dict) -> bool:
+    return _memory_json_write(memory_candidates_path(memory), data)
+
+
+def load_state(memory: str) -> dict:
+    """`.state.json`：各工作区清单的摘要哈希 + 检索命中计数。
+
+    形状：`{"workspaces": {<路径>: {"digest":…, "at":…}}, "usage": {<id>: {"hits":…, "first":…, "last":…}}}`。
+    命中计数**只用来给 `lint` 提建议**，绝不自动降级（见 references/memory.md「生命周期」）。
+    放进同一个文件是为了不多开第三个簿记文件，代价是读的人要知道它有两段。
+    """
+    data = _memory_json_read(memory_state_path(memory), {})
+    ws = data.get("workspaces")
+    usage = data.get("usage")
+    return {"workspaces": ws if isinstance(ws, dict) else {},
+            "usage": usage if isinstance(usage, dict) else {}}
+
+
+def save_state(memory: str, data: dict) -> bool:
+    return _memory_json_write(memory_state_path(memory), data)
+
+
+def note_usage(memory: str, entry_id: str, hit: bool = False) -> None:
+    state = load_state(memory)
+    rec = state["usage"].get(entry_id)
+    if not isinstance(rec, dict):
+        rec = {"hits": 0, "first": _memory_now(), "last": ""}
+    if hit:
+        rec["hits"] = int(rec.get("hits", 0) or 0) + 1
+        rec["last"] = _memory_now()
+    state["usage"][entry_id] = rec
+    save_state(memory, state)
+
+
+def registry_names(registry: dict) -> dict:
+    """`{显示名: [路径, …]}` —— 同名工作区会落进同一个键，好让 lint 报出来。"""
+    out: dict[str, list[str]] = {}
+    for path in registry:
+        out.setdefault(memory_workspace_name(path), []).append(path)
+    return out
+
+
+def observe_candidate(memory: str, root: str, registry: dict) -> str:
+    """把一个**被命令行指到**的工作区记成候选（有清单、但没登记）。
+
+    工具没有跨工作区读文件的权限，**无法自行发现工作区**；所以候选只来自
+    "有人把它指给我们看"这一件事 —— 沉默就是不参与。
+    记成候选**不等于收录**：候选只提示，永远不自动收。
+    """
+    if not root:
+        return ""
+    ws = os.path.abspath(root)
+    if ws in registry:
+        return ""
+    journal, _lessons = resolve_layout(ws, None, None)
+    if not journal or not os.path.isfile(os.path.join(journal, MEMORY_MANIFEST_NAME)):
+        return ""
+    cands = load_candidates(memory)
+    if ws in cands:
+        return ""
+    cands[ws] = {"seen": _memory_now()}
+    save_candidates(memory, cands)
+    return ws
+
+
+def resolve_memory_source(root: str, source: str, registry: dict) -> tuple[bool, str, str]:
+    """核实一条 `source`。返回 `(是否可用, 档名, 说明)`。
+
+    * `manual:*` 只判名字认不认得 —— 正文附加要求由 `lint` 判（它要看正文）。
+    * 记录来源：**本工作区**的引用核到真实记录；**别的工作区**的引用只能核到
+      它的发布清单 —— 那是全局层唯一获准读的工作区文件。正是这个限制，让
+      「清单点名」成了"这条教训允许外流"的机械判据。
+    """
+    tier = memory_source_tier(source)
+    if not tier:
+        return False, "", (f"来源 `{source}` 认不出（写 `<工作区>/wl/NNNN`，"
+                           f"或 manual:{'/'.join(MEMORY_SOURCE_MANUAL)} 之一）")
+    if tier != "record":
+        return True, tier, ""
+    ws, ref = parse_record_source(source) or ("", "")
+    if not ws or memory_workspace_name(root) == ws:
+        path, why = resolve_record_ref(root, ref)
+        return (path is not None), tier, why
+    if ws not in registry_names(registry):
+        return False, tier, f"来源里的工作区 `{ws}` 不在名册里（先在那边的 `memory publish`）"
+    for path in registry_names(registry)[ws]:
+        mpath = memory_manifest_path(path)
+        if not os.path.isfile(mpath):
+            continue
+        parsed = parse_manifest(read(mpath))
+        if any(it["ref"] == ref for it in parsed["items"]):
+            return True, tier, ""
+    return False, tier, f"`{ws}` 的发布清单里没有点名 `{ref}`（清单是双向白名单，没点名就不算数）"
+
+
+# ---- 发布清单 ------------------------------------------------------------ #
+def derive_manifest_id(ref: str) -> str:
+    """清单行没写 `→ id:` 时的机械兜底 id。
+
+    中文标题推不出 ASCII slug，所以兜底就是引用本身：`wl/0001` → `wl-0001`。
+    想要一个能读的 id，就在清单里显式写 `→ id: <slug>` —— 那正是这个字段的用处。
+    """
+    if MEMORY_WL_REF_RE.match(ref):
+        return "wl-" + MEMORY_WL_REF_RE.match(ref).group(1).zfill(4)
+    base = ref[:-3] if ref.endswith(".md") else ref
+    slug = slugify(base)
+    return slug or base.lower()
+
+
+def parse_manifest(text: str) -> dict:
+    """解析发布清单 → `{applies-to: [...], upload: bool|None, items: [...], problems: [...]}`。
+
+    头两行是本工作区的声明（`applies-to` / `upload`），空行与 `#` 注释都跳过；
+    之后每行点名一条允许外流的教训。**认得出多少算多少**：解析器不做判断，
+    判断归 `memory lint`。
+    """
+    header: dict[str, object] = {"applies-to": [], "upload": None}
+    items: list[dict] = []
+    problems: list[tuple[str, str]] = []
+    started = False
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = raw.rstrip()
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if not started and not s.startswith("-"):
+            m = MEMORY_FIELD_RE.match(s)
+            if not m:
+                problems.append(("WARN", f"第 {lineno} 行：认不出的声明行 `{s}`"))
+                continue
+            key, value = m.group(1).lower(), m.group(2).strip()
+            if key == "applies-to":
+                header["applies-to"] = _memory_list_cell(value)
+            elif key == "upload":
+                low = value.lower()
+                if low in ("true", "yes", "1", "是", "开"):
+                    header["upload"] = True
+                elif low in ("false", "no", "0", "否", "关", ""):
+                    header["upload"] = False
+                else:
+                    problems.append(("WARN", f"第 {lineno} 行：upload 认不出 `{value}`"
+                                             f"（只认 true / false），按 false 处理"))
+                    header["upload"] = False
+            else:
+                problems.append(("WARN", f"第 {lineno} 行：未知声明 `{key}`（只认 applies-to / upload）"))
+            continue
+        started = True
+        m = MEMORY_MANIFEST_ITEM_RE.match(s)
+        if not m:
+            problems.append(("WARN", f"第 {lineno} 行：认不出的条目行（应写 `- wl/NNNN 一句话`）"))
+            continue
+        ref = m.group(1)
+        rest = m.group(2).strip()
+        mid = MEMORY_MANIFEST_ID_RE.search(rest)
+        if mid:
+            rest = rest[: mid.start()].rstrip()
+        title = rest.strip().strip("→").strip()
+        if title.startswith("-"):
+            title = title.lstrip("-").strip()
+        items.append({"ref": ref, "title": title or ref,
+                      "id": mid.group(1) if mid else derive_manifest_id(ref),
+                      "lineno": lineno})
+    return {"applies-to": header["applies-to"], "upload": header["upload"],
+            "items": items, "problems": problems}
+
+
+def render_manifest(applies_to: list[str], upload: bool, items: list[dict]) -> str:
+    """渲染发布清单。头两行是本工作区的声明 —— 顺序固定，别在前面加标题行。"""
+    out = [f"applies-to: {', '.join(applies_to)}",
+           f"upload: {'true' if upload else 'false'}",
+           "",
+           "# `upload: false` 表示只读不传（默认，也是常见选择）。改成 true 才会被",
+           "# `memory collect` 收走。每一行点名「哪条教训允许外流」；每行那句话就是它进",
+           "# 全局记忆后的正文 —— 所以它得自己站得住，不能靠「点进去看」。",
+           "# `→ id:` 是它进全局记忆后的 id（不写就按引用机械兜底）。手改这个文件是允许的。",
+           ""]
+    for it in items:
+        out.append(f"- {it['ref']}  {it['title']}  →  id: {it['id']}")
+    return "\n".join(out) + "\n"
+
+
+def publish_draft_items(lessons: str | None) -> list[dict]:
+    """从一个工作区的经验层挑出**可外流的草稿行**。
+
+    只挑有 `wl/NNNN` 来源的条目：没来源的结论本来就不许进经验层，更不许外流。
+    草稿的"一句话"直接取经验条的原文（去掉回指），人再把它改成**能带走**的措辞 ——
+    清单里那句话就是全局条目的正文，所以它得自己站得住，不能靠"点进去看"。
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    if not lessons or not os.path.isdir(lessons):
+        return out
+    for name in sorted(os.listdir(lessons)):
+        path = os.path.join(lessons, name)
+        if not name.endswith(".md") or name == "README.md" or not os.path.isfile(path):
+            continue
+        for raw in read(path).splitlines():
+            s = raw.strip()
+            if not s.startswith("- "):
+                continue
+            for num in CITE_RE.findall(s):
+                ref = f"wl/{int(num):04d}"
+                if ref in seen:
+                    continue
+                seen.add(ref)
+                title = re.sub(r"[（(]\s*`?wl/\d+`?\s*[）)]\s*$", "", s[2:].strip()).strip()
+                title = title.replace("**", "").strip()
+                if len(title) > 120:
+                    title = title[:119] + "…"
+                out.append({"ref": ref, "title": title or ref, "id": derive_manifest_id(ref)})
+    return out
+
+
+def load_manifest_items(workspace: str) -> tuple[dict, str]:
+    """读一个工作区的清单 → `(解析结果, 说明)`；没有清单就返回空结果。"""
+    path = memory_manifest_path(workspace)
+    if not os.path.isfile(path):
+        return {"applies-to": [], "upload": None, "items": [], "problems": []}, "无清单（只读不传）"
+    return parse_manifest(read(path)), ""
+
+
+# ---- 索引 ---------------------------------------------------------------- #
+def memory_index_text(memory: str) -> str:
+    """生成注入用的索引正文。**生成物** —— 手写的索引必然与正文分叉。"""
+    entries = [e for e in load_memory_entries(memory)
+               if not e["personal"] and e["state"] == "active" and memory_source_in_index(e["source"])]
+    groups: dict[str, list[dict]] = {}
+    for e in entries:
+        groups.setdefault(e["volume"], []).append(e)
+    lines = ["# 全局记忆索引（生成物：由正文分册推出，勿手写）", ""]
+    for volume in sorted(groups):
+        rows = sorted(groups[volume], key=lambda e: (-len(e["cited_by"]), e["id"]))
+        lines.append(f"## {rows[0]['domain']}")
+        for e in rows:
+            tags = f"（{', '.join(e['applies_to'])}）" if e["applies_to"] else ""
+            lines.append(f"- {e['id']}：{memory_body_line(e)}{tags}")
+        lines.append("")
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def memory_index_size(memory: str) -> int:
+    """索引字数。**按字计不按行计**：一行的长度可以差十倍，按行限等于没限。"""
+    return len(memory_index_text(memory))
+
+
+# ---- 近似重复 ------------------------------------------------------------ #
+def _memory_trigrams(text: str) -> set[str]:
+    s = re.sub(r"[\s\W_]+", "", text.lower())
+    if len(s) < 3:
+        return {s} if s else set()
+    return {s[i:i + 3] for i in range(len(s) - 2)}
+
+
+def memory_similarity(a: str, b: str) -> float:
+    """两条正文的 trigram Dice 系数（0–1）。标题规范化后比对，所以标点与大小写不影响。"""
+    ta, tb = _memory_trigrams(a), _memory_trigrams(b)
+    if not ta or not tb:
+        return 0.0
+    return 2 * len(ta & tb) / (len(ta) + len(tb))
+
+
+# ---- dream：脚本的那一半 -------------------------------------------------- #
+def dream_record_links(text: str) -> list[str]:
+    """正文里指向**记录**的 markdown 链接目标（按出现顺序去重）。"""
+    out: list[str] = []
+    for target in LINK_RE.findall(text):
+        clean = target.split("#", 1)[0].strip()
+        if clean.endswith(".md") and is_record_name(os.path.basename(clean)) and clean not in out:
+            out.append(clean)
+    return out
+
+
+def dream_covered(container: str) -> list[str]:
+    """已经收敛过的记录（`摘要.md` 里出现过的记录链接）。"""
+    path = os.path.join(container, MEMORY_DREAM_SUMMARY)
+    if not os.path.isfile(path):
+        return []
+    return dream_record_links(read(path))
+
+
+def dream_groups(recs: list[dict]) -> list[tuple[str, list[dict]]]:
+    """按主题分组：**与 `topics` 同一套标识符共现机械**（TOKEN_RE + STOPWORDS）。
+
+    每条记录只进一个组 —— 摘要是收敛视图，同一条记录出现两次就变成两份说法。
+    中文标题里没有 ASCII 标识符时落单成组：这是已知代价（识别不了中文主题词），
+    所以分组只是**骨架的建议**，人可以合并。
+    """
+    toks: dict[str, set[int]] = {}
+    for i, rec in enumerate(recs):
+        for t in set(TOKEN_RE.findall(read(rec["path"]))):
+            t = t.lower()
+            if t in STOPWORDS or len(t) < 4:
+                continue
+            toks.setdefault(t, set()).add(i)
+    clusters = sorted(((t, ns) for t, ns in toks.items() if len(ns) >= 2),
+                      key=lambda kv: (-len(kv[1]), kv[0]))
+    used: set[int] = set()
+    groups: list[tuple[str, list[dict]]] = []
+    for t, ns in clusters:
+        members = sorted(n for n in ns if n not in used)
+        if len(members) < 2:
+            continue
+        used.update(members)
+        groups.append((f"主题：{t}", [recs[i] for i in members]))
+    for i, rec in enumerate(recs):
+        if i not in used:
+            groups.append((f"单篇 {display_of(rec)}", [rec]))
+    return groups
+
+
+def dream_skeleton(container: str, recs: list[dict]) -> str:
+    """发一个骨架：**每条断言都要带回指**，填完交给 `dream accept` 校验。"""
+    lines = ["# 摘要骨架（dream 生成，待填写）", "",
+             "> 脚本只做机械的那半：挑出还没收敛的记录、按主题分组、发这个骨架；",
+             "> 总结由模型或人来写。**摘要不是新事实**，是一条指向记录的收敛视图 ——",
+             "> 所以 `### 主题` 下的每条断言都必须带一个指向记录的回指链接，",
+             "> `dream accept` 会逐条机械校验，过不了就拒绝写回。", "",
+             f"## 待收敛（{len(recs)} 篇）", ""]
+    for title, members in dream_groups(recs):
+        lines += [f"### {title}", "", "| 记录 | 标题 |", "|---|---|"]
+        for rec in members:
+            lines.append(f"| [{rec['name']}]({rec['name']}) | {meta_of(rec['path'])['title']} |")
+        lines += ["", f"- <在此写一句话断言>（回指：{MEMORY_DREAM_SLOT}）", ""]
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def dream_validate(root: str, path: str, rep: Report) -> None:
+    """校验一份摘要（骨架或成品）：每条断言带回指、回指不指向不存在的文件。
+
+    回指检查**复用既有的死链检查器** `_check_links` —— 那条路径已经被
+    `check` 用了很久，不另写一份"看起来差不多"的。
+    """
+    where = rel(root, path) if root else path
+    if not os.path.isfile(path):
+        rep.add("ERROR", where, "文件不存在")
+        return
+    text = read(path)
+    in_covered = False
+    bullets = 0
+    for raw in text.splitlines():
+        s = raw.strip()
+        h = heading_level(s)
+        if h:
+            # `## 覆盖范围` 那一节是生成物，里面的链接不是"断言"，不按断言判。
+            # 任何标题都结束那一节 —— 否则它下面的真断言会被整段跳过。
+            in_covered = h[0] == 2 and "覆盖范围" in h[1]
+            continue
+        if not s.startswith("- ") or in_covered:
+            continue
+        bullets += 1
+        if MEMORY_DREAM_SLOT in s:
+            rep.add("ERROR", where, f"回指还是占位符：{s[:60]}")
+        elif not dream_record_links(s):
+            rep.add("ERROR", where, f"断言没有回指记录（`{s[:60]}`）"
+                                    f"—— 摘要里每条断言都要能下钻一层")
+    # 每个 `### 主题` 至少一条断言，否则这个主题等于没收敛
+    sections = re.split(r"^### ", text, flags=re.M)[1:]
+    for sec in sections:
+        head = sec.splitlines()[0].strip() if sec.splitlines() else ""
+        if not any(l.strip().startswith("- ") for l in sec.splitlines()):
+            rep.add("ERROR", where, f"`### {head}` 下一条断言都没写")
+    if not bullets:
+        rep.add("ERROR", where, "整份摘要一条断言都没有")
+    _check_links(root or os.path.dirname(path), path, rep)
+    links = dream_record_links(text)
+    if not links:
+        rep.add("ERROR", where, "整份摘要没有指向任何记录的链接（覆盖范围无从判断）")
+
+
+def _dream_strip_covered(text: str) -> str:
+    """去掉 `## 覆盖范围` 那一节（它由 `accept` 重新生成）。"""
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    skip = False
+    for line in lines:
+        h = heading_level(line)
+        if h and h[0] <= 2:
+            skip = h[0] == 2 and "覆盖范围" in h[1]
+        if not skip:
+            out.append(line)
+    return "".join(out)
+
+
+# ---- promote：只报候选，不自动打包 ---------------------------------------- #
+def promote_conditions(entry: dict, usage: dict) -> tuple[bool, list[tuple[str, bool, str]]]:
+    """三条件**同时**满足才够格。返回 `(够格, [(条件, 满足否, 依据)])`。
+
+    第 1 条（"是一套过程"）判定不了，只好用**措辞代理**：正文里同时出现触发词、
+    步骤词、验证词。代理会漏报 —— 这正是可接受的失效方向：`promote` 只给建议，
+    漏报不会造成破坏；而**猜错**会让人去打包一份不合格的技能。
+    """
+    body = memory_body_line(entry)
+    marks = []
+    for name, words in MEMORY_PROCEDURE_MARKERS:
+        hit = next((w for w in words if w in body), "")
+        marks.append((f"是一套过程（{name}）", bool(hit), hit or "没找到对应措辞"))
+    tier = memory_source_tier(entry["source"])
+    executed = tier in ("tested", "record")
+    marks.append(("已真实执行过", executed, entry["source"] or "(无来源)"))
+    hits = int((usage.get(entry["id"]) or {}).get("hits", 0) or 0)
+    cited = len(entry["cited_by"])
+    marks.append((f"有重复需求（≥{MEMORY_PROMOTE_CITES} 个工作区引用 或 ≥{MEMORY_PROMOTE_HITS} 次命中）",
+                  cited >= MEMORY_PROMOTE_CITES or hits >= MEMORY_PROMOTE_HITS,
+                  f"cited-by {cited} / 命中 {hits}"))
+    return all(m[1] for m in marks), marks
+
+
+# ---- 命令：memory -------------------------------------------------------- #
+def cmd_memory_publish(args: argparse.Namespace) -> int:
+    root = os.path.abspath(args.root)
+    journal, lessons = resolve_layout(root, args.journal, args.lessons)
+    if not journal:
+        print("ERROR: 找不到记录容器（work_log/；旧名 journal/、work-log/ 也认）")
+        return 1
+    memory = memory_root(args.memory)
+    path = os.path.join(journal, MEMORY_MANIFEST_NAME)
+    old = parse_manifest(read(path)) if os.path.isfile(path) else {"applies-to": [], "upload": None,
+                                                                  "items": []}
+    old_ids = {it["ref"]: it["id"] for it in old["items"]}
+    applies = (_memory_list_cell(args.applies_to) if args.applies_to is not None
+               else list(old["applies-to"]))
+    upload = bool(args.upload) if args.upload is not None else bool(old["upload"] or False)
+    draft = publish_draft_items(lessons)
+    fresh = {it["ref"] for it in draft}
+    for it in draft:
+        it["id"] = old_ids.get(it["ref"], it["id"])
+    kept = 0
+    for it in old["items"]:
+        if it["ref"] not in fresh:
+            draft.append({"ref": it["ref"], "title": it["title"], "id": it["id"]})
+            kept += 1
+    text = render_manifest(applies, upload, draft)
+    print(f"工作区：{memory_workspace_name(root)}  （{root}）")
+    print(f"清单：{rel(root, path)}")
+    print(f"applies-to: {', '.join(applies) or '(空 = 到处都适用)'}")
+    print(f"upload: {'true（允许外流）' if upload else 'false（只读不传）'}")
+    print(f"条目：{len(draft)} 条（这一轮从经验层挑出 {len(fresh)} 条；沿用旧清单 {kept} 条）")
+    if args.dry_run:
+        print("[dry-run] 清单与名册都不写")
+        return 0
+    write_raw(path, text)
+    registry = load_registry(memory)
+    registry[root] = {"applies-to": applies, "read": True, "upload": upload,
+                      "last-publish": _memory_now()}
+    save_registry(memory, registry)
+    cands = load_candidates(memory)
+    if cands.pop(root, None) is not None:
+        save_candidates(memory, cands)
+    print(f"已登记进名册：{rel(memory, memory_registry_path(memory))}")
+    print(f"提示：清单里那句话就是全局条目的正文，把它改成**能带走**的措辞；"
+          f"`→ id:` 不写就按引用机械兜底。")
+    return 0
+
+
+def cmd_memory_collect(args: argparse.Namespace) -> int:
+    memory = memory_root(args.memory)
+    os.makedirs(memory, exist_ok=True)
+    registry = load_registry(memory)
+    state = load_state(memory)
+    wrote_any = False
+    changed: list[str] = []
+    skipped: list[str] = []
+    problems: list[str] = []
+
+    if not registry:
+        print("名册里没有工作区（在那边跑 `memory publish` 登记）")
+    for ws in sorted(registry):
+        name = memory_workspace_name(ws)
+        conf = registry[ws] if isinstance(registry[ws], dict) else {}
+        if not conf.get("read", True):
+            skipped.append(f"{name}（read: false）")
+            continue
+        if not os.path.isdir(ws):
+            skipped.append(f"{name}（目录不存在：{ws}）")
+            continue
+        manifest, note = load_manifest_items(ws)
+        if note:
+            skipped.append(f"{name}（{note}）")
+            continue
+        for lv, msg in manifest["problems"]:
+            problems.append(f"{name}: {msg}")
+        text = read_raw(memory_manifest_path(ws))
+        digest = _memory_sha1(text)
+        st = state["workspaces"].get(ws)
+        if isinstance(st, dict) and st.get("digest") == digest:
+            skipped.append(f"{name}（清单没变）")
+            continue
+        if not manifest["upload"]:
+            if not args.dry_run:
+                state["workspaces"][ws] = {"digest": digest, "at": _memory_now()}
+                wrote_any = True
+            skipped.append(f"{name}（upload: false，只读不传）")
+            continue
+        for it in manifest["items"]:
+            ref = it["ref"]
+            if not (MEMORY_WL_REF_RE.match(ref) or MEMORY_DATE_REF_RE.match(ref)):
+                problems.append(f"{name}: 第 {it['lineno']} 行：`{ref}` 不是可识别的记录引用")
+                continue
+            eid = it["id"]
+            if not MEMORY_ID_RE.match(eid):
+                problems.append(f"{name}: 第 {it['lineno']} 行：id `{eid}` 不合法"
+                                f"（只认小写拉丁 / 数字 / 连字符）")
+                continue
+            entry = {"id": eid, "applies_to": list(manifest["applies-to"]), "state": "active",
+                     "source": f"{name}/{ref}", "cited_by": [name],
+                     "body": [it["title"]], "personal": False,
+                     "volume": f"01-{manifest['applies-to'][0]}.md" if manifest["applies-to"]
+                               else "01-general.md",
+                     "domain": manifest["applies-to"][0] if manifest["applies-to"] else "general"}
+            existing = [e for e in load_memory_entries(memory) if e["id"] == eid]
+            if existing:
+                other = [e for e in existing if e["volume"] != entry["volume"]]
+                if other:
+                    problems.append(f"{name}: id `{eid}` 已被分册 `{other[0]['volume']}` 占用"
+                                    f"（id 全局唯一，两个工作区不能发布同名 id）")
+                    continue
+                entry["volume"] = existing[0]["volume"]
+                entry["domain"] = existing[0]["domain"]
+                entry["cited_by"] = sorted(set(existing[0]["cited_by"]) | {name})
+            else:
+                note_usage(memory, eid)
+                changed.append(f"+ {eid}（{name}）")
+            if args.dry_run:
+                continue
+            if upsert_memory_entry(memory, entry):
+                wrote_any = True
+                if not existing:
+                    changed.append(f"+ {eid}（{name}）")
+        if not args.dry_run:
+            state["workspaces"][ws] = {"digest": digest, "at": _memory_now()}
+            wrote_any = True
+
+    cand = observe_candidate(memory, os.path.abspath(args.root), registry)
+    if wrote_any and not args.dry_run:
+        save_state(memory, state)
+    print(f"MEMORY  {memory}")
+    for c in changed:
+        print("  " + c)
+    for s in skipped:
+        print("  - " + s)
+    for p in problems:
+        print("  ! " + p)
+    if not changed and not problems:
+        print("  没有新东西（collect 是幂等的：清单没变就不重复收）")
+    if cand:
+        print(f"  候选（未登记，只提示）：{cand}")
+    if args.dry_run:
+        print("[dry-run] 什么都没写")
+    return 1 if problems else 0
+
+
+def cmd_memory_add(args: argparse.Namespace) -> int:
+    memory = memory_root(args.memory)
+    eid = (args.id or "").strip()
+    if not MEMORY_ID_RE.match(eid):
+        print(f"ERROR: id `{args.id}` 不合法：只认小写拉丁 / 数字 / 连字符（如 `host-style-claiming`）")
+        return 1
+    root = os.path.abspath(args.root)
+    registry = load_registry(memory)
+    ok_src, tier, why = resolve_memory_source(root, args.source, registry)
+    if not ok_src:
+        print(f"ERROR: {why}")
+        return 1
+    if tier == "inferred":
+        note = "未经证实"
+        if note not in args.text:
+            print(f"ERROR: `manual:inferred` 必须显式标注「{note}」"
+                  f"—— 堵死推断的结果不是没有推断，而是推断被伪装成「读过」")
+            return 1
+    tags = _memory_list_cell(args.applies_to or "")
+    for t in tags:
+        if not MEMORY_TAG_RE.match(t):
+            print(f"ERROR: applies-to 标签 `{t}` 不合法（只认小写拉丁 / 数字 / 连字符）")
+            return 1
+    if any(e["id"] == eid for e in load_memory_entries(memory)):
+        print(f"ERROR: id `{eid}` 已经存在（id 全局唯一；要改一条就先改分册里的那一条）")
+        return 1
+    volume = args.volume or (f"01-{tags[0]}.md" if tags else "01-general.md")
+    if not MEMORY_VOLUME_RE.match(volume):
+        print(f"ERROR: 分册名 `{volume}` 不合约定（应形如 `01-<领域>.md`）")
+        return 1
+    entry = {"id": eid, "applies_to": tags, "state": args.state, "source": args.source,
+             "cited_by": [], "body": [" ".join(args.text.split())], "personal": args.personal,
+             "volume": volume, "domain": MEMORY_VOLUME_RE.match(volume).group(2)}
+    if args.dry_run:
+        print(f"[dry-run] 将写入 {entry['volume']}")
+        print(render_memory_entry(entry).rstrip())
+        return 0
+    os.makedirs(memory, exist_ok=True)
+    upsert_memory_entry(memory, entry)
+    note_usage(memory, eid)
+    print(f"已加入 {entry['volume']}")
+    print(render_memory_entry(entry).rstrip())
+    print("提示：跑 `memory index` 重建索引，`memory lint` 过一遍门禁。")
+    return 0
+
+
+def cmd_memory_search(args: argparse.Namespace) -> int:
+    memory = memory_root(args.memory)
+    q = args.query.strip().lower()
+    tags = set(_memory_list_cell(args.tags or ""))
+    states = ("active", "stale", "retired") if args.include_retired else ("active", "stale")
+    hits = []
+    for e in load_memory_entries(memory, include_personal=args.include_personal):
+        if e["state"] not in states:
+            continue
+        if tags and not (tags & set(e["applies_to"])):
+            continue
+        hay = " ".join([e["id"], memory_body_line(e), " ".join(e["applies_to"])]).lower()
+        if q and q not in hay:
+            continue
+        hits.append(e)
+    for e in hits[: args.limit]:
+        mark = " (personal)" if e["personal"] else ""
+        print(f"{e['id']}\t{e['state']}\t{e['source']}{mark}")
+        print(f"    {memory_body_line(e)}")
+    print(f"\n{len(hits)} 条命中" + (f"（只显示前 {args.limit} 条）" if len(hits) > args.limit else ""))
+    if not args.include_personal:
+        print("（personal/ 默认不检索；要看加 `--include-personal`）")
+    if not args.include_retired:
+        print("（retired 默认不检索；要看加 `--include-retired`）")
+    if hits and not args.dry_run:
+        # 命中是**弱且危险**的信号：只记下来给 `lint` 提建议，绝不据此降级。
+        for e in hits[: args.limit]:
+            note_usage(memory, e["id"], hit=True)
+    return 0
+
+
+def memory_lint_report(root: str, memory: str, strict: bool) -> Report:
+    """`memory lint`：§八 那张表的实现。级别按表走，判不准的一律 WARN。"""
+    rep = Report(strict)
+    if not os.path.isdir(memory):
+        rep.add("ERROR", memory, "记忆根不存在（先 `memory add` 或 `memory publish`+`memory collect`）")
+        return rep
+    entries = load_memory_entries(memory)
+    registry = load_registry(memory)
+    names = registry_names(registry)
+    state = load_state(memory)
+    seen: dict[str, dict] = {}
+    for e in entries:
+        where = e["where"]
+        if not MEMORY_ID_RE.match(e["id"]):
+            rep.add("ERROR", where, f"第 {e['ln']} 行：id `{e['id']}` 不合法"
+                                    f"（只认小写拉丁 / 数字 / 连字符）")
+        if e["id"] in seen:
+            rep.add("ERROR", where, f"第 {e['ln']} 行：id `{e['id']}` 重复"
+                                    f"（第一次出现在 {seen[e['id']]['where']} 第 {seen[e['id']]['ln']} 行）")
+        else:
+            seen[e["id"]] = e
+        if e["state"] not in MEMORY_STATES:
+            rep.add("ERROR", where, f"第 {e['ln']} 行：state `{e['state']}` 认不出"
+                                    f"（只能是 {' / '.join(MEMORY_STATES)}）")
+        for t in e["applies_to"]:
+            if not MEMORY_TAG_RE.match(t):
+                rep.add("ERROR", where, f"第 {e['ln']} 行：applies-to 标签 `{t}` 不合法"
+                                        f"（只认小写拉丁 / 数字 / 连字符）")
+        body = memory_body_line(e)
+        ok_src, tier, why = resolve_memory_source(root, e["source"], registry)
+        if not ok_src:
+            rep.add("ERROR", where, f"第 {e['ln']} 行：{why}")
+        elif not tier:
+            rep.add("ERROR", where, f"第 {e['ln']} 行：来源 `{e['source']}` 认不出，不能分档")
+        elif tier == "read" and not _memory_names_source(body):
+            rep.add("ERROR", where, f"第 {e['ln']} 行：`manual:read` 必须在正文里指名出处"
+                                    f"（哪个文件、哪一节：反引号里的名字 / 文件名 / `§`）")
+        elif tier == "tested" and not _memory_checkable(body):
+            rep.add("ERROR", where, f"第 {e['ln']} 行：`manual:tested` 必须写清怎么验的"
+                                    f"（命令 / 数字 / 结果）")
+        elif tier == "inferred" and not any(w in body for w in ("未经证实", "未经验证", "未经核实")):
+            rep.add("ERROR", where, f"第 {e['ln']} 行：`manual:inferred` 必须显式标注「未经证实」"
+                                    f"—— 它不进索引，所以正文里这句标注就是它唯一的护栏")
+        for c in e["cited_by"]:
+            if c not in names:
+                rep.add("ERROR", where, f"第 {e['ln']} 行：cited-by 里的 `{c}` 不是名册里已登记的工作区")
+    for n, paths in sorted(names.items()):
+        if len(paths) > 1:
+            rep.add("WARN", rel(memory, memory_registry_path(memory)),
+                    f"名册里有两个工作区同名 `{n}`（{len(paths)} 个路径）："
+                    f"cited-by 与 --source 只写名字，分不出是哪一个")
+    # 分册标题要与文件名对得上
+    for _num, domain, path in memory_volumes(memory):
+        m = H1_RE.search(read(path))
+        if not m:
+            rep.add("WARN", os.path.basename(path), "分册缺一级标题")
+        elif domain not in m.group(1):
+            rep.add("WARN", os.path.basename(path),
+                    f"分册标题 `{m.group(1).strip()}` 与文件名里的领域 `{domain}` 对不上")
+    # 近似重复（判不准，所以只 WARN，--strict 才 ERROR）
+    for i in range(len(entries)):
+        for j in range(i + 1, len(entries)):
+            if entries[i]["id"] == entries[j]["id"]:
+                continue
+            s = memory_similarity(memory_body_line(entries[i]), memory_body_line(entries[j]))
+            if s >= MEMORY_DUP_THRESHOLD:
+                rep.add("WARN", entries[j]["where"],
+                        f"第 {entries[j]['ln']} 行：与 `{entries[i]['id']}` 近似重复"
+                        f"（trigram {s:.2f} ≥ {MEMORY_DUP_THRESHOLD}）")
+    # 索引与正文一致
+    want = memory_index_text(memory)
+    ipath = memory_index_path(memory)
+    if not os.path.isfile(ipath):
+        rep.add("ERROR", MEMORY_INDEX_NAME, "索引未生成（跑 `memory index` 重建）")
+    else:
+        have = read(ipath)
+        if have != want:
+            want_ids = set(re.findall(r"^- ([\w-]+)：", want, re.M))
+            have_ids = set(re.findall(r"^- ([\w-]+)：", have, re.M))
+            miss = sorted(want_ids - have_ids)
+            extra = sorted(have_ids - want_ids)
+            rep.add("ERROR", MEMORY_INDEX_NAME,
+                    f"索引与正文不一致：漏 {len(miss)} 条 / 多 {len(extra)} 条"
+                    f"{'（漏：' + ', '.join(miss[:5]) + '）' if miss else ''}"
+                    f"{'（多：' + ', '.join(extra[:5]) + '）' if extra else ''}"
+                    f" —— 跑 `memory index` 重建，别手改索引")
+        for e in entries:
+            if memory_source_tier(e["source"]) == "inferred" and re.search(
+                    rf"^- {re.escape(e['id'])}：", have, re.M):
+                rep.add("ERROR", MEMORY_INDEX_NAME,
+                        f"`manual:inferred` 的 `{e['id']}` 不得出现在索引里"
+                        f"—— 未经验证的东西不许被注入")
+        size = len(have)
+        if size > MEMORY_INDEX_HARD_CHARS:
+            rep.add("ERROR", MEMORY_INDEX_NAME,
+                    f"索引 {size} 字，超过硬上限 {MEMORY_INDEX_HARD_CHARS} 字"
+                    f"（超限报错、绝不静默截断 —— 该收敛的是索引，不是正文）")
+        elif size > MEMORY_INDEX_SOFT_CHARS:
+            rep.add("INFO", MEMORY_INDEX_NAME,
+                    f"索引 {size} 字，超过软目标 {MEMORY_INDEX_SOFT_CHARS} 字，建议收敛")
+    # INFO：长期未命中 / 够格升格（都只是建议）
+    today_d = _dt.date.today()
+    for e in entries:
+        rec = state["usage"].get(e["id"]) or {}
+        if e["state"] == "active" and not e["personal"]:
+            first = str(rec.get("first", ""))[:10]
+            try:
+                old = bool(first) and (_dt.date.fromisoformat(first) <
+                                       today_d - _dt.timedelta(days=MEMORY_STALE_HIT_DAYS))
+            except ValueError:
+                old = False
+            if old and int(rec.get("hits", 0) or 0) == 0:
+                rep.add("INFO", e["where"],
+                        f"第 {e['ln']} 行：`{e['id']}` 满 {MEMORY_STALE_HIT_DAYS} 天且从未被检索命中"
+                        f"—— **只建议审阅**：只会在极罕见情况下救命的教训，命中次数天然是 0")
+        if not e["personal"] and e["state"] == "active":
+            good, marks = promote_conditions(e, state["usage"])
+            if good:
+                rep.add("INFO", e["where"],
+                        f"第 {e['ln']} 行：`{e['id']}` 够条件升格为技能（跑 `promote suggest` 看依据）")
+    return rep
+
+
+def _memory_names_source(body: str) -> bool:
+    """`manual:read` 的「指名出处」判据：反引号里的名字 / 文件名 / `§`。
+
+    **保守**：只有在正文里**一个**出处线索都没有时才报。宁可漏，不可误报 ——
+    误报会教人忽略告警（这条规矩与 `lint` 的其它启发式一致）。
+    刻意**不**认「第 N 节」这类泛泛说法：它在中文里几乎每句都有，等于没判。
+    """
+    if re.search(r"`[^`]+`", body):
+        return True
+    if re.search(r"\S+\.[A-Za-z0-9]{1,6}\b", body):      # `src/x.py`、`docs/a.md`
+        return True
+    return "§" in body
+
+
+def _memory_checkable(body: str) -> bool:
+    """`manual:tested` 的「可核对结果」判据：命令（反引号）或数字。"""
+    return bool(re.search(r"`[^`]+`", body) or re.search(r"\d", body))
+
+
+def cmd_memory_index(args: argparse.Namespace) -> int:
+    memory = memory_root(args.memory)
+    if not os.path.isdir(memory):
+        print(f"ERROR: 记忆根不存在：{memory}")
+        return 1
+    want = memory_index_text(memory)
+    ipath = memory_index_path(memory)
+    size = len(want)
+    if args.check:
+        if not os.path.isfile(ipath):
+            print(f"ERROR: {MEMORY_INDEX_NAME} 不存在（跑 `memory index` 重建）")
+            return 1
+        have = read(ipath)
+        if have != want:
+            print(f"ERROR: {MEMORY_INDEX_NAME} 与正文分册不一致（跑 `memory index` 重建）")
+            return 1
+        print(f"OK: {MEMORY_INDEX_NAME} 与正文一致（{size} 字）")
+    else:
+        write_raw(ipath, want)
+        print(f"已重建 {rel(memory, ipath)}（{size} 字）")
+    if size > MEMORY_INDEX_HARD_CHARS:
+        print(f"ERROR: 索引 {size} 字超过硬上限 {MEMORY_INDEX_HARD_CHARS} 字"
+              f"—— 超限报错、绝不截断；该收敛的是索引")
+        return 1
+    if size > MEMORY_INDEX_SOFT_CHARS:
+        print(f"提示：索引 {size} 字超过软目标 {MEMORY_INDEX_SOFT_CHARS} 字，建议收敛")
+    return 0
+
+
+def cmd_memory_status(args: argparse.Namespace) -> int:
+    memory = memory_root(args.memory)
+    registry = load_registry(memory)
+    entries = load_memory_entries(memory) if os.path.isdir(memory) else []
+    outer = [e for e in entries if not e["personal"]]
+    personal = [e for e in entries if e["personal"]]
+    cands = load_candidates(memory)
+    cand = observe_candidate(memory, os.path.abspath(args.root), registry)
+    cands = load_candidates(memory)
+    items = _inbox_items(memory)
+    total = sum(i["size"] for i in items)
+    ipath = memory_index_path(memory)
+    size = len(read(ipath)) if os.path.isfile(ipath) else 0
+    print(f"MEMORY  {memory}")
+    print(f"  分册      {len(memory_volumes(memory))} 个，条目 {len(outer)} 条"
+          f"（active {sum(1 for e in outer if e['state'] == 'active')}"
+          f" / stale {sum(1 for e in outer if e['state'] == 'stale')}"
+          f" / retired {sum(1 for e in outer if e['state'] == 'retired')}）")
+    up = sum(1 for v in registry.values() if isinstance(v, dict) and v.get("upload"))
+    print(f"  名册      {len(registry)} 个工作区（upload: {up}）")
+    for ws in sorted(registry, key=memory_workspace_name):
+        conf = registry[ws] if isinstance(registry[ws], dict) else {}
+        flags = []
+        if not conf.get("read", True):
+            flags.append("read: false")
+        if conf.get("upload"):
+            flags.append("upload: true")
+        gone = "" if os.path.isdir(ws) else "  ! 目录不存在"
+        print(f"            - {memory_workspace_name(ws)}{'（' + '，'.join(flags) + '）' if flags else ''}"
+              f"{gone}{'  ' + ws if args.verbose else ''}")
+    print(f"  候选      {len(cands)} 个未登记（只提示，不自动收录）")
+    for ws in sorted(cands, key=memory_workspace_name):
+        print(f"            - {memory_workspace_name(ws)}{'  ' + ws if args.verbose else ''}")
+    if cand:
+        print(f"            （刚记下：{cand}）")
+    print(f"  索引      {MEMORY_INDEX_NAME} {size} 字"
+          f"（软 {MEMORY_INDEX_SOFT_CHARS} / 硬 {MEMORY_INDEX_HARD_CHARS}）")
+    print(f"  信箱      {len(items)} 条 / {total} 字节"
+          f"（上限 {MEMORY_INBOX_MAX_ITEMS} 条 / {MEMORY_INBOX_MAX_BYTES} 字节）")
+    print(f"  personal  {len(personal)} 条（不进索引、默认不检索）")
+    return 0
+
+
+# ---- 命令：dream --------------------------------------------------------- #
+def _dream_parse(args: argparse.Namespace):
+    root = os.path.abspath(args.root)
+    journal, lessons = resolve_layout(root, args.journal, args.lessons)
+    return root, journal, lessons
+
+
+def cmd_dream_prepare(args: argparse.Namespace) -> int:
+    root, journal, lessons = _dream_parse(args)
+    if not journal:
+        print("ERROR: 找不到记录容器（work_log/；旧名 journal/、work-log/ 也认）")
+        return 1
+    recs = find_records(journal, lessons_skip(lessons))
+    covered = set(dream_covered(journal))
+    todo = [r for r in recs if r["name"] not in covered]
+    draft = os.path.join(journal, MEMORY_DREAM_DRAFT)
+    print(f"DREAM  {rel(root, journal)}")
+    print(f"  记录 {len(recs)} 篇；已收敛 {len(recs) - len(todo)} 篇；待收敛 {len(todo)} 篇")
+    if not todo:
+        print("  没有待收敛的记录（`summary` 已经覆盖全部）")
+        return 0
+    text = dream_skeleton(journal, todo)
+    if os.path.isfile(draft) and not args.force:
+        old = read(draft)
+        if MEMORY_DREAM_SLOT not in old:
+            print(f"  骨架已存在且看起来已经填过：{rel(root, draft)}")
+            print("  （要重发就加 `--force`；已填的内容会被覆盖）")
+            return 1
+    if args.dry_run:
+        print("[dry-run] 不写骨架；下面是它的内容：\n")
+        print(text)
+        return 0
+    write_raw(draft, text)
+    print(f"  骨架：{rel(root, draft)}")
+    print("  下一步：**模型写总结**，把每条 `- …（回指：<记录文件名>）` 换成"
+          "一句话断言 + 一个指向记录的链接，然后跑 `dream accept`。")
+    return 0
+
+
+def cmd_dream_accept(args: argparse.Namespace) -> int:
+    root, journal, lessons = _dream_parse(args)
+    if not journal:
+        print("ERROR: 找不到记录容器")
+        return 1
+    src = os.path.abspath(args.in_) if args.in_ else os.path.join(journal, MEMORY_DREAM_DRAFT)
+    rep = Report(False)
+    if not os.path.isfile(src):
+        print(f"ERROR: 找不到要收下的骨架：{src}（先跑 `dream` 发一份）")
+        return 1
+    dream_validate(root, src, rep)
+    if rep.errors():
+        rep.print(False)
+        print("\n拒绝写回：摘要里的每条断言都必须能下钻一层到记录。")
+        return 1
+    text = read(src)
+    links = dream_record_links(text)
+    body = _dream_strip_covered(text)
+    # 骨架的第一行是它自己的 H1，且它的 `## 待收敛` 小节名属于草稿阶段；
+    # 成品换成自己的 H1 + 生成的覆盖范围，其余正文原样留着。
+    rest = body.split("\n", 1)[1] if "\n" in body else body
+    rest = rest.replace("## 待收敛（", "## 本轮收敛（", 1).lstrip("\n")
+    out = [f"# 摘要（dream 收敛视图，{today()}）", "",
+           "> **摘要不是新事实**：它是一条指向记录的收敛视图，每条断言都下钻一层到来源。",
+           "> 覆盖范围由 `dream accept` 生成；要改内容就改骨架再收一次。", "",
+           "## 覆盖范围（生成，勿手改）", ""]
+    out += [f"- [{l}]({l})" for l in links]
+    out += ["", rest]
+    dst = os.path.join(journal, MEMORY_DREAM_SUMMARY)
+    if args.dry_run:
+        print(f"[dry-run] 回指校验全过；将写入 {rel(root, dst)}（{len(links)} 条记录）")
+        return 0
+    write_raw(dst, "\n".join(out).rstrip("\n") + "\n")
+    print(f"已写回 {rel(root, dst)}（{len(links)} 条记录进入覆盖范围）")
+    return 0
+
+
+def cmd_dream_check(args: argparse.Namespace) -> int:
+    root, journal, lessons = _dream_parse(args)
+    if not journal:
+        print("ERROR: 找不到记录容器")
+        return 1
+    path = os.path.join(journal, MEMORY_DREAM_SUMMARY)
+    rep = Report(getattr(args, "strict", False))
+    dream_validate(root, path, rep)
+    rep.print(False)
+    return 1 if rep.errors() else 0
+
+
+# ---- 命令：inbox --------------------------------------------------------- #
+def _inbox_items(memory: str) -> list[dict]:
+    d = memory_inbox_dir(memory)
+    if not os.path.isdir(d):
+        return []
+    out = []
+    for name in sorted(os.listdir(d)):
+        path = os.path.join(d, name)
+        if name.endswith(".tmp") or not os.path.isfile(path):
+            continue
+        out.append({"name": name, "path": path, "size": _file_size(path),
+                    "mtime": os.path.getmtime(path)})
+    return out
+
+
+def _inbox_first_line(path: str) -> str:
+    for line in read(path).splitlines():
+        if line.strip():
+            return line.strip()[:80]
+    return "(空)"
+
+
+def cmd_inbox_put(args: argparse.Namespace) -> int:
+    memory = memory_root(args.memory)
+    if args.file:
+        if not os.path.isfile(args.file):
+            print(f"ERROR: 找不到文件 {args.file}")
+            return 1
+        text = read(args.file)
+    else:
+        text = args.text or ""
+    if not text.strip():
+        print("ERROR: 内容是空的（写点东西再投）")
+        return 1
+    data = text.encode("utf-8")
+    if len(data) > MEMORY_INBOX_ITEM_MAX_BYTES:
+        print(f"ERROR: 单条 {len(data)} 字节，超过上限 {MEMORY_INBOX_ITEM_MAX_BYTES} 字节"
+              f"（真要传文件，应该进工作区、进记录，而不是走信箱）")
+        return 1
+    items = _inbox_items(memory)
+    total = sum(i["size"] for i in items)
+    if len(items) >= MEMORY_INBOX_MAX_ITEMS:
+        print(f"ERROR: 信箱已满：{len(items)} 条 ≥ 上限 {MEMORY_INBOX_MAX_ITEMS} 条。"
+              f"**写满就报错，不静默堆积** —— 先 `inbox take` 或 `inbox sweep`。")
+        return 1
+    if total + len(data) > MEMORY_INBOX_MAX_BYTES:
+        print(f"ERROR: 信箱总量 {total} + {len(data)} 字节会超过上限 {MEMORY_INBOX_MAX_BYTES} 字节。"
+              f"先 `inbox sweep --apply` 清一清。")
+        return 1
+    d = memory_inbox_dir(memory)
+    os.makedirs(d, exist_ok=True)
+    stem = slugify(_inbox_first_line(args.file or args.text or "")) or "msg"
+    name = f"{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{stem[:24]}.md"
+    path = os.path.join(d, name)
+    # 原子写：先落一个带 pid 的临时名再 rename —— 两个工作区同时投也不会互相截断。
+    tmp = os.path.join(d, f".{name}.{os.getpid()}.tmp")
+    with open(tmp, "wb") as fh:
+        fh.write(data)
+    os.replace(tmp, path)
+    print(f"已投入信箱：{name}（{len(data)} 字节）")
+    return 0
+
+
+def cmd_inbox_list(args: argparse.Namespace) -> int:
+    memory = memory_root(args.memory)
+    items = _inbox_items(memory)
+    if args.json:
+        print(json.dumps([{"name": i["name"], "size": i["size"],
+                           "age_seconds": int(_dt.datetime.now().timestamp() - i["mtime"])}
+                          for i in items], ensure_ascii=False, indent=2))
+        return 0
+    print(f"INBOX  {memory_inbox_dir(memory)}（{len(items)} 条 / "
+          f"{sum(i['size'] for i in items)} 字节）")
+    now = _dt.datetime.now().timestamp()
+    for i in items[: args.limit]:
+        age = int((now - i["mtime"]) // 86400)
+        print(f"  {i['name']}  {i['size']:>6d}B  {age:>3d}天  {_inbox_first_line(i['path'])}")
+    if len(items) > args.limit:
+        print(f"  …（还有 {len(items) - args.limit} 条）")
+    return 0
+
+
+def cmd_inbox_take(args: argparse.Namespace) -> int:
+    memory = memory_root(args.memory)
+    items = _inbox_items(memory)
+    match = [i for i in items if i["name"] == args.name]
+    if not match:
+        match = [i for i in items if args.name in i["name"]]
+    if not match:
+        print(f"ERROR: 信箱里没有 `{args.name}`（`inbox list` 看有哪些）")
+        return 1
+    if len(match) > 1:
+        print(f"ERROR: `{args.name}` 不唯一：{', '.join(i['name'] for i in match)}")
+        return 1
+    item = match[0]
+    text = read(item["path"])
+    print(f"--- {item['name']} ---")
+    print(text.rstrip())
+    print("---")
+    if args.into_record:
+        root = os.path.abspath(args.root)
+        journal, lessons = resolve_layout(root, args.journal, args.lessons)
+        if not journal:
+            print("ERROR: 找不到记录容器，无法转移为记录")
+            return 1
+        entries = find_entries(journal, lessons_skip(lessons))
+        num = (max(entries) + 1) if entries else 1
+        slug = slugify(args.into_record)
+        fname = f"{num:04d}-{slug}.md" if slug else f"{num:04d}.md"
+        rpath = os.path.join(journal, fname)
+        if os.path.exists(rpath):
+            print(f"ERROR: 已存在 {rel(root, rpath)}")
+            return 1
+        body = ENTRY_TEMPLATE.format(num=num, title=args.into_record, date=today(), iter="-",
+                                     cmd="<命令 / 数据 / 引用 / 样本>")
+        lines = body.splitlines(keepends=True)
+        span = find_section(lines, 2, "背景与事实核查")
+        payload = ["（来自信箱 `" + item["name"] + "`）", ""] + text.splitlines(keepends=True) + [""]
+        if span:
+            insert_at_end_of_section(lines, span[1], span[2], payload)
+            body = "".join(lines)
+        else:
+            body = body.rstrip("\n") + "\n\n## 来源（信箱）\n\n" + "".join(payload)
+        if args.dry_run:
+            print(f"[dry-run] 将创建 {rel(root, rpath)}，并删除信箱条目 `{item['name']}`")
+            return 0
+        write_raw(rpath, body)
+        print(f"created {rel(root, rpath)}")
+        print("索引建议行：")
+        print(f"| [{fname}]({fname}) | {args.into_record} |")
+    if args.keep:
+        print("（--keep：原件留着）")
+        return 0
+    if args.dry_run:
+        print(f"[dry-run] 将删除 {item['name']}")
+        return 0
+    os.remove(item["path"])
+    print(f"已删除 {item['name']}")
+    return 0
+
+
+def cmd_inbox_sweep(args: argparse.Namespace) -> int:
+    memory = memory_root(args.memory)
+    items = _inbox_items(memory)
+    now = _dt.datetime.now().timestamp()
+    old = [i for i in items if (now - i["mtime"]) // 86400 >= args.older_than]
+    print(f"INBOX  sweep  {memory_inbox_dir(memory)}")
+    print(f"  {len(items)} 条中 {len(old)} 条超过 {args.older_than} 天")
+    for i in old:
+        print(f"    {i['name']}  {int((now - i['mtime']) // 86400)}天  {_inbox_first_line(i['path'])}")
+    if not old:
+        return 0
+    if not args.apply:
+        print("（默认只报告；确认后加 `--apply` 才真删）")
+        return 0
+    for i in old:
+        os.remove(i["path"])
+    print(f"已删除 {len(old)} 条")
+    return 0
+
+
+def cmd_inbox_count(args: argparse.Namespace) -> int:
+    """**给插件调用的计数命令**：stdout 第一行就是一个整数，别的什么都不打印。
+
+    契约写死在文档里：`PromptContext` 那条"待收 N 条"要每次装配求值，
+    所以这个命令必须便宜、且输出可机械解析 —— 多一行字都会让调用方开始猜。
+    """
+    print(len(_inbox_items(memory_root(args.memory))))
+    return 0
+
+
+# ---- 命令：promote ------------------------------------------------------- #
+def cmd_promote_suggest(args: argparse.Namespace) -> int:
+    memory = memory_root(args.memory)
+    if not os.path.isdir(memory):
+        print(f"ERROR: 记忆根不存在：{memory}")
+        return 1
+    state = load_state(memory)
+    rows = []
+    for e in load_memory_entries(memory):
+        if e["personal"] or e["state"] != "active":
+            continue
+        good, marks = promote_conditions(e, state["usage"])
+        rows.append((e, good, marks))
+    good_rows = [r for r in rows if r[1]]
+    print(f"PROMOTE  {memory}")
+    print(f"  {len(rows)} 条在册条目里 {len(good_rows)} 条够格升格为技能")
+    for e, _good, marks in good_rows:
+        print(f"\n  {e['id']}  （{e['source']}）")
+        print(f"    {memory_body_line(e)}")
+        for name, _ok, why in marks:
+            print(f"    ✓ {name}：{why}")
+    if args.all:
+        rest = [r for r in rows if not r[1]]
+        if rest:
+            print(f"\n  未够格（{len(rest)} 条，缺哪一条就写在下面）：")
+            for e, _good, marks in rest:
+                missing = [m[0] for m in marks if not m[1]]
+                print(f"    - {e['id']}：缺 {'、'.join(missing)}")
+    print("\n提示：**只报候选，不自动打包**。分界是「一条事实进记忆，一套过程进技能」；"
+          "升格时必须同时交一个能变红能变绿的最简自测。")
     return 0
 
 

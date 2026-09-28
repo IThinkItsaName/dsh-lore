@@ -99,8 +99,9 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 
 | 变量 | 作用 |
 |---|---|
-| `DSH_HOME` | DSH 用户目录；未设时为 `~/.dsh`。决定设置文件的默认位置。 |
+| `DSH_HOME` | DSH 用户目录；未设时为 `~/.dsh`。决定设置文件与全局记忆的默认位置。 |
 | `DSH_WORKLOG_SETTINGS` | 直接指定设置文件的**完整路径**，压过 `DSH_HOME`。给便携安装与测试用。 |
+| `DSH_WORKLOG_MEMORY` | 直接指定**全局记忆根目录**的完整路径，压过 `DSH_HOME`。同样给便携安装与测试用 —— 测试必须能指向临时目录，否则跑一次就会动到用户真实的记忆库。 |
 | `DSH_WORKLOG_TRACE` | 诊断日志的目标文件。见 `lib/index.js` 顶部注释。 |
 
 ## 已知配置键

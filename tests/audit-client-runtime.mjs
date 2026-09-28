@@ -493,25 +493,25 @@ let SettingsPanel = null
     ok(textOf(loaded).includes('/home/.dsh/worklog/settings.json'),
       'the panel shows the settings file path it read')
 
-    /* ---- the two-tab structure ------------------------------------------ */
+    /* ---- the three-tab structure ---------------------------------------- */
     const tabs = getTabs(loaded)
     ok(tabs !== null, 'the panel renders the host SegmentedTabs')
     ok(tabs.props.value === 'skills', 'the selected tab defaults to 技能', String(tabs.props.value))
     ok(typeof tabs.props.label === 'string' && tabs.props.label !== '',
       'the tab list carries a localized accessible name', String(tabs.props.label))
     const items = tabs.props.items
-    ok(Array.isArray(items) && items.length === 2, 'there are exactly two tabs',
+    ok(Array.isArray(items) && items.length === 3, 'there are exactly three tabs',
       JSON.stringify(items?.map((item) => item.value)))
-    ok(items.map((item) => item.value).join(',') === 'skills,others',
-      'the tab values are skills and others', items.map((item) => item.value).join(','))
-    ok(items.map((item) => item.label).join(',') === '技能,其他',
-      'the tab labels are 技能 and 其他', items.map((item) => item.label).join(','))
+    ok(items.map((item) => item.value).join(',') === 'skills,memory,advanced',
+      'the tab values are skills, memory and advanced', items.map((item) => item.value).join(','))
+    ok(items.map((item) => item.label).join(',') === '技能,记忆,高级',
+      'the tab labels are 技能 / 记忆 / 高级', items.map((item) => item.label).join(','))
     ok(items.every((item) => typeof item.id === 'string' && item.id !== ''
       && typeof item.panelId === 'string' && item.panelId !== '' && item.id !== item.panelId),
       'each tab declares its own id and panelId',
       JSON.stringify(items.map((item) => [item.id, item.panelId])))
-    ok(new Set(items.map((item) => item.id)).size === 2
-      && new Set(items.map((item) => item.panelId)).size === 2,
+    ok(new Set(items.map((item) => item.id)).size === 3
+      && new Set(items.map((item) => item.panelId)).size === 3,
       'the tab ids and the panel ids are each unique (the primitive validates this)')
 
     /* ---- the panel wiring: the selected panel, and only it -------------- */
@@ -579,35 +579,81 @@ let SettingsPanel = null
       'the only two inputs are the two load-time path fields',
       inputs.map((node) => node.props['aria-label']).join('|'))
 
-    await selectTab('others')
-    const others = runtime.tree
-    ok(getTabs(others).props.value === 'others', 'the 其他 tab can be selected')
-    const othersPanels = tabPanels(others)
-    ok(othersPanels.length === 1 && othersPanels[0].props.id === 'dsh-worklog-panel-others',
-      'selecting 其他 renders its panel and only its panel',
-      othersPanels.map((node) => node.props.id).join(','))
-    ok(othersPanels[0].props['aria-labelledby'] === 'dsh-worklog-tab-others',
-      'the 其他 panel points back at its own tab',
-      String(othersPanels[0].props['aria-labelledby']))
-    const otherSwitches = getSwitches(others)
-    ok(otherSwitches.length === 3, 'the 其他 tab holds three switches', String(otherSwitches.length))
-    ok(otherSwitches.map((node) => node.props.label).join(',') === '装载时打日志,允许模型自动调用,允许手动调用',
+    /* ---- the 高级 tab: the three load-time switches --------------------- */
+    await selectTab('advanced')
+    const advanced = runtime.tree
+    ok(getTabs(advanced).props.value === 'advanced', 'the 高级 tab can be selected')
+    const advancedPanels = tabPanels(advanced)
+    ok(advancedPanels.length === 1 && advancedPanels[0].props.id === 'dsh-worklog-panel-advanced',
+      'selecting 高级 renders its panel and only its panel',
+      advancedPanels.map((node) => node.props.id).join(','))
+    ok(advancedPanels[0].props['aria-labelledby'] === 'dsh-worklog-tab-advanced',
+      'the 高级 panel points back at its own tab',
+      String(advancedPanels[0].props['aria-labelledby']))
+    const advancedSwitches = getSwitches(advanced)
+    ok(advancedSwitches.length === 3, 'the 高级 tab holds three switches', String(advancedSwitches.length))
+    ok(advancedSwitches.map((node) => node.props.label).join(',') === '装载时打日志,允许模型自动调用,允许手动调用',
       'the three switches are verbose / modelInvocable / userInvocable, in order',
-      otherSwitches.map((node) => node.props.label).join(','))
-    ok(otherSwitches.map((node) => node.props.checked).join(',') === 'false,true,true',
+      advancedSwitches.map((node) => node.props.label).join(','))
+    ok(advancedSwitches.map((node) => node.props.checked).join(',') === 'false,true,true',
       'they reflect the loaded values (documented defaults when the file is silent)',
-      otherSwitches.map((node) => node.props.checked).join(','))
-    ok(otherSwitches.every((node) => typeof node.props.onChange === 'function'),
+      advancedSwitches.map((node) => node.props.checked).join(','))
+    ok(advancedSwitches.every((node) => typeof node.props.onChange === 'function'),
       'each of the three switches is controlled')
-    ok(getInputs(others).length === 0, 'the 其他 tab holds no text input')
-    ok(getSegments(others).length === 0, 'the 其他 tab holds no segmented control')
-    ok(markedRows(others).length === 0, 'the 其他 tab exposes no mark slot')
-    ok(projectKeyControls(others).length === 0,
-      'no control in the 其他 tab is named for container / lessons / mode',
-      projectKeyControls(others).join(' | '))
-    ok(!idsOf(others).includes('dsh-worklog-mode'),
-      'the 其他 tab carries no removed mode control id')
-    ok(getDisclosure(others) === null, 'the 路径 disclosure belongs to the 技能 tab only')
+    ok(getInputs(advanced).length === 0, 'the 高级 tab holds no text input')
+    ok(getSegments(advanced).length === 0, 'the 高级 tab holds no segmented control')
+    ok(markedRows(advanced).length === 0, 'the 高级 tab exposes no mark slot')
+    ok(projectKeyControls(advanced).length === 0,
+      'no control in the 高级 tab is named for container / lessons / mode',
+      projectKeyControls(advanced).join(' | '))
+    ok(!idsOf(advanced).includes('dsh-worklog-mode'),
+      'the 高级 tab carries no removed mode control id')
+    ok(getDisclosure(advanced) === null, 'the 路径 disclosure belongs to the 技能 tab only')
+
+    /* ---- the 记忆 tab: three defaults, all live-read ------------------- */
+    await selectTab('memory')
+    const memory = runtime.tree
+    ok(getTabs(memory).props.value === 'memory', 'the 记忆 tab can be selected')
+    const memoryPanels = tabPanels(memory)
+    ok(memoryPanels.length === 1 && memoryPanels[0].props.id === 'dsh-worklog-panel-memory',
+      'selecting 记忆 renders its panel and only its panel',
+      memoryPanels.map((node) => node.props.id).join(','))
+    const memorySwitches = getSwitches(memory)
+    ok(memorySwitches.length === 3, 'the 记忆 tab holds three switches', String(memorySwitches.length))
+    ok(memorySwitches.map((node) => node.props.label).join(',') === '启用全局记忆,默认注入记忆索引,个人目录可被检索',
+      'the three switches are memoryEnabled / memoryInjectIndex / memoryPersonalSearchable, in order',
+      memorySwitches.map((node) => node.props.label).join(','))
+    ok(memorySwitches.map((node) => node.props.checked).join(',') === 'true,true,false',
+      'their defaults are on / on / off',
+      memorySwitches.map((node) => node.props.checked).join(','))
+    // The master switch genuinely needs a restart (it decides whether the prompt section and
+    // the tool are registered at all); the other two are read at use time. The panel must say
+    // both things rather than one blanket sentence for the whole page.
+    // The restart wording and the upload-permission pointer are CARRIED BY THE DICTIONARY,
+    // and that is what these assert. `textOf` cannot see them: it only reaches strings on
+    // top-level elements, and both live inside panel elements or nested components. Asserting
+    // the rendered text would therefore be a test that can never fail — the mistake this
+    // project already made once.
+    const clientExports = handoff.factory(loadRequire)
+    ok(clientExports.DICT_ZH['restart.memory'].includes('需重启')
+      && clientExports.DICT_ZH['restart.memory'].includes('即时生效'),
+      'the 记忆 panel copy distinguishes the load-time switch from the live ones',
+      clientExports.DICT_ZH['restart.memory'])
+    ok(clientExports.DICT_EN['restart.memory'].includes('restart')
+      && clientExports.DICT_EN['restart.memory'].includes('immediately'),
+      'the English copy draws the same distinction',
+      clientExports.DICT_EN['restart.memory'])
+    // Upload permission is a per-workspace fact and must not appear as a control here; the
+    // panel has to SAY where it lives, or a reader hunts for a switch that never existed.
+    ok(clientExports.DICT_ZH['memory.note'].includes('发布.md'),
+      'the 记忆 copy says upload permission lives in each workspace\'s 发布.md',
+      clientExports.DICT_ZH['memory.note'])
+    ok(memoryPanels[0].props['aria-labelledby'] === 'dsh-worklog-tab-memory',
+      'the 记忆 panel points back at its own tab',
+      String(memoryPanels[0].props['aria-labelledby']))
+    ok(projectKeyControls(memory).length === 0,
+      'the 记忆 tab offers no control for container / lessons / mode',
+      projectKeyControls(memory).join(' | '))
 
     await selectTab('skills')
     ok(getTabs(runtime.tree).props.value === 'skills', 'the 技能 tab can be selected again')
@@ -644,9 +690,13 @@ let SettingsPanel = null
       'each POST carries the whole form (the route treats it as a document)',
       JSON.stringify(server.state.posts[1]))
     const postedKeys = Object.keys(server.state.posts[1] ?? {}).sort()
-    ok(postedKeys.join(',')
-      === 'guidelinesDir,guidelinesEnabled,guidelinesLanguage,modelInvocable,skillDir,userInvocable,verbose',
-      'the body is exactly the seven load-time keys — no project-side key is sent',
+    // Ten keys now: the seven load-time ones plus the three memory defaults. What this
+    // assertion is really guarding is the ABSENCE of the project-side trio, which the next
+    // check pins directly — so the two overlap on purpose.
+    ok(postedKeys.join(',') === 'guidelinesDir,guidelinesEnabled,guidelinesLanguage,'
+      + 'memoryEnabled,memoryInjectIndex,memoryPersonalSearchable,'
+      + 'modelInvocable,skillDir,userInvocable,verbose',
+      'the body is exactly the ten keys the page owns — no project-side key is sent',
       postedKeys.join(','))
     ok(PROJECT_KEYS.every((key) => !(key in (server.state.posts[1] ?? {}))),
       'the page never posts container / lessons / mode back',
@@ -728,7 +778,7 @@ let SettingsPanel = null
     ok(textOf(runtime.tree).includes('503'), 'a load failure names the HTTP status')
   }
 
-  /* ---- 3f. the 其他 tab: the three switches that had no control before ---- */
+  /* ---- 3f. the 高级 tab: the three switches that had no control before ---- */
   {
     const server = createServer({ guidelinesEnabled: true, guidelinesLanguage: 'zh' })
     globalThis.fetch = server.fetchStub
@@ -736,10 +786,10 @@ let SettingsPanel = null
     api.mount(SettingsPanel, {})
     api.flushEffects()
     await settle()
-    await selectTab('others')
+    await selectTab('advanced')
 
     const switches = getSwitches(runtime.tree)
-    ok(switches.length === 3, 'the 其他 tab holds the three load-time switches', String(switches.length))
+    ok(switches.length === 3, 'the 高级 tab holds the three load-time switches', String(switches.length))
     ok(switches.map((node) => node.props.checked).join(',') === 'false,true,true',
       'absent keys fall back to the documented defaults (off, on, on)',
       switches.map((node) => node.props.checked).join(','))

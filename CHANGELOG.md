@@ -8,6 +8,19 @@
 
 ## [未发布]
 
+### 修复（记忆工具的 `output.schema` 不合法 → 工具从未注册，而提示词还在叫模型用它）
+
+- `defineTool` 的**值 schema DSL 与 `parameters` 那套不是同一套规则**：根级 `required: [...]`
+  不被接受、根级 `additionalProperties` 必须显式写出。原来的 `output.schema` 按 JSON Schema 习惯
+  写了 `required: ['ok','text']`，于是 `defineTool` 抛 `JsonSchemaError`。
+- `ctx.tools.register(...)` 外面包着 try/catch，异常**只留一条宿主日志**（工作区读不到）。
+  症状是最坏的那种：**注入段告诉模型"用 `worklog_memory` 取记忆正文"，而工具表里从来没有这个工具。**
+- **为什么一直没被发现**：harness 的假 ctx 根本没有 `tools`，插件的守卫于是**静静返回**；
+  全套断言里没有任何一条要求"工具真的进了注册表"。
+- 现在 `run.mjs` 的假 ctx 提供并**记录**工具注册表，新增 4 条断言（到达注册表、无注册失败日志、
+  两个必填参数、output schema 能编译）。反向验证：去掉 `additionalProperties` 一行 →
+  4 条断言变红，且日志里原样出现那句被吞掉的警告。
+
 ### 修复（`peerDependencies`：不补这一条，下次加载插件会整体消失）
 
 - `package.json` 补上 `@deepseek-ai/dsh-tools` 与 `@deepseek-ai/schemastery` 两条 peer 声明。

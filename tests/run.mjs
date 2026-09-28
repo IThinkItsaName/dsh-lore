@@ -17,10 +17,21 @@ const mod = await import(pathToFileURL(`${PKG}/lib/index.js`).href)
 function fakeCtx() {
   const providers = []
   const logs = []
+  const registeredTools = []
   return {
     providers,
     logs,
+    registeredTools,
     skills: { registerProvider: (create) => { providers.push(create); return () => {} } },
+    // The tools registry, recorded rather than stubbed away.
+    //
+    // Why this must exist here: `mountMemoryTools` guards on `ctx.tools.register` being a
+    // function and otherwise **returns quietly**, and it wraps the real `defineTool` call in a
+    // try/catch that turns a schema error into a host log line nobody can read. With no `tools`
+    // in the fake context, both paths were dead in this harness and the registration was never
+    // exercised — which is exactly how an invalid `output.schema` shipped: the injected prompt
+    // told the model to call `worklog_memory`, and no such tool existed.
+    tools: { register: (definition) => { registeredTools.push(definition); return () => {} } },
     logger: {
       info: (m) => logs.push(['info', String(m)]),
       warn: (m) => logs.push(['warn', String(m)]),
@@ -157,6 +168,33 @@ mod.apply(ctxA, {})
 ok(ctxA.providers.length === 2, 'default config mounts both skills (worklog + guidelines)',
    String(ctxA.providers.length))
 ok(errorsIn(ctxA).length === 0, 'no error logged on a healthy bundle', JSON.stringify(ctxA.logs))
+
+/* ---- REGRESSION: the memory tool must actually reach the tools registry ----
+   The plugin registers it through `ctx.tools.register(defineTool({...}))` inside a try/catch that
+   reports a failure only as a host log line. `defineTool` rejects an `output.schema` written in
+   plain JSON Schema (a root-level `required` array, no explicit `additionalProperties`), so the
+   call threw, the warning was swallowed, and the tool never existed — while the injected prompt
+   told the model to read memory bodies *with that tool*. Nothing noticed, because this harness's
+   fake context had no `tools` at all and the guard returned quietly. These two assertions make
+   the registration itself the thing under test. */
+const memoryTool = ctxA.registeredTools.find((tool) => tool?.name === 'worklog_memory')
+ok(memoryTool !== undefined, 'the memory tool reaches the tools registry',
+   `registered: ${ctxA.registeredTools.map((t) => t?.name).join(', ') || '(none)'}`)
+ok(ctxA.logs.every(([, message]) => !message.includes('could not register the memory tool')),
+   'and no registration failure is logged', JSON.stringify(ctxA.logs))
+// `defineTool` compiles the authored per-field `required: true` into a root-level `required`
+// array, so these read the **normalized** definition — which is the point: it proves the whole
+// authoring form was accepted, not just that some object was stored.
+ok(Array.isArray(memoryTool?.parameters?.required)
+   && memoryTool.parameters.required.includes('operation')
+   && memoryTool.parameters.required.includes('workspace'),
+   'the memory tool declares its two required parameters',
+   JSON.stringify(memoryTool?.parameters?.required ?? null))
+ok(memoryTool?.output?.schema?.additionalProperties === false
+   && Array.isArray(memoryTool?.output?.schema?.required)
+   && memoryTool.output.schema.required.includes('text'),
+   'its output schema compiles (explicit additionalProperties, text required)',
+   JSON.stringify(memoryTool?.output?.schema ?? null))
 
 const [pWorklog, pGuidelines] = mountAll(ctxA)
 ok(pWorklog.name === 'worklog-bundle', 'the worklog provider has its own name', String(pWorklog.name))

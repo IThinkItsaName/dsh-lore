@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [0.5.1] - 2026-09-28
+
 ### 修复（记忆工具的 `output.schema` 不合法 → 工具从未注册，而提示词还在叫模型用它）
 
 - `defineTool` 的**值 schema DSL 与 `parameters` 那套不是同一套规则**：根级 `required: [...]`
@@ -661,7 +663,8 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.5.0...HEAD
+[未发布]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.4.0...v0.5.0
 [0.3.1]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.3.0...v0.3.1
 [0.4.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.3.1...v0.4.0

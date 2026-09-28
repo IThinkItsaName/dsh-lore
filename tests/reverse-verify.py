@@ -300,10 +300,10 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
     # 这一对不变量必须同时成立：**根在前是有效的**，且**旧写法要被拦下**——
     # 旧写法下 `text` 收到的是路径，而 manual 档根本不看根，于是它会静默写成正文。
     ("memory", "memory add 的根目录又挪回正文之后",
-     '        _add_common(p)\n        _add_root(p)\n'
-     '        p.add_argument("text", help="一句话教训（症状 → 根因 → 做法）")',
-     '        p.add_argument("text", help="一句话教训（症状 → 根因 → 做法）")\n'
-     '        _add_common(p)\n        _add_root(p)',
+     '    _add_common(p)\n    _add_root(p)\n'
+     '    p.add_argument("text", help="一句话教训（症状 → 根因 → 做法）")',
+     '    p.add_argument("text", help="一句话教训（症状 → 根因 → 做法）")\n'
+     '    _add_common(p)\n    _add_root(p)',
      "memory: the root argument comes before the text, and it is honoured"),
     ("memory", "防呆判据又去用 abspath 之后的值（于是永远不触发）",
      "    if _looks_like_path(raw_text) and not _looks_like_path(raw_root):",

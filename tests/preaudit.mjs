@@ -57,15 +57,46 @@ const entry = readFileSync(`${PKG}/lib/index.js`, 'utf8')
 const hash = createHash('sha256').update(entry).digest('hex').slice(0, 16)
 console.log(`      lib/index.js sha256:${hash}  (${entry.split('\n').length} lines)`)
 ok(entry.includes('registerProvider'), 'the entry registers a PROVIDER (not a snapshot register)')
-ok(!/from\s+['"]@deepseek-ai\//.test(entry), 'the entry imports no @deepseek-ai package')
-ok(!/^\s*import[^\n]*from\s+['"](?!node:)/m.test(entry), 'every import is a node: builtin')
+/*
+ * Imports: `node:` builtins are always fine; `@deepseek-ai/*` is allowed **only** because the
+ * host supplies it — see `dsh-app-boot/lib/index.js:477-481`: resolution is two-anchor (the dsh
+ * installation, then the profile), and "the runtime resolution supplies packages carried by the
+ * installation and selected bundles to Node's ESM and CommonJS resolvers".
+ *
+ * These two assertions used to forbid `@deepseek-ai` outright, with the reason "schemastery is
+ * unreachable out of tree" written into a third one below. That reason came from a measurement
+ * of the WRONG THING: a hand-copied directory is not part of the profile manifest's install set,
+ * so of course it could not be supplied. `dsh-ref/PLUGIN-AUTHORING.md` §4.3 states the opposite
+ * and cites the same boot code. Keeping the old rule would have frozen a falsehood into the gate
+ * and blocked every standard-conforming plugin — the same class of mistake as the locale and
+ * Config retractions earlier in this project.
+ *
+ * What still matters is that nothing *third-party* sneaks in: those would resolve in the harness
+ * only because the harness injects a resolver, and would fail in the host.
+ */
+const bareImports = [...entry.matchAll(/^\s*import[^\n]*from\s+['"]([^'"]+)['"]/gm)].map((m) => m[1])
+const allowedBare = (spec) => spec.startsWith('node:')
+  || spec === '@deepseek-ai/schemastery'
+  || spec === '@deepseek-ai/dsh-tools'
+const unexpected = bareImports.filter((spec) => !allowedBare(spec))
+ok(unexpected.length === 0,
+   'every bare import is a node: builtin or a host-supplied @deepseek-ai package',
+   unexpected.join(', '))
 ok(entry.includes('content: stripFrontmatter'), 'the definition carries a content string')
 
 /* 4. import it exactly as the loader would, and drive the provider */
 const mod = await import(pathToFileURL(`${PKG}/lib/index.js`).href)
 ok(typeof mod.apply === 'function', 'the entry exports apply()')
-ok(Array.isArray(mod.inject) && mod.inject.join(',') === 'skills', 'the entry injects ctx.skills', String(mod.inject))
-ok(mod.Config === undefined, 'the entry exports no Config (schemastery is unreachable out of tree)')
+ok(Array.isArray(mod.inject) && mod.inject.includes('skills'),
+   'the entry injects ctx.skills', String(mod.inject))
+ok(Array.isArray(mod.inject) && mod.inject.includes('tools'),
+   'the entry injects ctx.tools (the registry the memory tool registers into)', String(mod.inject))
+ok(mod.Config !== undefined,
+   'the entry exports a Config (the host supplies schemastery — §4.3 of PLUGIN-AUTHORING)')
+ok(mod.Config === null || typeof mod.Config === 'object' || typeof mod.Config === 'function',
+   'the exported Config is a schema object, not a plain string or number', typeof mod.Config)
+ok(typeof mod.Config?.toJSON === 'function',
+   'the Config carries toJSON (the settings-page projection requires it — §4.3)')
 
 const creates = []
 const logs = []

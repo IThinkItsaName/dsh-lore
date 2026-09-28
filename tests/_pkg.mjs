@@ -5,11 +5,75 @@
 // bare `resolve(HERE, '..')` is wrong for one of them: from `logs/tests` the parent
 // is `logs`, not the package. Probe instead of assuming.
 import { existsSync, readFileSync } from 'node:fs'
+import { createRequire, registerHooks } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+/**
+ * Let the harness resolve `@deepseek-ai/*`, the way the host does.
+ *
+ * The host supplies those packages to plugins through its own loader
+ * (`dsh-ref/PLUGIN-AUTHORING.md` §4.3: two anchors — the dsh installation, then the profile —
+ * with the resolution set being the installed manifest's `dependencies` + `peerDependencies`
+ * closure). A bare `node tests/run.mjs` has no such loader, so the moment `lib/index.js`
+ * imports one of them the harness fails with `ERR_MODULE_NOT_FOUND` and **the plugin cannot be
+ * loaded at all** — which would make every other assertion unrunnable rather than merely
+ * failing.
+ *
+ * Two ways out, and the choice matters:
+ *   - keep the plugin free of `@deepseek-ai` imports, and lose the standard APIs; or
+ *   - teach the harness to resolve them, and test against the host's **real** implementations.
+ *
+ * The second is used when `dsh-ref/source` is present (a local, sha256-verified dump of the
+ * shipped packages). It is a **reference tree, not part of this project**, so its absence is
+ * normal on a clean checkout: the hook then simply does not install, the import fails loudly,
+ * and the message says which specifier could not be placed and where it looked. Failing loudly
+ * is right here — a silently-skipped load would report a passing suite for a plugin that never
+ * ran.
+ */
+function installHostSpecifierResolver() {
+  const candidates = [
+    resolve(HERE, '..', '..', 'dsh-ref', 'source', '@deepseek-ai'), // logs/tests → workspace
+    resolve(HERE, '..', '..', '..', 'dsh-ref', 'source', '@deepseek-ai'), // <pkg>/tests
+  ]
+  const sourceRoot = candidates.find((dir) => existsSync(dir))
+  if (sourceRoot === undefined) return null
+
+  const hook = (specifier, context, nextResolve) => {
+    const match = /^@deepseek-ai\/([^/]+)(\/.*)?$/.exec(specifier)
+    if (match === null) return nextResolve(specifier, context)
+    const [, name, subpath = ''] = match
+    const pkgDir = join(sourceRoot, name)
+    if (!existsSync(pkgDir)) return nextResolve(specifier, context)
+    // Ask the package's own manifest to place the specifier, so `exports` conditions are
+    // honoured rather than guessed. `createRequire` needs a base *inside* the package.
+    try {
+      const req = createRequire(join(pkgDir, 'package.json'))
+      return { url: pathToFileURL(req.resolve(`@deepseek-ai/${name}${subpath}`)).href, shortCircuit: true }
+    } catch {
+      return nextResolve(specifier, context)
+    }
+  }
+  try {
+    registerHooks({ resolve: hook })
+  } catch {
+    // An older Node without `registerHooks`. Same reasoning as above: the import then fails
+    // loudly on its own rather than this file pretending to have solved it.
+    return null
+  }
+  return sourceRoot
+}
 
 /** This file's directory (the tests directory). */
 export const HERE = dirname(fileURLToPath(import.meta.url))
+
+/**
+ * Where `@deepseek-ai/*` will be resolved from, or `null` when the hook could not install.
+ *
+ * Runs here, after `HERE` — and it must run at module-evaluation time, before any harness
+ * imports the plugin under test.
+ */
+export const HOST_SOURCE_ROOT = installHostSpecifierResolver()
 
 function isPackageDir(dir) {
   const manifest = join(dir, 'package.json')

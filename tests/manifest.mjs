@@ -108,10 +108,19 @@ ok(existsSync(`${gDir}/en/SKILL.md`), 'the guidelines bundle holds the en SKILL.
 ok(!existsSync(`${gDir}/en/SKILL.md.keep`), 'no stray marker files in the guidelines bundle')
 
 /* 5. the plugin module loads and parses both bundles */
-// Import the source package directly: it imports only `node:` builtins, so it
-// resolves from anywhere — which is exactly why it has no dependencies.
+// The plugin imports `@deepseek-ai/schemastery` and `@deepseek-ai/dsh-tools`. Those come from
+// the host (`dsh-app-boot` supplies the installation's packages to Node's resolvers — see
+// `dsh-ref/PLUGIN-AUTHORING.md` §4.3), so a bare `node` run needs `_pkg.mjs`'s resolver hook
+// **imported first**. That is why this file imports `_pkg.mjs` before this line rather than
+// only for `PKG`.
 const mod = await import(pathToFileURL(`${PKG}/lib/index.js`).href)
-ok(mod.Config === undefined, 'the plugin exports no Config schema')
+// This assertion used to read `mod.Config === undefined`, i.e. it required the plugin to export
+// NO schema. That was an artefact of a measurement taken on the wrong object (a hand-copied
+// directory is not part of the profile's install set, so of course nothing was supplied to it),
+// and it forbade the standard `Config` route outright. What is worth pinning is the shape.
+ok(mod.Config !== undefined, 'the plugin exports a Config schema')
+ok(typeof mod.Config?.toJSON === 'function',
+   'the Config carries toJSON (the settings-page projection requires it)')
 const parsed = mod.parseSkillFrontmatter(readFileSync(`${skillDir}/SKILL.md`, 'utf8'))
 ok(parsed.name === 'project-work-log', 'the plugin parses the worklog skill name', parsed.name)
 ok(parsed.description.length > 0, 'the plugin parses a description')

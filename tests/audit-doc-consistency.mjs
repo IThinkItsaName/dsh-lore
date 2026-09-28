@@ -50,6 +50,7 @@ const DOCS = [
   `${PKG}/docs/settings-spec.md`,
   `${PKG}/docs/memory-spec.md`,
   `${PKG}/docs/goals-spec.md`,
+  `${PKG}/docs/plugin-spec.md`,
 ]
 // A listed document that has been renamed or deleted must be reported, not silently skipped:
 // reading a missing file as `''` would quietly shrink the surface this audit covers, which is

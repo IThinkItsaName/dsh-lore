@@ -5,6 +5,7 @@
 // bare `resolve(HERE, '..')` is wrong for one of them: from `logs/tests` the parent
 // is `logs`, not the package. Probe instead of assuming.
 import { existsSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { createRequire, registerHooks } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -124,4 +125,23 @@ export const PKG = findPackage()
 export const ISOLATED_SETTINGS_FILE = join(PKG, 'tests', 'tmp', 'settings-isolated.json')
 if (process.env.DSH_WORKLOG_SETTINGS === undefined) {
   process.env.DSH_WORKLOG_SETTINGS = ISOLATED_SETTINGS_FILE
+}
+
+/*
+ * Isolate the memory root, for the same reason.
+ *
+ * `memoryDirectory()` defaults to `$DSH_HOME/memory`, which on a machine that actually uses
+ * this plugin is a real directory full of real lessons. A harness that read it would assert
+ * against whatever the developer happens to have collected — and, worse, a harness that WROTE
+ * there would corrupt it. Pointing at a per-run temp path makes an un-exercised root the
+ * default (absent, which every reader already handles) and lets a harness that cares create
+ * its own under the system temp directory.
+ *
+ * Under `tmpdir()`, NOT under the package: a fixture left inside `<pkg>/tests/` is reported by
+ * `_package.py --check` as drift, because drift means exactly "the package has files the mirror
+ * does not". A harness must not leave anything in the tree it is verifying.
+ */
+export const ISOLATED_MEMORY_ROOT = join(tmpdir(), 'dsh-worklog-memory-isolated')
+if (process.env.DSH_WORKLOG_MEMORY === undefined) {
+  process.env.DSH_WORKLOG_MEMORY = ISOLATED_MEMORY_ROOT
 }

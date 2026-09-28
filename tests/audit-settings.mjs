@@ -366,19 +366,37 @@ async function call(method, body) {
  * then archived, so the user's configuration is neither lost nor silently ignored afterwards.
  * ========================================================================================== */
 
-/** A `configEditor` fake: one addressable entry for this package, plus a recording `edit()`. */
-function fakeEditor(config) {
-  const entry = { options: { id: 'include:dsh-worklog', name: 'dsh-worklog', config } }
+/** A `configEditor` fake: two layers, because the real one has two and the difference is the bug.
+ *
+ * `entry.options.config` is the config of whichever patch CREATED the row — for this bundle that
+ * is its own `insert:` in `cordis.patch.yml`, which declares seven of our keys. `configuration()`
+ * reports `override`: the profile patch's own `config:` block, i.e. what the USER has stated.
+ *
+ * This fake used to keep only the first, and default it to `{}` — which hid the distinction
+ * entirely, so the migration looked right while it archived the legacy file and copied nothing.
+ * Measured on a real profile on 2026-09-29.
+ */
+const BUNDLE_LAYER = {
+  skillDir: 'skills/project-work-log', modelInvocable: true, userInvocable: true, verbose: false,
+  guidelinesEnabled: true, guidelinesDir: 'skills/reliability-guidelines', guidelinesLanguage: 'zh',
+}
+
+function fakeEditor(override = {}, entryConfig = BUNDLE_LAYER) {
+  const entry = { options: { id: 'include:dsh-worklog', name: 'dsh-worklog', config: { ...entryConfig } } }
+  const layers = { override: structuredClone(override) }
   const calls = []
   return {
     entry,
     calls,
+    layers,
     documentPath: join(sandbox, 'cordis.patch.yml'),
     entries: () => [entry],
+    configuration: () => [{ entry, inherited: structuredClone(entryConfig), override: structuredClone(layers.override) }],
     async edit(target, change) {
-      const next = change(structuredClone(config), {})
+      const next = change(structuredClone(entry.options.config), structuredClone(entryConfig))
       calls.push({ target, next })
-      Object.assign(config, next)
+      layers.override = { ...next }
+      entry.options.config = { ...entryConfig, ...next }
     },
   }
 }
@@ -438,28 +456,67 @@ function fakeEditor(config) {
     JSON.stringify(logs))
 
   /* ---- migration: a pre-Config settings file is folded into the patch, once ---- */
+  // The regression this block exists for: the bundle's own `insert:` states seven of our keys, and
+  // the migration's guard MUST NOT read that as "the profile already owns them" — that is what made
+  // it archive the file without migrating. `fakeEditor({})` is exactly that profile shape: bundle
+  // layer populated, user layer empty.
   writeFileSync(settingsPath, JSON.stringify({ mode: 'digest', guidelinesLanguage: 'en' }), 'utf8')
   const moving = fakeEditor({})
   const outcome = await mod.migrateLegacySettings(moving, () => {})
-  ok(moving.calls.length === 1, 'the legacy file is written into the profile once',
-    String(moving.calls.length))
-  ok(moving.calls[0].next.mode === 'digest' && moving.calls[0].next.guidelinesLanguage === 'en',
-    'with the file\u2019s values', JSON.stringify(moving.calls[0].next))
+  ok(moving.calls.length === 1,
+    'a populated BUNDLE layer does not stop the migration (the bug that shipped)',
+    `${outcome} / ${moving.calls.length} edit call(s)`)
+  ok(moving.calls[0]?.next?.guidelinesLanguage === 'en',
+    'the file\u2019s value is what gets written', JSON.stringify(moving.calls[0]?.next))
+  ok(!('mode' in (moving.calls[0]?.next ?? {})),
+    'a project-side key is NOT migrated (it is not in Config, so the patch must not carry it)',
+    JSON.stringify(moving.calls[0]?.next))
+  ok(!('skillDir' in (moving.calls[0]?.next ?? {})),
+    'and neither is the bundle layer\u2019s own skillDir (only the file\u2019s values are written)',
+    JSON.stringify(moving.calls[0]?.next))
   ok(!existsSync(settingsPath) && existsSync(`${settingsPath}.migrated`),
     'and the file is archived rather than deleted', outcome)
   const again = await mod.migrateLegacySettings(moving, () => {})
   ok(moving.calls.length === 1 && again === 'nothing to migrate',
     'running it again is a no-op', again)
 
+  // An empty string means "use the default" in the legacy file but "explicitly empty" in the patch,
+  // and `resolveSkillDir('')` resolves to the PACKAGE ROOT — carrying it over would break the mount.
+  writeFileSync(settingsPath, JSON.stringify({ skillDir: '', guidelinesDir: '  ', verbose: true }), 'utf8')
+  rmSync(`${settingsPath}.migrated`, { force: true })
+  const blanks = fakeEditor({})
+  const blanksOutcome = await mod.migrateLegacySettings(blanks, () => {})
+  ok(!('skillDir' in (blanks.calls[0]?.next ?? {})) && !('guidelinesDir' in (blanks.calls[0]?.next ?? {})),
+    'empty/blank strings are not migrated (they would become an explicit empty override)',
+    `${blanksOutcome} / ${JSON.stringify(blanks.calls[0]?.next)}`)
+  ok(blanks.calls[0]?.next?.verbose === true, 'while a usable value beside them still migrates')
+
   // A profile that already states a key wins: migration must never overwrite an explicit value.
-  writeFileSync(settingsPath, JSON.stringify({ mode: 'digest' }), 'utf8')
-  const owner = fakeEditor({ mode: 'full' })
+  writeFileSync(settingsPath, JSON.stringify({ guidelinesLanguage: 'en' }), 'utf8')
+  rmSync(`${settingsPath}.migrated`, { force: true })
+  const owner = fakeEditor({ guidelinesLanguage: 'zh' })
   const owned = await mod.migrateLegacySettings(owner, () => {})
   ok(owner.calls.length === 0, 'an existing profile value is never overwritten by the file', owned)
+  ok(existsSync(`${settingsPath}.migrated`),
+    'the file is still archived (the user layer is the authority, so there is nothing to carry)',
+    owned)
+
+  // "I cannot tell what the user stated" must never be read as "the user stated nothing".
+  writeFileSync(settingsPath, JSON.stringify({ guidelinesLanguage: 'en' }), 'utf8')
+  rmSync(`${settingsPath}.migrated`, { force: true })
+  const blind = fakeEditor({})
+  delete blind.configuration
+  const blindLogs = []
+  const blindOutcome = await mod.migrateLegacySettings(blind, (level, message) => blindLogs.push([level, message]))
+  ok(blindOutcome === 'cannot read the profile layer' && existsSync(settingsPath),
+    'an editor that cannot report the user layer leaves the file alone', blindOutcome)
+  ok(blind.calls.length === 0, 'and writes nothing', String(blind.calls.length))
+  ok(blindLogs.some(([level, message]) => level === 'warn' && message.includes('cannot read')),
+    'and says why', JSON.stringify(blindLogs))
 
   // And a failed write leaves the file exactly where it was: a half-migrated store is worse than
   // no migration, because the next mount would read neither copy with confidence.
-  writeFileSync(settingsPath, JSON.stringify({ mode: 'digest' }), 'utf8')
+  writeFileSync(settingsPath, JSON.stringify({ guidelinesLanguage: 'en' }), 'utf8')
   const broken = fakeEditor({})
   broken.edit = async () => { throw new Error('profile write failed') }
   const failed = []
@@ -469,6 +526,7 @@ function fakeEditor(config) {
   ok(failed.some(([level, message]) => level === 'warn' && message.includes('could not migrate')),
     'and warns loudly about it', JSON.stringify(failed))
   rmSync(settingsPath, { force: true })
+  rmSync(`${settingsPath}.migrated`, { force: true })
 }
 
 rmSync(sandbox, { recursive: true, force: true })

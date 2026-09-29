@@ -2404,6 +2404,25 @@ def _memory_phase(parent: str) -> None:
     r = m(wsA, "memory", "lint", wsA, "--strict")
     ok(r.returncode == 0, "memory: 记录恢复后门禁回到干净", r.stdout + r.stderr)
 
+    # --- 6b) 来源工作区**被移除**：路径没了就当它没了（只提示，不拦）---------
+    # 政策见 journal.py 的 `registry_state`：**登记过 + 路径不在 = gone（只提示）**；
+    # **从没登记 = unknown（仍 ERROR）** —— 后者由上面的 wsGhost 用例覆盖。
+    # 用户 2026-09-30 的原话："发现移除工作区（目标路径找不到）就当是没了，
+    # 不对用户在 agent 以外的行为负责。"
+    gone = mem_ws(base, "wsGone", "# 01 · gone\n\n- **走了就别管**：路径没了就当它没了。（`wl/0001`）\n")
+    r = m(gone, "memory", "publish", gone, "--applies-to", "dsh-plugin", "--upload")
+    ok(r.returncode == 0, "memory: wsGone 发布并登记进名册", r.stdout + r.stderr)
+    r = m(wsB, "memory", "add", "来自一个后来被删掉的工作区。", "--source", "wsGone/wl/0001",
+          "--id", "from-gone-ws")
+    ok(r.returncode == 0, "memory: 登记过的工作区可以当来源（它还在）", r.stdout)
+    m(wsB, "memory", "index")
+    r = m(wsB, "memory", "lint", wsB, "--strict")
+    ok(r.returncode == 0, "memory: 来源工作区还在时门禁干净", r.stdout + r.stderr)
+    os.rename(gone, gone + "-moved")          # 工作区被移走：agent 管不着的那种事
+    r = m(wsB, "memory", "lint", wsB, "--strict")
+    ok(r.returncode == 0 and "已被移除" in r.stdout,
+       "memory: 登记过的来源工作区没了 → 只提示，不拦（路径没了就当它没了）", r.stdout + r.stderr)
+
     # --- 7) 硬上限：超限报错，绝不截断 --------------------------------------
     cap = os.path.join(base, "memcap")
     os.makedirs(cap)

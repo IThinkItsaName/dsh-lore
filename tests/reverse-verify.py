@@ -62,6 +62,14 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      '    env = os.environ.get("DSH_WORKLOG_MEMORY", "").strip()\n    if env:',
      '    env = ""\n    if env:',
      "memory: $DSH_WORKLOG_MEMORY 覆盖整条路径"),
+    ("memory", "登记过的来源工作区没了也当错",
+     '    if state == "gone":\n'
+     '        where = registry_names(registry)[ws][0]\n'
+     '        return None, tier, f"来源工作区 `{ws}` 已被移除（名册里的路径不存在：{where}）"',
+     '    if state == "gone":\n'
+     '        where = registry_names(registry)[ws][0]\n'
+     '        return False, tier, f"来源工作区 `{ws}` 已被移除（名册里的路径不存在：{where}）"',
+     "memory: 登记过的来源工作区没了 → 只提示，不拦（路径没了就当它没了）"),
     ("memory", "来源分档不再细看 manual: 的后缀",
      '    if s.startswith("manual:"):\n'
      '        name = s.split(":", 1)[1].strip()\n'

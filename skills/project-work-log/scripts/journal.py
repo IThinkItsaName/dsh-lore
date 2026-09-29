@@ -3994,6 +3994,24 @@ def registry_names(registry: dict) -> dict:
     return out
 
 
+def registry_state(registry: dict, name: str) -> str:
+    """名册里这个名字的状态：`live` / `gone` / `unknown`。
+
+    - `live`：登记过，且名册里的路径**还在**；
+    - `gone`：登记过，但路径**已经不在了** —— 即"这个工作区被移除了"；
+    - `unknown`：名册里根本没有这个名字。
+
+    **为什么要把后两者分开**（用户 2026-09-30 定的政策）：路径找不到就当那个工作区没了 ——
+    工具**不为 agent 以外的行为负责**（目录被删、被改名都不是它的事），所以
+    "登记过但没了"只提示、不拦；而"从没登记过"仍然是一条**真问题**
+    （记忆只经 `publish`/`collect` 进来，没登记就说明来路不明或名册被动过）。
+    """
+    paths = registry_names(registry).get(name)
+    if paths is None:
+        return "unknown"
+    return "live" if any(os.path.isdir(p) for p in paths) else "gone"
+
+
 def observe_candidate(memory: str, root: str, registry: dict) -> str:
     """把一个**被命令行指到**的工作区记成候选（有清单、但没登记）。
 
@@ -4017,13 +4035,16 @@ def observe_candidate(memory: str, root: str, registry: dict) -> str:
     return ws
 
 
-def resolve_memory_source(root: str, source: str, registry: dict) -> tuple[bool, str, str]:
+def resolve_memory_source(root: str, source: str, registry: dict) -> tuple[bool | None, str, str]:
     """核实一条 `source`。返回 `(是否可用, 档名, 说明)`。
 
     * `manual:*` 只判名字认不认得 —— 正文附加要求由 `lint` 判（它要看正文）。
     * 记录来源：**本工作区**的引用核到真实记录；**别的工作区**的引用只能核到
       它的发布清单 —— 那是全局层唯一获准读的工作区文件。正是这个限制，让
       「清单点名」成了"这条教训允许外流"的机械判据。
+    * 第一项是**三态**：`True` 可用 / `False` 有问题 / **`None` = 来源工作区已被移除**
+      （名册里登记着、路径却不在了）。`None` 不是错：路径没了就当那个工作区没了
+      （见 `registry_state`）。`lint` 把它报成提示，`add` 仍然拒绝（新写的记忆必须能核）。
     """
     tier = memory_source_tier(source)
     if not tier:
@@ -4035,8 +4056,12 @@ def resolve_memory_source(root: str, source: str, registry: dict) -> tuple[bool,
     if not ws or memory_workspace_name(root) == ws:
         path, why = resolve_record_ref(root, ref)
         return (path is not None), tier, why
-    if ws not in registry_names(registry):
+    state = registry_state(registry, ws)
+    if state == "unknown":
         return False, tier, f"来源里的工作区 `{ws}` 不在名册里（先在那边的 `memory publish`）"
+    if state == "gone":
+        where = registry_names(registry)[ws][0]
+        return None, tier, f"来源工作区 `{ws}` 已被移除（名册里的路径不存在：{where}）"
     for path in registry_names(registry)[ws]:
         mpath = memory_manifest_path(path)
         if not os.path.isfile(mpath):
@@ -4645,8 +4670,12 @@ def memory_lint_report(root: str, memory: str, strict: bool) -> Report:
                                         f"（只认小写拉丁 / 数字 / 连字符）")
         body = memory_body_line(e)
         ok_src, tier, why = resolve_memory_source(root, e["source"], registry)
-        if not ok_src:
+        if ok_src is False:
             rep.add("ERROR", where, f"第 {e['ln']} 行：{why}")
+        elif ok_src is None:
+            # 来源工作区**已被移除**（名册里登记着、路径不在了）：路径没了就当它没了，
+            # 不为 agent 以外的行为负责 —— 只提示，不拦（见 registry_state 与 docs/why.md）。
+            rep.add("INFO", where, f"第 {e['ln']} 行：{why}")
         elif not tier:
             rep.add("ERROR", where, f"第 {e['ln']} 行：来源 `{e['source']}` 认不出，不能分档")
         elif tier == "read" and not _memory_names_source(body):
@@ -4659,8 +4688,12 @@ def memory_lint_report(root: str, memory: str, strict: bool) -> Report:
             rep.add("ERROR", where, f"第 {e['ln']} 行：`manual:inferred` 必须显式标注「未经证实」"
                                     f"—— 它不进索引，所以正文里这句标注就是它唯一的护栏")
         for c in e["cited_by"]:
-            if c not in names:
+            st = registry_state(registry, c)
+            if st == "unknown":
                 rep.add("ERROR", where, f"第 {e['ln']} 行：cited-by 里的 `{c}` 不是名册里已登记的工作区")
+            elif st == "gone":
+                rep.add("INFO", where, f"第 {e['ln']} 行：cited-by 里的 `{c}` 已被移除"
+                                       f"（名册里登记过、路径不在了）")
     for n, paths in sorted(names.items()):
         if len(paths) > 1:
             rep.add("WARN", rel(memory, memory_registry_path(memory)),

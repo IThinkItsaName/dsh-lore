@@ -2004,6 +2004,29 @@ def mem_snapshot(root: str) -> dict[str, bytes]:
 
 
 def memory_phase(parent: str) -> None:
+    """隔离包装：整相把 `DSH_HOME` 指进夹具，再跑 `_memory_phase`。
+
+    **为什么只靠 `--memory` 与 `$DSH_WORKLOG_MEMORY` 不够**：记忆根是三级解析
+    （`--memory` > `$DSH_WORKLOG_MEMORY` > `$DSH_HOME/memory`），而这一相里前两档
+    **都被专门测过** —— 变异驱动正是拿它们开刀：`reverse-verify.py` 的 memory 相里
+    「`--memory` 不再覆盖路径」与「环境变量那一档失效」两条，就是把前两档打断。
+    两条一断，兜底就落到**用户真实的** `~/.dsh/memory`。2026-09-28 真发生过：
+    真实记忆库里留下 8 条 `wsA` 夹具条目，并且被注入了每个请求（清理记录见 `work_log/0051`）。
+    `DSH_HOME` 在那两条变异之外，所以拿它兜底 —— 变异要红的那两条断言都是**进程内**比对，
+    不受这里影响。
+    """
+    saved_home = os.environ.get("DSH_HOME")
+    os.environ["DSH_HOME"] = os.path.join(parent, "home")
+    try:
+        _memory_phase(parent)
+    finally:
+        if saved_home is None:
+            os.environ.pop("DSH_HOME", None)
+        else:
+            os.environ["DSH_HOME"] = saved_home
+
+
+def _memory_phase(parent: str) -> None:
     """全局记忆：来源分档 / 清单往返 / 收集幂等 / 索引 / 门禁 / 收敛 / 信箱 / 升格。"""
     base = os.path.join(parent, "memory")
     mem = os.path.join(base, "mem")

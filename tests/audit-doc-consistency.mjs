@@ -63,12 +63,14 @@ const src = readFileSync(ENTRY, 'utf8')
 // What counts as "the plugin documentation": every file under `docs/` plus the three root
 // documents. `SETTINGS.md` is the plugin-settings reference added alongside the settings
 // page; the `docs/*-spec.md` files are the design authorities, and a design authority that
-// no gate reads is a design authority that drifts.
+// no gate reads is a design authority that drifts. `docs/why.md` is the goal authority
+// (what the tool must guarantee) — added 2026-09-30 for the same reason.
 //
 const PLUGIN_DOCS = [
   `${PKG}/README.md`,
   `${PKG}/PUBLISHING.md`,
   `${PKG}/SETTINGS.md`,
+  `${PKG}/docs/why.md`,
   `${PKG}/docs/worklog-spec.md`,
   `${PKG}/docs/settings-spec.md`,
   `${PKG}/docs/memory-spec.md`,

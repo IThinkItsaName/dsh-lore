@@ -1,7 +1,7 @@
 {
   "name": "dsh-worklog",
   "version": "0.6.0",
-  "description": "Long-term project work-log system for AI agents (software, research, writing, design, operations): process journal + index ledger + lessons, with a stdlib-only Python toolbox. Ships as an Agent Skill and as a DeepSeek Harness plugin bundle.",
+  "description": "Work-memory system for AI agents, in three layers: a portable Agent Skill (process journal + index ledger + lessons, stdlib-only toolbox), a cross-workspace global memory, and a DeepSeek Harness plugin bundle that injects it.",
   "license": "MIT",
   "type": "module",
   "peerDependencies": {
@@ -13,6 +13,7 @@
     "pi-package",
     "agent-skills",
     "work-log",
+    "memory",
     "journal",
     "lessons",
     "documentation",
@@ -31,7 +32,7 @@
   },
   "meta": {
     "title": "worklog",
-    "description": "项目长期工作记录体系：过程记录 journal/ + 索引台账 + 经验手册（技能名 project-work-log）。"
+    "description": "给 AI 的长期工作记忆：技能层把过程留在项目里（记录 + 台账 + 经验，技能名 project-work-log），记忆层跨工作区沉淀，插件层把它注入提示词。"
   },
   "pi": {
     "skills": [

@@ -8,6 +8,25 @@
 
 ## [未发布]
 
+### 文档：README 按「三块能力」重写，并修掉一条会害人的安装示例
+
+- **为什么要重写**：README 的骨架停在 0.5.0 之前 —— 它把本包讲成"一个技能"，而**记忆层**
+  （`memory` / `dream` / `inbox` / `promote` + 索引注入 + `worklog_memory` 工具）在全文只以
+  三行配置项的形式出现过，读者读完不会知道它存在；`docs/`（设计权威）、`skill-only/` +
+  `dist/`（第二条发行线）、`RELEASING.md` / `PUBLISHING.md` 则**一次都没被提到**。
+- 现在按**三块能力（技能层 / 记忆层 / 插件层）**组织，并写明**依赖单向向下** ——
+  技能层不知道 DSH 存在，这正是 `skill-only/` 那条发行线能活的前提。
+- **修掉一条会害人的安装示例**：原文推荐 `dsh plugin --profile X install /本地路径`。
+  `dsh plugin` 把参数**原样转发给 pnpm**，而 pnpm 对本地目录建的是**链接** —— 于是
+  "源目录一移动、一删除，插件就废了"；实测本机 profile 里 `node_modules/dsh-worklog`
+  就是一个 `<JUNCTION>`。现在三种装法按代价排序，本地路径那条明确写出这个代价。
+- 数字与结构同步：子命令 **20 → 27**（`journal.py --help` 的实际读数）；目录树补上
+  `docs/`、`tests/`、`tools/`、`skill-only/`、`dist/` 与三份根文档；自测一节补
+  `npm run test:skill-only`，并去掉会随版本过期的断言条数。
+- `package.json` 的 `description` 与 `meta.description`（插件页显示的那行）改成同一个三层说法；
+  `docs/README.md` 把 `RELEASING.md` 补进文档地图；`docs/goals-spec.md` 的「实现未开始」
+  改为已实现（`journal.py check` 已经在校验 `目标.md`）。
+
 ## [0.6.0] - 2026-09-29
 
 ### 修复：卡片挂错了槽位，把自己塞进了插件页的**官方**那一组

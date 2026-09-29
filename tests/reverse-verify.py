@@ -62,6 +62,10 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      '    env = os.environ.get("DSH_WORKLOG_MEMORY", "").strip()\n    if env:',
      '    env = ""\n    if env:',
      "memory: $DSH_WORKLOG_MEMORY 覆盖整条路径"),
+    ("memory", "inbox 头部不带那句不可信提示",
+     '    header = (f"---\\nfrom: {sender}\\nat: {stamp}\\nnote: {INBOX_NOTE}\\n---\\n\\n")',
+     '    header = (f"---\\nfrom: {sender}\\nat: {stamp}\\n---\\n\\n")',
+     "inbox: 落盘时写下 from / at /「不可信输入」那句（头部由工具渲染）"),
     ("memory", "登记过的来源工作区没了也当错",
      '    if state == "gone":\n'
      '        where = registry_names(registry)[ws][0]\n'

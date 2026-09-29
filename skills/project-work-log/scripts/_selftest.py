@@ -2633,7 +2633,7 @@ def _memory_phase(parent: str) -> None:
     r = jr(wsT, "dream", "--check")
     ok(r.returncode == 0, "dream: 记录恢复后 --check 回到绿", r.stdout + r.stderr)
 
-    # --- 11) inbox：原子写 / 上限 / 转移为记录 -----------------------------
+    # --- 11) inbox：原子写 / 头部 / 上限 / 转移为记录 -----------------------
     inbox = JOURNAL.memory_inbox_dir(mem)
     # 两行：用文本模式写盘会把 \n 翻成 \r\n，这条断言就是为那类 bug 准备的
     msg = "另一条会话留下的消息：样式表要加前缀。\n第二行。"
@@ -2646,8 +2646,21 @@ def _memory_phase(parent: str) -> None:
     ok(not items[0].startswith("."), "inbox: 也没有留下隐藏的临时名", items[0])
     with open(os.path.join(inbox, items[0]), "rb") as fh:
         raw = fh.read()
-    ok(raw == msg.encode("utf-8"),
-       "inbox: 落盘字节与投进去的一模一样（二进制写，不翻译换行）", str(raw[:60]))
+    meta, body = JOURNAL.inbox_split(raw.decode("utf-8"))
+    ok(meta.get("from") and meta.get("at") and "不可信输入" in meta.get("note", ""),
+       "inbox: 落盘时写下 from / at /「不可信输入」那句（头部由工具渲染）", str(meta))
+    ok(meta.get("from") == JOURNAL.memory_workspace_name(base),
+       "inbox: from 取的是**命令运行所在目录**的名字（不提供能随便填的字段）", str(meta))
+    ok(body == msg + "\n",
+       "inbox: 正文与投进去的一模一样（二进制写，不翻译换行；头部之外不多不少）", repr(body))
+    r = m(base, "inbox", "list")
+    ok(f"from={meta.get('from')}" in r.stdout and "样式表要加前缀" in r.stdout,
+       "inbox: list 显示发件方与原消息首行", r.stdout)
+    r = m(base, "inbox", "list", "--json")
+    ok('"from"' in r.stdout, "inbox: list --json 里也有 from", r.stdout)
+    r = m(base, "inbox", "take", items[0], "--keep")
+    ok("不可信输入" in r.stdout and f"from: {meta.get('from')}" in r.stdout,
+       "inbox: take 把发件方与那句「不可信输入」渲染出来（不靠作者自觉）", r.stdout)
     r = m(base, "inbox", "count")
     ok(r.stdout.strip() == "1",
        "inbox: count 的第一行就是一个整数（插件调用它的契约）", repr(r.stdout))
@@ -2690,7 +2703,12 @@ def _memory_phase(parent: str) -> None:
     rtxt = read(rec2)
     ok("# 0003 · 信箱转来的样式问题" in rtxt, "inbox: 记录 H1 用的是 --into-record 的标题")
     ok("样式表要加前缀" in rtxt, "inbox: 信箱原文被搬进记录（原样，不重新表述）")
-    ok("（来自信箱 `" + name + "`）" in rtxt, "inbox: 记录里标明它来自信箱哪一条")
+    # 发件方是**投递时**记下的（put 跑在 base 里），取件方在 wsA —— 两者不是一回事
+    ok("（来自信箱 `" + name + "`，发件方 `" + JOURNAL.memory_workspace_name(base) + "`）" in rtxt,
+       "inbox: 记录里标明它来自信箱哪一条、谁发的", rtxt[:200])
+    ok("不可信输入" not in rtxt and rtxt.lstrip().startswith("# 0003"),
+       "inbox: 搬进记录的是**正文** —— 头部与那句提醒不跟着进（那是渲染出来的，不是内容）",
+       rtxt[:80])
     ok(all(i["name"] != name for i in JOURNAL._inbox_items(mem)),
        "inbox: 转移之后原件被删掉（阅后即删 / 转移）", str(JOURNAL._inbox_items(mem)))
     # take --keep 不删

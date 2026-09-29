@@ -1499,6 +1499,21 @@ def format_phase(parent: str) -> None:
     r = run(big, "check", "--strict", "--legacy", "")
     ok(r.returncode != 0, "--legacy \"\" overrides the fallback: everything is judged as new",
        r.stdout)
+    # 兜底生效时要**自己说出来**（门禁之外的提示行：不算发现、不计入 error/warn/info、不改退出码）。
+    # 否则一个成熟容器里"新写的记录不再被判 ERROR"这件事是静默的 —— 而它恰恰发生在长期项目上。
+    r = run(big, "check", "--strict")
+    ok("新写的记录不会被判 ERROR" in r.stdout,
+       "the auto fallback announces itself (it is silent otherwise)", r.stdout)
+    ok(r.returncode == 0, "the announcement does not change the verdict", r.stdout)
+    r = run(big, "check", "--strict", "--quiet")
+    ok("新写的记录不会被判 ERROR" not in r.stdout,
+       "--quiet suppresses the announcement as well", r.stdout)
+    r = run(big, "check", "--strict", "--legacy", "")
+    ok("新写的记录不会被判 ERROR" not in r.stdout,
+       "an explicit --legacy silences the announcement", r.stdout)
+    r = run(small, "check", "--strict")
+    ok("新写的记录不会被判 ERROR" not in r.stdout,
+       "a container below the threshold never announces it", r.stdout)
     # 死链从来就有，**不**受渐进原则影响：旧记录也得照报。
     dl = os.path.join(parent, "fmtdead")
     os.makedirs(os.path.join(dl, CONTAINER))
@@ -1525,6 +1540,11 @@ def format_phase(parent: str) -> None:
     r = run(dec, "check", "--strict", "--quiet")
     ok(r.returncode != 0,
        "the declaration is actually read: listing the other record flips the verdict", r.stdout)
+    # `LEGACY.md` 是显式声明 ⇒ 兜底不生效 ⇒ 也不该有那句提示
+    write(os.path.join(dec, CONTAINER, "LEGACY.md"), "# 旧记录\n\n- 0003-*\n")
+    r = run(dec, "check", "--strict")
+    ok("新写的记录不会被判 ERROR" not in r.stdout,
+       "a container-root LEGACY.md silences the fallback announcement", r.stdout)
 
     # 12) `snapshot`：只读汇总最近 N 篇的入口元信息，缺入口块也不失败 --------
     snap = os.path.join(parent, "fmtsnap")

@@ -1691,6 +1691,20 @@ class Report:
         # 每条发现属于哪条「规则」（渐进原则只降级旧格式那几条）。按行号对齐 storage。
         self.rules: list[str] = []
         self.legacy_rows: set[int] = set()
+        # 门禁**之外**的提示：给调用方在报告之后打印。不算发现、不计入 error/warn/info、
+        # 不改退出码。用它装"这道门现在是怎么跑的"这类话（见 `note()`）。
+        self.notes: list[str] = []
+
+    def note(self, text: str) -> None:
+        """加一条**门禁之外**的提示，供调用方在报告之后打印。
+
+        为什么不走 `add()`：这类话说的不是"记录里有什么毛病"，而是"这道门现在怎么在跑"——
+        典型例子是渐进原则的规模兜底正在生效（≥5 篇的容器整批按旧记录判）。
+        算成 INFO 会让每个成熟容器的计数平白多一条、把所有语料基线推高一格，
+        而它跟记录质量无关；`check` 默认就把它打出来，也就没必要占一个计数。
+        """
+        if text not in self.notes:
+            self.notes.append(text)
 
     def add(self, level: str, where: str, msg: str, rule: str = "") -> int | None:
         """加一条发现，返回行号；重复（同级别同文字）被吞掉时返回 None。"""
@@ -1743,6 +1757,8 @@ class Report:
             self.rules.append(other.rules[i])
             if i in other.legacy_rows:
                 self.legacy_rows.add(len(self.rows) - 1)
+        for text in other.notes:
+            self.note(text)
 
     def errors(self) -> int:
         return sum(1 for lv, _ in self.rows if lv == "ERROR")
@@ -1798,6 +1814,14 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
     recs = find_records(journal, lessons_skip(lessons))
     # 兜底判据只在**没有**显式清单时生效；显式给了就完全按它判（含 `--legacy ""`）。
     auto_paths = set() if explicit else auto_legacy_paths(recs)
+    # 兜底生效时说一句：否则一个成熟容器里，新写的记录缺验证小节只会得到 info，
+    # `--strict` 也照样绿 —— 而"长期项目"恰恰是本工具的目标场景。
+    # 走 `note()` 而不是 INFO 发现：它说的是"这道门现在怎么在跑"，不是记录有毛病；
+    # 算成发现会把每一份语料基线都推高一格（`RELEASING.md` 的基线就是按 error/warn/info 记的）。
+    if auto_paths:
+        rep.note(f"（本容器 {len(recs)} 篇 ≥ {LEGACY_AUTO_MIN_RECORDS}，且没有 `{LEGACY_DECL}` / `--legacy`："
+                 f"整批按旧记录判 —— **新写的记录不会被判 ERROR**（`lint` 同样）；"
+                 f"要恢复对它们的判定，就写 `{LEGACY_DECL}` 钉死老记录，或用 `check --legacy \"\"`）")
     nums = sorted(entries)
     if not recs:
         rep.add("INFO", jname, "目录里还没有记录（新项目正常）")
@@ -5820,11 +5844,16 @@ def cmd_check(args: argparse.Namespace) -> int:
         if args.lint:
             rep.merge(lint(os.path.abspath(args.root), args.journal, args.lessons,
                            args.strict, args.legacy))
+        built.append(rep)
         return rep
 
+    built: list[Report] = []
     code = _run(Report(args.strict), build, args)
-    if not args.lint and code == 0 and not getattr(args, "quiet", False):
-        print("（这是结构门禁。内容质量是另一道：加 `--lint` 一起跑，或单跑 `lint`）")
+    if not getattr(args, "quiet", False):
+        for text in built[0].notes if built else ():
+            print(text)
+        if not args.lint and code == 0:
+            print("（这是结构门禁。内容质量是另一道：加 `--lint` 一起跑，或单跑 `lint`）")
     return code
 
 

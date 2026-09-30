@@ -49,7 +49,7 @@ const code = readFileSync(CLIENT_PATH, 'utf8')
 /** The namespace this machine really serves the entry under — deliberately NOT
  * the entry id: the claim must work from the schema, so a test that fed back the
  * "expected" id would pass even if the code hard-coded one. */
-const SERVED_NS = 'include:dsh-worklog'
+const SERVED_NS = 'include:dsh-lore'
 
 /* ------------------------------------------------------------------ React --
  * A hook runtime, not React. It keeps the two properties this file needs: a
@@ -296,7 +296,7 @@ const { require: loadRequire, seen } = createRequire(api)
 let clientExports = null
 {
   ok(handoff !== null, 'the bundle calls window.__ModuleLoader__.load')
-  ok(handoff?.id === 'dsh-worklog', 'the handoff id is the package name', String(handoff?.id))
+  ok(handoff?.id === 'dsh-lore', 'the handoff id is the package name', String(handoff?.id))
   ok(typeof handoff?.factory === 'function', 'the handoff carries a factory')
 
   clientExports = handoff.factory(loadRequire)
@@ -306,7 +306,7 @@ let clientExports = null
   ok(clientExports.inject.join(',') === 'locale,slots,configForms',
     'exports.inject names locale, slots and configForms (the settings channel is a required service)',
     clientExports.inject.join(','))
-  ok(clientExports.name === 'dsh-worklog', 'exports.name matches the package', String(clientExports.name))
+  ok(clientExports.name === 'dsh-lore', 'exports.name matches the package', String(clientExports.name))
   ok(seen.join(',') === 'react,@deepseek-ai/dsh-client-ui-primitives',
     'the factory resolves through the injected require, and only those two words',
     seen.join(','))
@@ -315,14 +315,14 @@ let clientExports = null
   ok(Array.isArray(clientExports.FORM_FIELDS) && clientExports.FORM_FIELDS.length === 12,
     'the claim fingerprint is exported and names twelve fields',
     JSON.stringify(clientExports.FORM_FIELDS))
-  ok(clientExports.STATUS_URL === '/plugins/dsh-worklog/status.json',
+  ok(clientExports.STATUS_URL === '/plugins/dsh-lore/status.json',
     'the read-only status endpoint is the only HTTP surface the client has',
     String(clientExports.STATUS_URL))
   // The written channel moved to the official one; the old route must be gone
   // from this file's CODE. (The header comment still names the file it belongs
   // to, which is why this looks for the literal route, not the bare filename.)
-  ok(!code.includes("'/plugins/dsh-worklog/settings.json'")
-    && !code.includes('"/plugins/dsh-worklog/settings.json"'),
+  ok(!code.includes("'/plugins/dsh-lore/settings.json'")
+    && !code.includes('"/plugins/dsh-lore/settings.json"'),
     'the client carries no string literal for the removed settings route')
   ok(clientExports.SETTINGS_URL === undefined,
     'and exports no SETTINGS_URL any more (the export was the write path)')
@@ -364,7 +364,7 @@ let clientExports = null
   ok(claim(mirrorOf([rowOf(SERVED_NS, FIELDS)])) === SERVED_NS,
     'the full field set claims that namespace, verbatim (the id is never assumed)',
     String(claim(mirrorOf([rowOf(SERVED_NS, FIELDS)]))))
-  ok(claim(mirrorOf([rowOf('dsh-worklog', FIELDS)])) === 'dsh-worklog',
+  ok(claim(mirrorOf([rowOf('dsh-lore', FIELDS)])) === 'dsh-lore',
     'a differently-mounted deployment (entry id == package name) is claimed too')
 
   ok(claim(mirrorOf([rowOf('somebody-else', ['endpoint', 'retries']), rowOf(SERVED_NS, FIELDS)])) === SERVED_NS,
@@ -568,7 +568,7 @@ function makeUseHook(store) {
     'apply() binds no t of its own (the slot registration\'s `locale` is what injects it)',
     world.bound.join(','))
   ok(world.dictionaries.size === 1, 'apply() registers exactly one dictionary set')
-  const dicts = world.dictionaries.get('dsh-worklog.settings')
+  const dicts = world.dictionaries.get('dsh-lore.settings')
   ok(dicts?.zh !== undefined && dicts?.en !== undefined,
     'the dictionary set carries both zh and en (the register({zh,en}) form)',
     Object.keys(dicts ?? {}).join(','))
@@ -593,13 +593,13 @@ function makeUseHook(store) {
   const options = world.registered[0].options
   ok(options?.name === 'plugins.bundle.config',
     'the registration names plugins.bundle.config', String(options?.name))
-  ok(options?.key === 'dsh-worklog',
+  ok(options?.key === 'dsh-lore',
     'a keyed slot is addressed by the BUNDLE package name (what the manager looks up)',
     String(options?.key))
   ok(options?.id === undefined && options?.order === undefined,
     'and it carries no id/order: this slot is keyed, not ordered',
     `id=${String(options?.id)} order=${String(options?.order)}`)
-  ok(options?.locale === 'dsh-worklog.settings',
+  ok(options?.locale === 'dsh-lore.settings',
     'the registration declares its locale namespace (this is what injects t)', String(options?.locale))
   ok(typeof world.registered[0].component === 'function',
     'the registration carries a function component', typeof world.registered[0].component)
@@ -797,9 +797,9 @@ const openDisclosure = async (index = 0) => {
 
   const panels = tabPanels(loaded)
   ok(panels.length === 1, 'exactly one tabpanel is rendered', String(panels.length))
-  ok(panels[0].props.id === 'dsh-worklog-panel-skills',
+  ok(panels[0].props.id === 'dsh-lore-panel-skills',
     'the rendered panel is the one the selected tab controls', String(panels[0].props.id))
-  ok(panels[0].props['aria-labelledby'] === 'dsh-worklog-tab-skills',
+  ok(panels[0].props['aria-labelledby'] === 'dsh-lore-tab-skills',
     'the panel points back at its tab with aria-labelledby',
     String(panels[0].props['aria-labelledby']))
 
@@ -820,7 +820,7 @@ const openDisclosure = async (index = 0) => {
   const language = getSegments(loaded)[0]
   ok(getSegments(loaded).length === 1, 'the 技能 panel carries exactly one SegmentedControl',
     getSegments(loaded).map((node) => node.props.id).join(','))
-  ok(language?.props.id === 'dsh-worklog-guidelines-language',
+  ok(language?.props.id === 'dsh-lore-guidelines-language',
     'it is the language control', String(language?.props.id))
   ok(language.props.value === 'en', 'it reflects the projected language', String(language.props.value))
   ok(language.props.options.map((option) => option.value).join(',') === 'zh,en',
@@ -843,7 +843,7 @@ const openDisclosure = async (index = 0) => {
   const opened = runtime.tree
   const inputs = getInputs(opened)
   ok(inputs.length === 2, 'opening 路径 shows exactly two text inputs', String(inputs.length))
-  ok(inputs.map((node) => node.props.id).join(',') === 'dsh-worklog-skillDir,dsh-worklog-guidelinesDir',
+  ok(inputs.map((node) => node.props.id).join(',') === 'dsh-lore-skillDir,dsh-lore-guidelinesDir',
     'the two inputs are the two path fields', inputs.map((node) => node.props.id).join(','))
   ok(inputs.map((node) => node.props['aria-label']).join('|') === '工作记录技能目录|准则技能目录',
     'each input carries a localized accessible name',
@@ -864,17 +864,17 @@ const openDisclosure = async (index = 0) => {
   ok(projectKeyControls(loaded).length === 0,
     'no control in the 技能 panel is named for container / lessons / mode',
     projectKeyControls(loaded).join(' | '))
-  ok(getSegments(loaded).every((node) => node.props.id !== 'dsh-worklog-mode'),
+  ok(getSegments(loaded).every((node) => node.props.id !== 'dsh-lore-mode'),
     'the removed mode control did not come back')
 
   /* ---- the 记忆 panel ---- */
   await selectTab('memory')
   const memory = runtime.tree
   const memoryPanels = tabPanels(memory)
-  ok(memoryPanels.length === 1 && memoryPanels[0].props.id === 'dsh-worklog-panel-memory',
+  ok(memoryPanels.length === 1 && memoryPanels[0].props.id === 'dsh-lore-panel-memory',
     'selecting 记忆 renders its panel and only its panel',
     memoryPanels.map((node) => node.props.id).join(','))
-  ok(memoryPanels[0].props['aria-labelledby'] === 'dsh-worklog-tab-memory',
+  ok(memoryPanels[0].props['aria-labelledby'] === 'dsh-lore-tab-memory',
     'the 记忆 panel points back at its own tab')
   const memorySwitches = getSwitches(memory)
   ok(memorySwitches.length === 3, 'the 记忆 panel holds three switches', String(memorySwitches.length))
@@ -920,7 +920,7 @@ const openDisclosure = async (index = 0) => {
   await selectTab('advanced')
   const advanced = runtime.tree
   const advancedPanels = tabPanels(advanced)
-  ok(advancedPanels.length === 1 && advancedPanels[0].props.id === 'dsh-worklog-panel-advanced',
+  ok(advancedPanels.length === 1 && advancedPanels[0].props.id === 'dsh-lore-panel-advanced',
     'selecting 高级 renders its panel and only its panel')
   const advancedSwitches = getSwitches(advanced)
   ok(advancedSwitches.length === 3, 'the 高级 panel holds three switches', String(advancedSwitches.length))

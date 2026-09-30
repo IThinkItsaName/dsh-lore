@@ -174,7 +174,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 ## 配置界面：**本 bundle 自己那一页**上的一张卡片
 
 界面是客户端半边 `lib/client.js`。它注册进 **`plugins.bundle.config`**，`key` = **本包的包名**
-（`dsh-worklog`）—— 插件管理页就是这么寻址的：`configured: ledger.bundles.has(openPkg.name)`，
+（`dsh-lore`）—— 插件管理页就是这么寻址的：`configured: ledger.bundles.has(openPkg.name)`，
 渲染在 bundle 页的**描述与行列表之间**。同工作区的 `dsh-ds-balance` 与官方那支
 `@deepseek-ai/dsh-experimental-voice-input-bundle` 都挂在这里。
 
@@ -187,7 +187,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 ### 认领自己的 namespace：按字段集，不按 id
 
 宿主给每个带 `.volatile()` 字段的插件投影一份"设置命名空间"，id 是
-`entry.options.id` —— 那是**部署相关**的：本机是 `include:dsh-worklog`，换个挂法就变。
+`entry.options.id` —— 那是**部署相关**的：本机是 `include:dsh-lore`，换个挂法就变。
 所以卡片不写死 id，而是**按字段集认领**：看这一行投影出来的 **`value`**（那份生效配置）
 是否同时带齐我们那 12 个名字（`lib/client.js` 的 `FORM_FIELDS`）。
 
@@ -247,7 +247,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 卡片上唯一还会发 HTTP 的地方，是「记忆」页的只读状态块：
 
 ```
-GET /plugins/dsh-worklog/status.json   → { source, path, memory, error }
+GET /plugins/dsh-lore/status.json   → { source, path, memory, error }
 ```
 
 - `source` / `path`：设置**落在哪**（profile patch，还是插件自己的文件）。卡片把它显示出来 ——
@@ -272,7 +272,7 @@ GET /plugins/dsh-worklog/status.json   → { source, path, memory, error }
 
 | 事实 | 状态 |
 |---|---|
-| `Config` 被宿主认成 `schema`（字段带 `x-cordis.volatile: true`） | **已验证**（活体 `Config.listConfigs{name:"dsh-worklog"}`） |
+| `Config` 被宿主认成 `schema`（字段带 `x-cordis.volatile: true`） | **已验证**（活体 `Config.listConfigs{name:"dsh-lore"}`） |
 | 值能被官方通道写进 profile patch 并读回 | **已验证**（`apply()` 的选项、卡片显示的值同源） |
 | 我们的选项**改完即时生效** | **没有**。这些选项是**装载期**读的（技能挂哪个目录、guidelines 开不开、记忆总开关），所以界面按页标明"需重启" |
 

@@ -41,7 +41,7 @@ const ok = (condition, label, detail = '') => {
  * touched. The memory root matters as much as the settings path: without the
  * override, `readMemorySummary()` would report the DEVELOPER's own memory
  * directory, and an assertion over it is either vacuous or machine-dependent. ---- */
-const sandbox = mkdtempSync(join(tmpdir(), 'dsh-worklog-settings-'))
+const sandbox = mkdtempSync(join(tmpdir(), 'dsh-lore-settings-'))
 const settingsPath = join(sandbox, 'worklog', 'settings.json')
 const memoryRoot = join(sandbox, 'memory')
 // The directory, not the file: nothing in the plugin creates it any more (it used to be the write
@@ -204,7 +204,7 @@ async function call(method, body) {
   const dispose = mod.mountStatusRoute(ctx, () => {})
   ok(routes.length === 1, 'mountStatusRoute registers exactly one route', String(routes.length))
   ok(routes[0]?.kind === 'exact', 'the route is kind "exact"', String(routes[0]?.kind))
-  ok(routes[0]?.path === '/plugins/dsh-worklog/status.json',
+  ok(routes[0]?.path === '/plugins/dsh-lore/status.json',
     'the route path matches the client half\'s STATUS_URL', String(routes[0]?.path))
   ok(typeof routes[0]?.handler === 'function', 'the route carries a handler')
   ok(typeof dispose === 'function', 'mountStatusRoute RETURNS a disposer')
@@ -382,7 +382,7 @@ const BUNDLE_LAYER = {
 }
 
 function fakeEditor(override = {}, entryConfig = BUNDLE_LAYER) {
-  const entry = { options: { id: 'include:dsh-worklog', name: 'dsh-worklog', config: { ...entryConfig } } }
+  const entry = { options: { id: 'include:dsh-lore', name: 'dsh-lore', config: { ...entryConfig } } }
   const layers = { override: structuredClone(override) }
   const calls = []
   return {

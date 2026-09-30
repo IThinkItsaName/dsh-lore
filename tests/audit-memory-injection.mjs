@@ -42,7 +42,7 @@ const ok = (condition, label, detail = '') => {
  * does not have" is exactly what drift means. A harness must not leave things in the tree it
  * is verifying.
  */
-const SANDBOX = mkdtempSync(join(tmpdir(), 'dsh-worklog-memory-'))
+const SANDBOX = mkdtempSync(join(tmpdir(), 'dsh-lore-memory-'))
 const ROOT = join(SANDBOX, 'memory')
 const INDEX = join(ROOT, 'INDEX.md')
 const INBOX = join(ROOT, 'inbox')
@@ -158,8 +158,8 @@ writeIndex(SAMPLE)
   const calls = mountWith({})
   ok(calls.section.length === 1, 'the index section is registered by default', String(calls.section.length))
   ok(calls.context.length === 1, 'the inbox context is registered by default', String(calls.context.length))
-  ok(calls.section[0]?.name === 'dsh-worklog:memory-index', 'the section carries a stable name', calls.section[0]?.name)
-  ok(calls.context[0]?.name === 'dsh-worklog:inbox', 'the context carries a stable name', calls.context[0]?.name)
+  ok(calls.section[0]?.name === 'dsh-lore:memory-index', 'the section carries a stable name', calls.section[0]?.name)
+  ok(calls.context[0]?.name === 'dsh-lore:inbox', 'the context carries a stable name', calls.context[0]?.name)
   ok(Number.isFinite(calls.section[0]?.order), 'the section carries a finite order')
   ok(Number.isFinite(calls.context[0]?.order), 'the context carries a finite order')
   // The whole point of the two-interface split: the index is STABLE text, the inbox is resolved
@@ -256,9 +256,9 @@ writeIndex(SAMPLE)
      'the list never returns a body — content only ever arrives as a file', listed.text)
 
   // (b) fetch: the whole file moves, byte for byte, and leaves the inbox.
-  const dest = join(ws, '.worklog-inbox', name)
+  const dest = join(ws, '.lore-inbox', name)
   const moved = await tool.execute({ operation: 'inbox', message: 'cache-key', workspace: ws })
-  ok(moved.ok === true && moved.text.includes('.worklog-inbox'),
+  ok(moved.ok === true && moved.text.includes('.lore-inbox'),
      'the answer gives the path it landed at', moved.text)
   ok(existsSync(dest) && readFileSync(dest, 'utf8') === original,
      'the file landed byte for byte — frontmatter included, so it still says who sent it and that it is untrusted')

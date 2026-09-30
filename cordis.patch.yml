@@ -33,8 +33,8 @@
   disabled: false
 
 - insert:
-    - id: dsh-worklog
-      name: 'dsh-worklog'
+    - id: dsh-lore
+      name: 'dsh-lore'
       config:
         skillDir: 'skills/project-work-log'
         modelInvocable: true

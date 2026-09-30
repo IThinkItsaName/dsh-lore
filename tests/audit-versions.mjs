@@ -8,7 +8,7 @@
 // said "bump the version".
 //
 // The repository name drifts the same way, and did: the repo was renamed to
-// `dsh-worklog` while three files and two local remotes still pointed at the old
+// `dsh-lore` while three files and two local remotes still pointed at the old
 // name. A rename is also the moment PUBLISHING.md warns about ("if you rename,
 // replace these two values first"), so it is worth gating rather than remembering.
 //

@@ -394,7 +394,7 @@ ok(!ctxQuiet.logs.some((entry) => String(entry[1]).startsWith('worklog[trace] ')
    'verbose=false emits no trace at all', JSON.stringify(ctxQuiet.logs))
 {
   // Fixtures stay outside the repo: a harness must not leave things in the tree it verifies.
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-worklog-trace-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-lore-trace-'))
   const target = join(dir, 'trace.log')
   const saved = process.env.DSH_WORKLOG_TRACE
   process.env.DSH_WORKLOG_TRACE = target

@@ -8,6 +8,24 @@
 
 ## [未发布]
 
+### 变更（破坏性）：插件改名 `dsh-worklog` → `dsh-lore`
+
+- **改了什么**：`package.json` 的 `name`、`lib/index.js` 的 `export const name`（**bundle / 行名**）、
+  状态路由 `/plugins/dsh-lore/status.json`、注入段名 `dsh-lore:memory-index` / `dsh-lore:inbox`、
+  客户端 `id` 与 locale 命名空间 `dsh-lore.settings`、收件箱落点 `.worklog-inbox` → **`.lore-inbox`**。
+  **GitHub 仓库同时改名**为 `IThinkItsaName/dsh-lore`（旧链接由 GitHub **自动重定向**）。
+- **没改**：环境变量仍是 `DSH_WORKLOG_*`（它指"工作记录"这个概念，且 `journal.py` 与测试隔离钩子都在用）；
+  技能名 `project-work-log` / `reliability-guidelines`；工具名 `worklog_memory`；
+  headless 设置文件仍在 `<DSH_HOME>/worklog/settings.json`。
+- **代价（要认）**：**破坏性变更** —— ① 已装的人必须改 profile 的 `dependencies` 与
+  `dsh.profile.bundles`（换名后不改就**根本加载不上**，比"卡片消失"更彻底）；② **必须重启 DSH**；
+  ③ 本条目**之前**的记录与更新日志里写的是旧名与旧落点，按"只追加、不改写"留着。
+- 本机已在同一步里做完：profile 两处改名 + `pnpm install`（`node_modules/dsh-lore` → 本仓库的链接；
+  残留的旧链接已删）+ `npm run audit` **`AUDIT CLEAN`**，入口 sha256 变为 **`bc5894af8473e5a3`**。
+- **README 也重新编辑过**：标题与定位改用新名、开头写明**曾用名**与"哪些没改"、补一节
+  「自 0.6.0 起、尚未发布的改动」、把"11 个字段"改成 **12** 并写明"改字段集要重启，
+  否则卡片会消失到重启为止"。
+
 ### 修复：认领失败不再静默（卡片消失时，控制台会说明原因）
 
 - **现象**（2026-09-30 真发生）：插件页那一项**没有东西** —— 配置卡片不见了，也没人解释。
@@ -1090,13 +1108,13 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.5.1...v0.6.0
-[0.5.1]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.5.0...v0.5.1
-[0.5.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.4.0...v0.5.0
-[0.3.1]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.3.0...v0.3.1
-[0.4.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.3.1...v0.4.0
-[0.3.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.1.1...v0.2.0
-[0.1.1]: https://github.com/IThinkItsaName/dsh-worklog/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/IThinkItsaName/dsh-worklog/tree/v0.1.0
+[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.5.1...v0.6.0
+[0.5.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.4.0...v0.5.0
+[0.3.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.3.0...v0.3.1
+[0.4.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.3.1...v0.4.0
+[0.3.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/IThinkItsaName/dsh-lore/tree/v0.1.0

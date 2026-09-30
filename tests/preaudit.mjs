@@ -22,7 +22,7 @@ const ok = (c, label, detail = '') => {
 /** Resolve the package the profile actually installs, or '' when unknowable. */
 function installedTarget() {
   if (PROFILE === '') return ''
-  const link = `${PROFILE}/node_modules/dsh-worklog`
+  const link = `${PROFILE}/node_modules/dsh-lore`
   if (!existsSync(link)) return ''
   try {
     return realpathSync(link).replaceAll('\\', '/').toLowerCase()
@@ -38,7 +38,7 @@ const isInstalled = installed !== '' && installed === PKG.replaceAll('\\', '/').
 if (PROFILE === '') {
   ok(true, 'profile link check SKIPPED (set DSH_PROFILE_DIR to enable it)')
 } else if (installed === '') {
-  ok(false, 'the profile has the dsh-worklog link', `${PROFILE}/node_modules/dsh-worklog`)
+  ok(false, 'the profile has the dsh-lore link', `${PROFILE}/node_modules/dsh-lore`)
 } else if (!isInstalled) {
   console.log(`      (this package is not the installed one; installed: ${installed})`)
   ok(true, 'profile link check SKIPPED (running from a copy, not the installed package)')

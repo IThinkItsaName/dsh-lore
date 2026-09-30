@@ -309,7 +309,7 @@ window.__ModuleLoader__.load({
 ```js
 ctx.slots.inject("settings.section", () => ctx.slots.register({
   name: "settings.section",
-  id: "dsh-worklog",
+  id: "dsh-lore",
   order: 50,
   label: () => st("nav.label"),   // 走 locale
   locale: SETTINGS_NS,
@@ -341,7 +341,7 @@ DisclosureRow({ icon, title, open, expandable, onToggle, …, children? })
 
 > **已被取代（2026-09-29）**：这一段原本是"节点半边起路由"的完整设计。现在
 > **配置的读写走 `ctx.configForms`**（宿主自己的设置通道），HTTP 上只剩一个
-> **只读状态端点** `GET /plugins/dsh-worklog/status.json`，用来报记忆规模与
+> **只读状态端点** `GET /plugins/dsh-lore/status.json`，用来报记忆规模与
 > "设置落在哪"。下面关于路由的两个坑**仍然成立**，只是现在只有那一个只读端点还用它。
 
 浏览器端碰不到文件系统，所以由**节点半边**把运行时状态服务出去：
@@ -350,7 +350,7 @@ DisclosureRow({ icon, title, open, expandable, onToggle, …, children? })
 ws = ctx.get("webServer")            // 可选服务：用 ctx.get，不要写进 inject
 routeDisposer = ws.register({
   kind: "exact",
-  path: "/plugins/dsh-worklog/status.json",
+  path: "/plugins/dsh-lore/status.json",
   handler: (req, res) => { … },      // 标准 Node http handler
 })
 return () => routeDisposer()          // 必须交回 disposer
@@ -494,7 +494,7 @@ WebRoute = { kind: 'exact'|'prefix', path: string,
 锚点解析依赖，`Config` 照常工作；条件是把宿主包声明成 **`peerDependencies`**
 （不声明时链接安装下会 `MODULE_NOT_FOUND`，那是另一回事，见 `work_log/0021`）。
 
-实测终点（`work_log/0022`、`0031`）：`Config.listConfigs{name:"dsh-worklog"}` →
+实测终点（`work_log/0022`、`0031`）：`Config.listConfigs{name:"dsh-lore"}` →
 `schema`，11 个字段全带 `x-cordis.volatile: true`。
 教训写在 `work_log/0016`：**一条错误结论会被固化进门禁与文档，并且很难再被发现**。
 

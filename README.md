@@ -1,4 +1,8 @@
-# worklog
+# dsh-lore
+
+> **曾用名 `dsh-worklog`**（2026-09-30 改名；GitHub 仓库同时改为 `IThinkItsaName/dsh-lore`，
+> 旧链接由 GitHub **自动重定向**）。**环境变量仍是 `DSH_WORKLOG_*`** —— 它们指的是"工作记录"
+> 这个概念，不是包名；**技能名 `project-work-log` 与工具名 `worklog_memory` 也都没变。**
 
 > **一条工作记忆链路**，不是一个日志工具。三块能力，依赖**单向向下**：
 >
@@ -10,6 +14,20 @@
 >
 > **三层可以只用一层**：只装技能层，就是一套完整可校验的记录体系（`skill-only/` 那条线更极端 ——
 > 连脚本都不要）；装上插件，才多出记忆与注入。
+
+### 自 0.6.0 起、尚未发布的改动
+
+| 改动 | 是什么 |
+|---|---|
+| **跨工作区消息「取件」** | `worklog_memory` 的 `inbox` 操作把别的工作区发来的消息**整个搬进** `<工作区>/.lore-inbox/`：逐字节、带 `from` / `at` /「不可信输入」标记，**失败不丢件**（先复制校验再删源）。正文**永不进提示词** —— 到你这儿时它是一个文件 |
+| **主技能可以单独关** | 新增 `skillEnabled`（技能页）：关掉 `project-work-log` **不影响记忆那一半**（索引注入与 `worklog_memory` 照旧） |
+| **`memoryInjectIndex` 真即时** | 改成**每次装配**现读（原先在挂载期读，而界面写着"即时生效"）。整个配置面现在只剩一条规则：**只有"要不要注册"需要重启** |
+| **退役条目只判结构** | `state: retired` 的记忆条目不再因"来源工作区消失 / 正文不合格"而永久报错 —— 否则"文件永不删"这条非破坏性出路等于不存在 |
+| **诊断只剩一个开关** | `verbose` 决定开不开，`DSH_WORKLOG_TRACE`（或 `<包>/lib/.trace`）决定落哪儿，没设就进宿主日志 |
+
+> 顺带修掉几处"说了却做不到"：插件页卡片**认领失败原先完全静默**（改了 `Config` 字段、宿主没重启，
+> 卡片就会消失，页面上只是"没有东西"）—— 现在控制台会点名缺哪个字段；信箱提醒原先指着一个
+> **读不到信箱**的工具。
 
 **不限编程**：软件、研究、写作、设计、运营、教学……任何跳会话或跨周持续投入的项目都能用。
 术语可换（迭代字段接受 `迭代 / 变更集 / 批次 / 阶段 / 版本 / 里程碑`），验证口径也放宽到"命令 / 数据 / 引用 / 样本"。
@@ -64,7 +82,7 @@
 
 | 装法 | 得到 | 得不到 |
 |---|---|---|
-| **DSH 插件包**（本仓库） | 三个技能（见下）+ 记忆索引注入 + `worklog_memory` 工具 + 插件页配置卡片 | —— |
+| **DSH 插件包**（本仓库） | 三个技能（见下）+ 记忆索引注入 + `worklog_memory` 工具（记忆读写 + **信箱取件**）+ 插件页配置卡片 | —— |
 | **普通 Agent Skill**（`skills/`） | 只要 `project-work-log`：完整的记录体系与 27 个命令 | 记忆注入、工具、配置卡片 |
 | **纯文档变体**（`skill-only/`） | 同一套约定与模板，**没有脚本**——给跑不了 Python 的平台 | 机械门禁（改成人手复核清单）、分析命令 |
 
@@ -85,16 +103,16 @@
 > ⚠ **先说代价最大的那条**：**用本地目录路径装，装出来是一个链接（link / junction），不是拷贝。**
 > `dsh plugin` 把参数**原样转发给 pnpm**，而 pnpm 对本地目录建链接 —— 于是
 > **源目录一移动、一删除，插件就废了**（profile 里那条链接指向空气）。
-> 实测：本仓库以 `link:` 装进本机 profile 后，`node_modules/dsh-worklog` 就是一个
+> 实测：本仓库以 `link:` 装进本机 profile 后，`node_modules/dsh-lore` 就是一个
 > `<JUNCTION>`。**要长期用，就按包名/固定 tag 装**（下面第一、二条），或者把 checkout
 > 放到一个不会挪窝的位置再接受这个代价。
 
 ```bash
 # 1) 按包名装（推荐；装的是 registry 上的发布版，真文件）
-dsh plugin --profile <profile> add dsh-worklog
+dsh plugin --profile <profile> add dsh-lore
 
 # 2) 固定到某个版本
-dsh plugin --profile <profile> add dsh-worklog@0.6.0
+dsh plugin --profile <profile> add dsh-lore@0.6.0
 
 # 3) 从本地 checkout 装 —— 记住上面那条：这是链接安装
 dsh plugin --profile <profile> add /绝对/路径/worklog
@@ -145,13 +163,13 @@ echo /tmp/worklog-trace.log > <包>/lib/.trace
 
 ```bash
 # 全局
-pi install git:github.com/IThinkItsaName/dsh-worklog
+pi install git:github.com/IThinkItsaName/dsh-lore
 
 # 固定到 tag（推荐，避免上游变动）
-pi install git:github.com/IThinkItsaName/dsh-worklog@v0.6.0
+pi install git:github.com/IThinkItsaName/dsh-lore@v0.6.0
 
 # 只装到当前项目（写入 .pi/settings.json，可随仓库共享给团队）
-pi install -l git:github.com/IThinkItsaName/dsh-worklog
+pi install -l git:github.com/IThinkItsaName/dsh-lore
 ```
 
 ### 手动（任意 harness）
@@ -235,19 +253,22 @@ python <skill>/scripts/journal.py memory search "样式"
 **字段、默认值、哪些改动需要重启、两个设置面的分界，全部在 [`SETTINGS.md`](SETTINGS.md)** ——
 这里只给最小示例，不复制那张表。
 
-改语言/关掉准则，可以在**本插件自己的那一页**上点（插件页 → `dsh-worklog` → 描述与行列表之间那张卡片），
+改语言/关掉准则，可以在**本插件自己的那一页**上点（插件页 → `dsh-lore` → 描述与行列表之间那张卡片），
 也可以写进 profile 补丁（profile 层在所有 bundle 层之后应用，所以能盖住包内默认值）：
 
 ```yaml
-- id: dsh-worklog
-  name: dsh-worklog
+- id: dsh-lore
+  name: dsh-lore
   config:
     guidelinesLanguage: 'en'
 ```
 
-> 本插件导出 `Config`（11 个字段全带 `.volatile()`），所以官方配置通道认识它们，写回前由宿主校验一次。
+> 本插件导出 `Config`（**12 个字段**全带 `.volatile()`），所以官方配置通道认识它们，写回前由宿主校验一次。
 > **新增字段时只挑一个家**：进 `Config` 标 `.volatile()`，同时把名字加进客户端 `lib/client.js` 的
-> `FORM_FIELDS` —— 两边漂移会让卡片**认领不到自己的 namespace**，整页静默消失。
+> `FORM_FIELDS` —— 两边漂移会让卡片**认领不到自己的 namespace**，整页消失。
+> **而且改完要重启 DSH**：运行中的宿主还发着旧 schema，卡片会**消失到重启为止**（2026-09-30 真发生过；
+> 现在认领失败会在浏览器控制台点名缺哪个字段 —— 见 [`SETTINGS.md`](SETTINGS.md) 与
+> [`RELEASING.md`](RELEASING.md) 的坑表）。
 
 ## 六、目录结构
 

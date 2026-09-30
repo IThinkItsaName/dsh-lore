@@ -80,7 +80,7 @@ function isPackageDir(dir) {
   const manifest = join(dir, 'package.json')
   if (!existsSync(manifest) || !existsSync(join(dir, 'cordis.patch.yml'))) return false
   try {
-    return JSON.parse(readFileSync(manifest, 'utf8')).name === 'dsh-worklog'
+    return JSON.parse(readFileSync(manifest, 'utf8')).name === 'dsh-lore'
   } catch {
     return false
   }
@@ -99,7 +99,7 @@ function findPackage() {
     if (isPackageDir(dir)) return dir
   }
   throw new Error(
-    `cannot locate the dsh-worklog package from ${HERE}; ` +
+    `cannot locate the dsh-lore package from ${HERE}; ` +
     'set DSH_WORKLOG_PKG to its absolute path',
   )
 }
@@ -141,7 +141,7 @@ if (process.env.DSH_WORKLOG_SETTINGS === undefined) {
  * `_package.py --check` as drift, because drift means exactly "the package has files the mirror
  * does not". A harness must not leave anything in the tree it is verifying.
  */
-export const ISOLATED_MEMORY_ROOT = join(tmpdir(), 'dsh-worklog-memory-isolated')
+export const ISOLATED_MEMORY_ROOT = join(tmpdir(), 'dsh-lore-memory-isolated')
 if (process.env.DSH_WORKLOG_MEMORY === undefined) {
   process.env.DSH_WORKLOG_MEMORY = ISOLATED_MEMORY_ROOT
 }

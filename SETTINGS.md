@@ -189,7 +189,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 宿主给每个带 `.volatile()` 字段的插件投影一份"设置命名空间"，id 是
 `entry.options.id` —— 那是**部署相关**的：本机是 `include:dsh-worklog`，换个挂法就变。
 所以卡片不写死 id，而是**按字段集认领**：看这一行投影出来的 **`value`**（那份生效配置）
-是否同时带齐我们那 11 个名字（`lib/client.js` 的 `FORM_FIELDS`）。
+是否同时带齐我们那 12 个名字（`lib/client.js` 的 `FORM_FIELDS`）。
 
 > **为什么是 `value` 而不是 `schema`（2026-09-29 在真实宿主上量出来的）**：宿主发的 `schema`
 > 是 schemastery 的**重水合信封** `{uid, refs}`，字段名躺在 `refs[<uid>].dict` 里 ——
@@ -198,6 +198,14 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 > 详见 `work_log/0042`。
 
 - 认领不到 → **什么都不注册**（宁可这一页不出现，也不要在别人的命名空间上挂一张会写错地方的卡片）。
+
+> **代价：改 `Config` 字段会让卡片消失到重启为止（2026-09-30 真发生过，`work_log/0062`）。**
+> 判据要求"集齐全部字段"，所以**加一个字段**（或删一个）之后，**运行中的宿主还发着旧 schema** ——
+> 于是磁盘上的客户端要 N 个、内存里的宿主只给 N−1 个，**认领失败、卡片消失**。
+> 症状只有「插件管理界面点进去没有东西」：不抛错、不报错、状态端点照样 200。
+> **修法是重启 DSH**（客户端半边是从磁盘现读的，重启后刷新页面即可，没有构建步骤）。
+> 从 2026-09-30 起这条**不再静默**：认领失败且那一行确实是我们的时候，浏览器控制台会打印
+> 一行说明，点名缺哪个字段、并告诉你重启（`lib/client.js` 的 `warnAboutMissingNamespace`）。
 - 命名空间消失 → 卡片撤下；再出现 → 重新挂上。
 - **`FORM_FIELDS` 与 `Config` 会漂移**：少一个字段就永远认领不到、卡片静默消失。
   所以 `tests/audit-client-runtime.mjs` 从 `lib/index.js` 的源码里重新解析一遍

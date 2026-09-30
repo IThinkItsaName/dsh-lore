@@ -680,6 +680,41 @@ function mountCard({ seed = SEED, statusFetch = null, extra = {} } = {}) {
   return { world, registration, props, form: world.forms.get(SERVED_NS) }
 }
 
+/* ---- a failed claim must not be silent (2026-09-30, work_log/0062) ---- */
+//
+// The claim is strict on purpose, and its price is that editing `Config` makes the card vanish
+// **until DSH restarts** (the running host projects the old schema). On 2026-09-30 that happened
+// for real: `skillEnabled` was added, DSH had not restarted, and the only symptom was
+// 「插件管理界面点进去没有东西」 — nothing threw, nothing was logged. These assertions keep the
+// strictness and forbid the silence.
+{
+  const warn = []
+  const saved = console.warn
+  console.warn = (message) => warn.push(String(message))
+  try {
+    const short = CONFIG_VOLATILE_FIELDS.filter((field) => field !== 'skillEnabled')
+    const value = Object.fromEntries(short.map((field) => [field, SEED.value[field]]))
+    const world = createWorld({ [SERVED_NS]: { value, base: {} } })
+    clientExports.apply(world.ctx)
+    world.mirror.publish({ namespaces: [{ ns: SERVED_NS, value }] })
+    ok(warn.length === 1,
+      'our namespace one field short warns once instead of vanishing silently', JSON.stringify(warn))
+    ok(String(warn[0]).includes('skillEnabled') && String(warn[0]).includes('Restart DSH'),
+      'the warning names the missing field and says what to do', String(warn[0]))
+    ok(world.registered.length === 0, 'and the claim stays strict — nothing is registered',
+      String(world.registered.length))
+
+    // A foreign namespace must stay quiet: only a row carrying our distinctive fields is ours.
+    warn.length = 0
+    const other = createWorld({ [SERVED_NS]: { value: { guidelinesEnabled: true }, base: {} } })
+    clientExports.apply(other.ctx)
+    other.mirror.publish({ namespaces: [{ ns: SERVED_NS, value: { guidelinesEnabled: true } }] })
+    ok(warn.length === 0, 'a foreign namespace produces no warning at all', JSON.stringify(warn))
+  } finally {
+    console.warn = saved
+  }
+}
+
 /* ---- tree readers ---- */
 const controlsOf = (tree, type) => [...walk(tree)].filter((node) => node.type === type)
 const getSwitches = (tree) => controlsOf(tree, SwitchMarker)

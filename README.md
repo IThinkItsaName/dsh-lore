@@ -15,7 +15,7 @@
 > **三层可以只用一层**：只装技能层，就是一套完整可校验的记录体系（`skill-only/` 那条线更极端 ——
 > 连脚本都不要）；装上插件，才多出记忆与注入。
 
-### 自 0.6.0 起、尚未发布的改动
+### 0.7.0 的新东西（2026-09-30 发布）
 
 | 改动 | 是什么 |
 |---|---|
@@ -112,7 +112,7 @@
 dsh plugin --profile <profile> add dsh-lore
 
 # 2) 固定到某个版本
-dsh plugin --profile <profile> add dsh-lore@0.6.0
+dsh plugin --profile <profile> add dsh-lore@0.7.0
 
 # 3) 从本地 checkout 装 —— 记住上面那条：这是链接安装
 dsh plugin --profile <profile> add /绝对/路径/worklog
@@ -166,7 +166,7 @@ echo /tmp/worklog-trace.log > <包>/lib/.trace
 pi install git:github.com/IThinkItsaName/dsh-lore
 
 # 固定到 tag（推荐，避免上游变动）
-pi install git:github.com/IThinkItsaName/dsh-lore@v0.6.0
+pi install git:github.com/IThinkItsaName/dsh-lore@v0.7.0
 
 # 只装到当前项目（写入 .pi/settings.json，可随仓库共享给团队）
 pi install -l git:github.com/IThinkItsaName/dsh-lore

@@ -114,6 +114,9 @@ git push origin v0.5.0
       **验证发布物本身完整**，而不是验证工作树
 - [ ] 若插件已装进某个 profile，硬刷新页面（必要时重启 DSH）看配置卡片与技能是否正常
 - [ ] 在 `work_log/` 写一条记录：这一版发了什么、验证到什么程度、有没有未覆盖的
+- [ ] **破坏性改动（改名 / 行名变更）必须在发布说明里写清迁移步骤**：profile 的
+      `dependencies` 与 `dsh.profile.bundles` **两处**换成新名 → `pnpm install` → **重启 DSH**。
+      不改就**根本加载不上**（比"卡片消失"更彻底）。0.7.0 的改名是第一个例子（`work_log/0063`）
 
 ## 常见坑（都真发生过）
 
@@ -127,4 +130,6 @@ git push origin v0.5.0
 | 在卡片上改完没写进 profile | 那个宿主没有 `configEditor`（headless）—— 配置退回插件自己的 `settings.json`，而**没有程序写它**，那时应手工编辑；卡片底部的「设置位置」一行会说明当前是哪一种 |
 | 卡片改了没反应 | 那个键是**装载期**读的（见 `SETTINGS.md` 的「改完需重启」）；只有 `memoryInjectIndex` / `memoryPersonalSearchable` 是即时生效的 |
 | 版本审计失败 | `package.json` 的 `version` 与 tag / CHANGELOG 不一致；三处要同时改 |
+| 改了包名却忘了 profile | 新名**加载不上**；`dependencies` 与 `dsh.profile.bundles` **两处**都要改，
+再 `pnpm install`、重启 DSH。`npm run audit` 会直接点名缺哪个链接（`work_log/0063`） |
 | 新加的随包技能当场查不到 | 插件自带技能在**插件挂载时**注册；新文件要**重启宿主**才登记（放进 `<DSH_HOME>/skills/` 的则会被文件系统 provider 活查发现） |

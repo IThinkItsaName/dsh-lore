@@ -57,7 +57,7 @@ git push origin v0.4.0
 之后别人可以这样装：
 
 ```bash
-pi install git:github.com/IThinkItsaName/dsh-lore@v0.6.0
+pi install git:github.com/IThinkItsaName/dsh-lore@v0.7.0
 ```
 
 > ⚠ **打 tag 之前先改 `package.json` 的 `version`，并确认它等于 tag 去掉 `v`。**

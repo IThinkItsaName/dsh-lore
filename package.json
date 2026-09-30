@@ -1,6 +1,6 @@
 {
   "name": "dsh-lore",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Work-memory system for AI agents, in three layers: a portable Agent Skill (process journal + index ledger + lessons, stdlib-only toolbox), a cross-workspace global memory, and a DeepSeek Harness plugin bundle that injects it.",
   "license": "MIT",
   "type": "module",

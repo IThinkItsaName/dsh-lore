@@ -132,22 +132,26 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 
 ## 已知配置键
 
-`Config` 声明了 **11 个**字段，全部 `.volatile()`。卡片上有控件的是其中 **10 个**：
+`Config` 声明了 **12 个**字段，全部 `.volatile()`。卡片上有控件的是其中 **11 个**：
 `skillFile` 只能由行配置给（卡片没有它的控件，所以任何界面都不会把它改掉或删掉）。
 
-| 键 | 类型 | 默认 | 卡片上 | 说明 |
-|---|---|---|---|---|
-| `skillDir` | string | `skills/project-work-log` | 「技能 › 路径」 | 工作记录技能目录。相对路径从**包根**算起，绝对路径原样使用。 |
-| `skillFile` | string | `SKILL.md` | **无控件** | 技能目录里的指令文件名。仅行配置。 |
-| `modelInvocable` | boolean | `true` | 「高级」 | 是否允许模型自动调用这两个技能。 |
-| `userInvocable` | boolean | `true` | 「高级」 | 是否允许用户手动调用。 |
-| `verbose` | boolean | `false` | 「高级」 | 装载时多打一行日志。 |
-| `guidelinesEnabled` | boolean | `true` | 「技能」 | 是否登记 `reliability-guidelines` 技能。 |
-| `guidelinesDir` | string | `skills/reliability-guidelines` | 「技能 › 路径」 | 准则技能目录，解析规则同 `skillDir`。 |
-| `guidelinesLanguage` | `'zh'` / `'en'` | `'zh'` | 「技能」 | 只影响准则那一份技能；`project-work-log` 本身固定是中文。 |
-| `memoryEnabled` | boolean | `true` | 「记忆」 | 全局记忆总开关：关闭后索引不注入、`worklog_memory` 工具也不注册。 |
-| `memoryInjectIndex` | boolean | `true` | 「记忆」 | 是否默认把索引段注入提示词（用时现读）。 |
-| `memoryPersonalSearchable` | boolean | `false` | 「记忆」 | 个人目录是否可被检索（用时现读）。 |
+| 键 | 类型 | 默认 | 卡片上 | 说明 | 改完生效 |
+|---|---|---|---|---|---|
+| `skillDir` | string | `skills/project-work-log` | 「技能 › 路径」 | 工作记录技能目录。相对路径从**包根**算起，绝对路径原样使用。 | 重启 |
+| `skillFile` | string | `SKILL.md` | **无控件** | 技能目录里的指令文件名。仅行配置。 | 重启 |
+| `skillEnabled` | boolean | `true` | 「技能」 | 是否登记 `project-work-log` 技能。**关掉它不影响记忆那一半**（索引注入与 `worklog_memory` 照旧）。 | 重启 |
+| `modelInvocable` | boolean | `true` | 「高级」 | 是否允许模型自动调用这两个技能。 | 重启 |
+| `userInvocable` | boolean | `true` | 「高级」 | 是否允许用户手动调用。 | 重启 |
+| `verbose` | boolean | `false` | 「高级」 | **诊断开关**：装载与技能查询时打诊断行。落点由 `DSH_WORKLOG_TRACE`（或 `<包>/lib/.trace`）决定，没设就进宿主日志 —— 一个开关决定开不开，环境变量决定落哪儿。 | 重启 |
+| `guidelinesEnabled` | boolean | `true` | 「技能」 | 是否登记 `reliability-guidelines` 技能。 | 重启 |
+| `guidelinesDir` | string | `skills/reliability-guidelines` | 「技能 › 路径」 | 准则技能目录，解析规则同 `skillDir`。 | 重启 |
+| `guidelinesLanguage` | `'zh'` / `'en'` | `'zh'` | 「技能」 | 只影响准则那一份技能；`project-work-log` 本身固定是中文。 | 重启 |
+| `memoryEnabled` | boolean | `true` | 「记忆」 | 全局记忆总开关：关闭后索引不注入、`worklog_memory` 工具也不注册。 | **重启** |
+| `memoryInjectIndex` | boolean | `true` | 「记忆」 | 是否把索引段注入提示词。**每次装配现读**（2026-09-30 之前它在挂载期读，界面却写着"即时生效"）。 | **即时** |
+| `memoryPersonalSearchable` | boolean | `false` | 「记忆」 | 个人目录是否可被检索（用时现读）。 | **即时** |
+
+> **只有"要不要注册"需要重启。** 记忆那三个键里只剩 `memoryEnabled` 属于这一类；另外两个都是现读 ——
+> 它们**不需要重启**，拨完下一次请求就是新行为。
 
 ## 项目侧默认值：不提供控件
 

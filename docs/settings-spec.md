@@ -127,28 +127,34 @@
 
 | 分页 | 装什么 |
 |---|---|
-| **技能** | `guidelinesEnabled`、`guidelinesLanguage`，以及收在「路径」折叠区里的 `skillDir` / `guidelinesDir` |
+| **技能** | `skillEnabled`、`guidelinesEnabled`、`guidelinesLanguage`，以及收在「路径」折叠区里的 `skillDir` / `guidelinesDir` |
 | **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable`，外加一个只读的「当前状态」折叠区 |
 | **高级** | `verbose`、`modelInvocable`、`userInvocable` |
 
 ### 能改什么
 
-| 设置项 | 类型 | 默认 | 位置 | 谁读它 |
-|---|---|---|---|---|
-| `guidelinesEnabled` | 开关 | 开 | 技能 | **插件**（挂载时） |
-| `guidelinesLanguage` | 分段控件：中文 / English | 中文 | 技能 | **插件**（挂载时） |
-| `skillDir` | 文本框 | 包内默认 | 技能 › 路径（默认收起） | **插件**（挂载时） |
-| `guidelinesDir` | 文本框 | 包内默认 | 技能 › 路径（默认收起） | **插件**（挂载时） |
-| `memoryEnabled` | 开关 | 开 | 记忆 | **插件**（挂载时） |
-| `memoryInjectIndex` | 开关 | 开 | 记忆 | **插件**（用时现读） |
-| `memoryPersonalSearchable` | 开关 | 关 | 记忆 | **插件**（用时现读） |
-| `verbose` | 开关 | 关 | 高级 | **插件**（挂载时） |
-| `modelInvocable` | 开关 | 开 | 高级 | **插件**（挂载时） |
-| `userInvocable` | 开关 | 开 | 高级 | **插件**（挂载时） |
+| 设置项 | 类型 | 默认 | 位置 | 谁读它 | 改完何时生效 |
+|---|---|---|---|---|---|
+| `skillEnabled` | 开关 | 开 | 技能 | **插件**（挂载时） | 需重启 |
+| `guidelinesEnabled` | 开关 | 开 | 技能 | **插件**（挂载时） | 需重启 |
+| `guidelinesLanguage` | 分段控件：中文 / English | 中文 | 技能 | **插件**（挂载时） | 需重启 |
+| `skillDir` | 文本框 | 包内默认 | 技能 › 路径（默认收起） | **插件**（挂载时） | 需重启 |
+| `guidelinesDir` | 文本框 | 包内默认 | 技能 › 路径（默认收起） | **插件**（挂载时） | 需重启 |
+| `memoryEnabled` | 开关 | 开 | 记忆 | **插件**（挂载时） | **需重启** |
+| `memoryInjectIndex` | 开关 | 开 | 记忆 | **插件**（**每次装配现读**） | **即时** |
+| `memoryPersonalSearchable` | 开关 | 关 | 记忆 | **插件**（用时现读） | **即时** |
+| `verbose` | 开关 | 关 | 高级 | **插件**（挂载时定开关，之后每次 `trace` 都看它） | 需重启 |
+| `modelInvocable` | 开关 | 开 | 高级 | **插件**（挂载时） | 需重启 |
+| `userInvocable` | 开关 | 开 | 高级 | **插件**（挂载时） | 需重启 |
 | `skillFile` | — | `SKILL.md` | **界面不提供控件** | **插件**（挂载时）—— 只由行配置给 |
 | ~~`container`~~ | — | `work_log` | **界面不提供** | **`journal.py`** —— 插件不读 |
 | ~~`lessons`~~ | — | `lessons` | **界面不提供** | **`journal.py`** —— 插件不读 |
 | ~~`mode`~~ | — | `full` | **界面不提供** | **`journal.py`** —— 插件不读 |
+
+**`memoryInjectIndex` 是唯一一个"注册了但按装配现判"的键**（2026-09-30 改）：section 只要
+`memoryEnabled` 为真就注册，开关在 `text` 函数里读。改之前它在挂载期读，而界面写着"即时生效" ——
+**可点、说会生效、实际要重启**，正是本页最该避免的那种东西。改完之后的规则很简单：
+**只有"注册不注册"这件事需要重启，其余都是现读**。
 
 **记忆那三个键此前没有登记在规格里** —— 这是规格与实际的一处遗漏，2026-09-29 补上。
 它们都由 `apply()`/工具调用读取，`memoryEnabled` 是装载期，另两个用时现读。
@@ -172,7 +178,14 @@ profile patch，也没有任何界面展示或提交它们；`projectDefaults()`
 
 ### 必须标注的事
 
-1. **靠插件读的那几个：改完需重启 DSH 生效。** 不标就是骗人 —— 它们是 `apply()` 时读的。
+1. **只有"要不要注册"需要重启**：`memoryEnabled`（两个注入都不注册）、`skillEnabled` /
+   `guidelinesEnabled` / `modelInvocable` / `userInvocable` / `skillDir` / `guidelinesDir` /
+   `guidelinesLanguage` / `verbose` 都是装载参数 —— 界面上**按页**标"改完需重启"是准确的，
+   但记忆页只剩总开关这一条属于这一类（`memoryInjectIndex` 已改为按装配现读，见上表）。
+2. **诊断只有一个开关，落点由环境变量定**：`verbose`（界面）决定开不开，
+   `DSH_WORKLOG_TRACE` / `<包>/lib/.trace` 决定落到哪个文件；没设落点就进宿主日志。
+   从前这是两套互不相干的东西（界面那个只打一行、环境变量那个打很多行到文件），
+   于是"打开诊断"有两个答案，取决于你走哪扇门。
 2. **项目级设置（`container` / `lessons` / `mode`）不在这两页里**，界面只在页脚留一句
    兼容性说明，把它们指向 `journal.py config`。用户不会以为勾一下插件设置就改了
    某个项目的行为，因为那些键根本不出现。

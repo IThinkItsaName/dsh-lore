@@ -3,7 +3,9 @@
 // actually enforces (candidate fields, definition fields, content type).
 //
 //   node logs/tests/run.mjs
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { PKG, extraBundledSkills } from './_pkg.mjs'
 const results = []
@@ -369,6 +371,47 @@ mod.apply(ctxOff, { guidelinesEnabled: false })
 ok(ctxOff.providers.length === 1 + extraBundledSkills().length,
    'guidelinesEnabled=false drops the guidelines provider but keeps the bundled skills',
    String(ctxOff.providers.length))
+
+/* ---- disabling the work-log skill itself (the memory half stays up) ---- */
+const ctxSkillOff = fakeCtx()
+mod.apply(ctxSkillOff, { skillEnabled: false })
+ok(ctxSkillOff.providers.length === 1 + extraBundledSkills().length,
+   'skillEnabled=false drops the work-log provider but keeps the guidelines and bundled skills',
+   String(ctxSkillOff.providers.length))
+ok(ctxSkillOff.registeredTools.length === 1,
+   'and the memory tool still mounts — the skill half and the memory half are independent',
+   String(ctxSkillOff.registeredTools.length))
+
+/* ---- diagnostics: one switch decides WHETHER, the environment decides WHERE ---- */
+const ctxVerbose = fakeCtx()
+mod.apply(ctxVerbose, { verbose: true })
+ok(ctxVerbose.logs.some((entry) => String(entry[1]).startsWith('worklog[trace] ')),
+   'verbose=true sends the trace to the host log when no trace file is armed',
+   JSON.stringify(ctxVerbose.logs.slice(0, 3)))
+const ctxQuiet = fakeCtx()
+mod.apply(ctxQuiet, {})
+ok(!ctxQuiet.logs.some((entry) => String(entry[1]).startsWith('worklog[trace] ')),
+   'verbose=false emits no trace at all', JSON.stringify(ctxQuiet.logs))
+{
+  // Fixtures stay outside the repo: a harness must not leave things in the tree it verifies.
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-worklog-trace-'))
+  const target = join(dir, 'trace.log')
+  const saved = process.env.DSH_WORKLOG_TRACE
+  process.env.DSH_WORKLOG_TRACE = target
+  try {
+    const ctxFiled = fakeCtx()
+    mod.apply(ctxFiled, { verbose: true })
+    const written = readFileSync(target, 'utf8')
+    ok(written.includes('apply'),
+       'with DSH_WORKLOG_TRACE set the same lines go to that file instead', written.slice(0, 80))
+    ok(!ctxFiled.logs.some((entry) => String(entry[1]).startsWith('worklog[trace] ')),
+       'and not to the host log — the env var decides where, it does not decide whether')
+  } finally {
+    if (saved === undefined) delete process.env.DSH_WORKLOG_TRACE
+    else process.env.DSH_WORKLOG_TRACE = saved
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
 
 /* ---- liveness: a provider re-reads, so an edit changes the body ---- */
 const guidPath = `${PKG}/skills/reliability-guidelines/SKILL.md`

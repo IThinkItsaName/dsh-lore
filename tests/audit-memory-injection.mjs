@@ -171,11 +171,29 @@ writeIndex(SAMPLE)
   ok(calls.section[0]?.text().includes('host-style-claiming'), 'the registered section resolves to the index')
 }
 
-// `memoryInjectIndex: false` → the index is NOT registered, the inbox still is.
+// `memoryInjectIndex: false` → the section is **still registered** (that is a registration fact)
+// but resolves to the empty string. This is the switch the settings page promises takes effect at
+// once: it used to be read *here*, at mount, which made it a restart-time option wearing an
+// immediate label — and the page's promise is what the assertion should hold it to.
 {
   const calls = mountWith({ memoryInjectIndex: false })
-  ok(calls.section.length === 0, 'memoryInjectIndex=false registers no section', String(calls.section.length))
-  ok(calls.context.length === 1, 'but the inbox context is independent of that switch', String(calls.context.length))
+  ok(calls.section.length === 1,
+    'memoryInjectIndex=false still registers the section', String(calls.section.length))
+  ok(calls.section[0]?.text() === '',
+    'but it resolves to nothing, so nothing is injected', JSON.stringify(calls.section[0]?.text()))
+  ok(calls.context.length === 1, 'and the inbox context is independent of that switch', String(calls.context.length))
+}
+
+// …and it is read **per assembly**, which is what makes the page's "takes effect immediately"
+// true. Flip the very same settings file the mount is reading, then call the very same registered
+// function again: no re-mount, no restart.
+{
+  const calls = mountWith({ memoryInjectIndex: true })
+  const text = calls.section[0].text
+  ok(text().includes('host-style-claiming'), 'with the switch on, the index is injected')
+  writeFileSync(process.env.DSH_WORKLOG_SETTINGS, JSON.stringify({ memoryInjectIndex: false }), 'utf8')
+  ok(text() === '',
+    'flipping the switch takes effect on the next assembly — without a restart')
 }
 
 // `memoryEnabled: false` → neither. This is the master switch that the page says needs a restart,

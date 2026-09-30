@@ -279,7 +279,7 @@ const REAL_SCHEMA_ENVELOPE = {
 
 /** The values a projected row carries — the config's own defaults, keyed by field name. */
 const PROJECTED_DEFAULTS = {
-  skillDir: '', skillFile: 'SKILL.md', modelInvocable: true, userInvocable: true, verbose: false,
+  skillDir: '', skillFile: 'SKILL.md', skillEnabled: true, modelInvocable: true, userInvocable: true, verbose: false,
   guidelinesEnabled: true, guidelinesDir: '', guidelinesLanguage: 'zh',
   memoryEnabled: true, memoryInjectIndex: true, memoryPersonalSearchable: false,
 }
@@ -312,8 +312,8 @@ let clientExports = null
     seen.join(','))
   ok(typeof clientExports.claimNamespace === 'function',
     'the namespace claim is exported (the test drives it directly)')
-  ok(Array.isArray(clientExports.FORM_FIELDS) && clientExports.FORM_FIELDS.length === 11,
-    'the claim fingerprint is exported and names eleven fields',
+  ok(Array.isArray(clientExports.FORM_FIELDS) && clientExports.FORM_FIELDS.length === 12,
+    'the claim fingerprint is exported and names twelve fields',
     JSON.stringify(clientExports.FORM_FIELDS))
   ok(clientExports.STATUS_URL === '/plugins/dsh-worklog/status.json',
     'the read-only status endpoint is the only HTTP surface the client has',
@@ -641,13 +641,13 @@ function makeUseHook(store) {
 /** The values a real profile would project, with one field overridden. */
 const SEED = {
   value: {
-    skillDir: 'skills/project-work-log', skillFile: 'SKILL.md',
+    skillDir: 'skills/project-work-log', skillFile: 'SKILL.md', skillEnabled: true,
     modelInvocable: true, userInvocable: true, verbose: false,
     guidelinesEnabled: false, guidelinesDir: 'skills/reliability-guidelines', guidelinesLanguage: 'en',
     memoryEnabled: true, memoryInjectIndex: true, memoryPersonalSearchable: false,
   },
   base: {
-    skillDir: 'skills/project-work-log', skillFile: 'SKILL.md',
+    skillDir: 'skills/project-work-log', skillFile: 'SKILL.md', skillEnabled: true,
     modelInvocable: true, userInvocable: true, verbose: false,
     guidelinesEnabled: true, guidelinesDir: 'skills/reliability-guidelines', guidelinesLanguage: 'zh',
     memoryEnabled: true, memoryInjectIndex: true, memoryPersonalSearchable: false,
@@ -768,16 +768,19 @@ const openDisclosure = async (index = 0) => {
     'the panel points back at its tab with aria-labelledby',
     String(panels[0].props['aria-labelledby']))
 
-  /* ---- the 技能 panel: one switch, the language control, the paths ---- */
+  /* ---- the 技能 panel: two switches, the language control, the paths ---- */
   const skillsSwitches = getSwitches(loaded)
-  ok(skillsSwitches.length === 1, 'the 技能 panel holds exactly one switch', String(skillsSwitches.length))
-  ok(skillsSwitches[0].props.label === '启用可靠性准则技能',
-    'the switch is guidelinesEnabled, with localized copy (not the raw key)',
-    String(skillsSwitches[0].props.label))
-  ok(skillsSwitches[0].props.checked === false,
-    'the switch reflects the LIVE value the host projected', String(skillsSwitches[0].props.checked))
-  ok(skillsSwitches[0].props.disabled === false, 'a writable form leaves the switch enabled')
-  ok(typeof skillsSwitches[0].props.onChange === 'function', 'the switch is controlled')
+  ok(skillsSwitches.length === 2, 'the 技能 panel holds two switches', String(skillsSwitches.length))
+  ok(skillsSwitches.map((node) => node.props.label).join(',') === '启用工作记录技能,启用可靠性准则技能',
+    'the switches are skillEnabled / guidelinesEnabled, with localized copy (not the raw key)',
+    skillsSwitches.map((node) => node.props.label).join(','))
+  ok(skillsSwitches.map((node) => node.props.checked).join(',') === 'true,false',
+    'they reflect the LIVE values the host projected (each skill is switchable on its own)',
+    skillsSwitches.map((node) => node.props.checked).join(','))
+  ok(skillsSwitches.every((node) => node.props.disabled === false),
+    'a writable form leaves both switches enabled')
+  ok(skillsSwitches.every((node) => typeof node.props.onChange === 'function'),
+    'the switches are controlled')
 
   const language = getSegments(loaded)[0]
   ok(getSegments(loaded).length === 1, 'the 技能 panel carries exactly one SegmentedControl',
@@ -886,7 +889,7 @@ const openDisclosure = async (index = 0) => {
     'selecting 高级 renders its panel and only its panel')
   const advancedSwitches = getSwitches(advanced)
   ok(advancedSwitches.length === 3, 'the 高级 panel holds three switches', String(advancedSwitches.length))
-  ok(advancedSwitches.map((node) => node.props.label).join(',') === '装载时打日志,允许模型自动调用,允许手动调用',
+  ok(advancedSwitches.map((node) => node.props.label).join(',') === '打开诊断日志,允许模型自动调用,允许手动调用',
     'the three switches are verbose / modelInvocable / userInvocable, in order',
     advancedSwitches.map((node) => node.props.label).join(','))
   ok(advancedSwitches.map((node) => node.props.checked).join(',') === 'false,true,true',
@@ -918,7 +921,7 @@ const openDisclosure = async (index = 0) => {
 
   const calls = form.mutations
   ok(calls.length === 1, 'toggling a switch issues exactly one mutation', String(calls.length))
-  ok(JSON.stringify(calls[0]) === JSON.stringify([{ op: 'set', path: ['guidelinesEnabled'], value: true }]),
+  ok(JSON.stringify(calls[0]) === JSON.stringify([{ op: 'set', path: ['skillEnabled'], value: true }]),
     'the mutation is a set of that one field to the chosen value', JSON.stringify(calls[0]))
   ok(getSwitches(runtime.tree)[0].props.checked === true,
     'and the card re-renders from the host answer (not from an optimistic local copy)',

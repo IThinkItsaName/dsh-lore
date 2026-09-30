@@ -198,7 +198,13 @@ writeIndex(SAMPLE)
   writeInbox(3)
   const three = text()
   ok(three.includes('3'), 'the notice states the count', three)
-  ok(three.includes('worklog_memory'), 'the notice says how to read them', three)
+  ok(three.includes('inbox list') && three.includes('inbox take'),
+     'the notice names the inbox commands that actually read the inbox', three)
+  // And it must NOT point at the memory tool: `worklog_memory` reads memory entries only —
+  // there is no inbox path in it (it just counts them). Saying otherwise sends the model to a
+  // tool that cannot answer, which is worse than saying nothing.
+  ok(!three.includes('worklog_memory'),
+     'the notice does not point at the memory tool (it cannot read the inbox)', three)
   // A stray non-`.md` file is not a message — the CLI's own `count` skips it, so this must too.
   writeFileSync(join(INBOX, 'half-written.tmp'), 'x', 'utf8')
   ok(mod.countInboxItems() === 3, 'a .tmp left by an interrupted put is not counted', String(mod.countInboxItems()))

@@ -8,6 +8,22 @@
 
 ## [未发布]
 
+### 修复：信箱提醒指着一个**读不到信箱**的工具
+
+- **症状**：注入的那行写的是「…读它们用 `worklog_memory`（`search` 会一并给出内容）」，
+  但 `worklog_memory` 的四个操作（`status` / `search` / `get` / `list`）**全部**走
+  `readMemoryEntries()` —— 它只读记忆条目，代码里**没有读信箱的路径**（插件对信箱只做一件事：数个数）。
+  模型照这句话去做，只会拿到一堆不相干的记忆条目。真正能读信箱的是 `project-work-log` 技能里的
+  `inbox list` / `inbox take`（`journal.py inbox …`）。
+- **改了**：那行改为「（别的工作区发来的）。读它们用 `project-work-log` 技能的 `inbox list` / `inbox take`；
+  要继续处理，先让用户确认。」—— **不再提记忆工具**，并保住了"先确认再动"那条护栏。
+- **测试方向也是错的**：`audit-memory-injection.mjs` 原先那条断言 `includes('worklog_memory')`
+  把 bug 当成了契约。改成两条 —— 必须点名 `inbox list` / `inbox take`，且**不得**出现 `worklog_memory`；
+  并给插件侧变异驱动（`logs/dsh-src/reverse-verify-client.ps1`）加一行（把 `inbox list` 换回
+  `worklog_memory`），**如期变红**。
+- 入口 sha256 随之变为 **`f04071a304f6aa2c`**（这是首次改动 `lib/index.js`；此前几轮动的是文档与技能），
+  `npm run audit` 仍 **`AUDIT CLEAN`**。
+
 ### 新增：`check` 把「渐进原则的规模兜底正在生效」说出来
 
 - **问题**：兜底规则是"记录 **≥ 5 篇**的容器整批算旧记录"，本意是让老项目第一次跑不至于一片红。

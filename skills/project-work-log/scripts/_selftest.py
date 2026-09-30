@@ -2423,6 +2423,27 @@ def _memory_phase(parent: str) -> None:
     ok(r.returncode == 0 and "已被移除" in r.stdout,
        "memory: 登记过的来源工作区没了 → 只提示，不拦（路径没了就当它没了）", r.stdout + r.stderr)
 
+    # --- 6c) 退役条目只判结构：来源与内容要求都不再判（`0060` A 项）-----------
+    # 规格 §三 说退役是"默认搜不到、**文件永不删**"。若内容要求照判，一条退役条目会因为
+    # 来源工作区消失（正常生命周期）或正文本就不合格而**永久报错** —— 那条非破坏性出路
+    # 就等于不存在，用户只剩删文件一条路。同一条**改成现役**后必须照旧报错：跳过是按
+    # `state` 判的，不是"不判了"。
+    retire_root = os.path.join(base, "memretire")
+    os.makedirs(retire_root)
+    vol_ret = os.path.join(retire_root, "01-t.md")
+    bad = ("- id: t-one\n  applies-to: t\n  state: {state}\n"
+           "  source: Ghost/wl/0001\n  cited-by: []\n  做过，没问题。\n\n")
+    write(vol_ret, "# 01 · t\n\n" + bad.format(state="retired"))
+    run(base, "memory", "index", "--memory", retire_root)
+    r = run(base, "memory", "lint", base, "--strict", "--memory", retire_root)
+    ok(r.returncode == 0,
+       "memory: 退役条目只判结构 —— 坏来源与不合格正文都不再报错", r.stdout + r.stderr)
+    write(vol_ret, "# 01 · t\n\n" + bad.format(state="active"))
+    run(base, "memory", "index", "--memory", retire_root)
+    r = run(base, "memory", "lint", base, "--strict", "--memory", retire_root)
+    ok(r.returncode != 0 and "不在名册里" in r.stdout,
+       "memory: 同一条改成现役后照旧报错（跳过是按 state 判的）", r.stdout)
+
     # --- 7) 硬上限：超限报错，绝不截断 --------------------------------------
     cap = os.path.join(base, "memcap")
     os.makedirs(cap)

@@ -74,6 +74,14 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      '        where = registry_names(registry)[ws][0]\n'
      '        return False, tier, f"来源工作区 `{ws}` 已被移除（名册里的路径不存在：{where}）"',
      "memory: 登记过的来源工作区没了 → 只提示，不拦（路径没了就当它没了）"),
+    ("memory", "退役条目也照判来源与内容",
+     '        if e["state"] == "retired":\n            continue\n',
+     '        if False:\n            continue\n',
+     "memory: 退役条目只判结构 —— 坏来源与不合格正文都不再报错"),
+    ("memory", "现役条目也被跳过（跳过不是按 state 判的）",
+     '        if e["state"] == "retired":\n            continue\n',
+     '        continue\n',
+     "memory: 同一条改成现役后照旧报错（跳过是按 state 判的）"),
     ("memory", "来源分档不再细看 manual: 的后缀",
      '    if s.startswith("manual:"):\n'
      '        name = s.split(":", 1)[1].strip()\n'

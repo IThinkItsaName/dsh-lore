@@ -4675,6 +4675,12 @@ def memory_lint_report(root: str, memory: str, strict: bool) -> Report:
                 rep.add("ERROR", where, f"第 {e['ln']} 行：applies-to 标签 `{t}` 不合法"
                                         f"（只认小写拉丁 / 数字 / 连字符）")
         body = memory_body_line(e)
+        # 退役 = 出局：**只判结构**（上面的 id / state / 标签），不再判来源、名册与内容要求。
+        # 理由（用户 2026-09-30 拍板，见 work_log/0060）：退役的语义是"默认搜不到、**文件永不删**"
+        # （规格 §三），而工作区与记录都会消失 —— 一条退役条目若永久报错，那条非破坏性出路
+        # 就等于不存在，用户只剩删除一条路，而那与"文件永不删"直接冲突。
+        if e["state"] == "retired":
+            continue
         ok_src, tier, why = resolve_memory_source(root, e["source"], registry)
         if ok_src is False:
             rep.add("ERROR", where, f"第 {e['ln']} 行：{why}")
@@ -4713,15 +4719,16 @@ def memory_lint_report(root: str, memory: str, strict: bool) -> Report:
         elif domain not in m.group(1):
             rep.add("WARN", os.path.basename(path),
                     f"分册标题 `{m.group(1).strip()}` 与文件名里的领域 `{domain}` 对不上")
-    # 近似重复（判不准，所以只 WARN，--strict 才 ERROR）
-    for i in range(len(entries)):
-        for j in range(i + 1, len(entries)):
-            if entries[i]["id"] == entries[j]["id"]:
+    # 近似重复（判不准，所以只 WARN，--strict 才 ERROR）；退役条目不参与（同上：它已出局）
+    live = [e for e in entries if e["state"] != "retired"]
+    for i in range(len(live)):
+        for j in range(i + 1, len(live)):
+            if live[i]["id"] == live[j]["id"]:
                 continue
-            s = memory_similarity(memory_body_line(entries[i]), memory_body_line(entries[j]))
+            s = memory_similarity(memory_body_line(live[i]), memory_body_line(live[j]))
             if s >= MEMORY_DUP_THRESHOLD:
-                rep.add("WARN", entries[j]["where"],
-                        f"第 {entries[j]['ln']} 行：与 `{entries[i]['id']}` 近似重复"
+                rep.add("WARN", live[j]["where"],
+                        f"第 {live[j]['ln']} 行：与 `{live[i]['id']}` 近似重复"
                         f"（trigram {s:.2f} ≥ {MEMORY_DUP_THRESHOLD}）")
     # 索引与正文一致
     want = memory_index_text(memory)

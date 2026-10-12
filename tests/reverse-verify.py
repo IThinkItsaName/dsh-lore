@@ -14,6 +14,7 @@
     python logs/tests/reverse-verify.py --phase config   # 只跑某一相
     python logs/tests/reverse-verify.py --keep           # 留下临时目录便于排查
     python logs/tests/reverse-verify.py --root DIR       # 夹具父目录（须已存在）
+    python logs/tests/reverse-verify.py --skill-dir DIR  # 技能源 scripts/ 目录（默认自动解析）
 """
 from __future__ import annotations
 
@@ -25,7 +26,25 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE = os.path.dirname(os.path.dirname(HERE))
-SKILL = os.path.join(WORKSPACE, ".pi", "skills", "project-work-log", "scripts")
+
+# 技能源在哪：这份文件在**两个地方**是同一份字节 —— 工作区的 `logs/tests/`（作者改这里）
+# 与仓库的 `tests/`（`_package.py` 同步出来的镜像）。`WORKSPACE` 那个表达式只对前者成立，
+# 在镜像下会多算一级（落到仓库的父目录），所以不能只认一条路径：先试作者布局，再试镜像布局。
+# `--skill-dir` 覆盖这两者，给两种布局都对不上的 checkout 用。
+SKILL_CANDIDATES = (
+    os.path.join(WORKSPACE, ".pi", "skills", "project-work-log", "scripts"),
+    os.path.join(os.path.dirname(HERE), "skills", "project-work-log", "scripts"),
+)
+
+
+def default_skill_dir() -> str:
+    for candidate in SKILL_CANDIDATES:
+        if os.path.isdir(candidate):
+            return candidate
+    return SKILL_CANDIDATES[0]
+
+
+SKILL = default_skill_dir()
 
 # 相名 → `_selftest.py` 里那个阶段函数的函数名。新增一相就在这里登记。
 PHASES: dict[str, str] = {
@@ -457,7 +476,8 @@ def load_module(path: str, tag: str):
 def main() -> int:
     ap = argparse.ArgumentParser(description="把 memory_phase 的断言逐条弄红一次")
     ap.add_argument("--root", default=os.path.join(WORKSPACE, "logs", "fixtures"),
-                    help="夹具父目录（必须已存在）")
+                    help="夹具父目录（必须已存在）。默认是作者工作区里的 logs/fixtures——"
+                         "夹具不随包发布，所以在仓库镜像里跑必须显式给这一项")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--phase", choices=sorted(PHASES), default=None,
@@ -465,7 +485,15 @@ def main() -> int:
     ap.add_argument("--only", default=None, metavar="SUBSTR",
                     help="只跑名字里含这段字的一条/几条变异。整相跑一遍要几十分钟，"
                          "改了一处想当场确认那一条时用它（名字用 --list 看）")
+    ap.add_argument("--skill-dir", default=None, metavar="DIR",
+                    help="技能源所在的 scripts/ 目录。默认自动解析：先试工作区布局 "
+                         "`<工作区>/.pi/skills/project-work-log/scripts`，再试镜像布局 "
+                         "`<仓库>/skills/project-work-log/scripts`")
     args = ap.parse_args()
+
+    global SKILL
+    if args.skill_dir is not None:
+        SKILL = os.path.abspath(args.skill_dir)
 
     if args.list:
         for phase, name, _old, _new, expect in MUTATIONS:
@@ -477,6 +505,13 @@ def main() -> int:
 
     src_path = os.path.join(SKILL, "journal.py")
     st_path = os.path.join(SKILL, "_selftest.py")
+    if not os.path.isfile(src_path):
+        # 报清楚"我在哪儿找过"，而不是让 open() 抛一个光秃秃的 FileNotFoundError：
+        # 这个文件会被同步到另一个布局下运行，路径没解析对是它最常见的失败方式。
+        print(f"ERROR: 找不到技能源：{src_path}")
+        print(f"       自动解析试过：{'；'.join(SKILL_CANDIDATES)}")
+        print("       用 --skill-dir <技能 scripts/ 目录> 指定。")
+        return 2
     with open(src_path, encoding="utf-8", newline="") as fh:
         original = fh.read()
     with open(st_path, encoding="utf-8", newline="") as fh:
@@ -485,6 +520,8 @@ def main() -> int:
     base = os.path.abspath(args.root)
     if not os.path.isdir(base):
         print(f"ERROR: --root 不是一个已存在的目录：{base}")
+        print("       夹具是作者工作区的数据，不随包发布；在仓库镜像里跑要显式指定，例如")
+        print("       python tests/reverse-verify.py --root <夹具父目录>（见 RELEASING.md 的检查点 6）。")
         return 2
     # 按 PID 隔离：同一时刻只跑一相时无所谓，但"后台跑着整相、前台再跑一相"就会撞——
     # 实测撞过（`os.makedirs` 报 FileExistsError，因为两边共用同一个目录）。

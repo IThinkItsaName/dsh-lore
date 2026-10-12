@@ -66,7 +66,8 @@ pi install git:github.com/IThinkItsaName/dsh-lore@v0.7.0
 
 ## 5. 以后怎么更新
 
-**skill 的唯一源是工作区的 `.pi/skills/project-work-log/`**，本仓库里的 `skills/project-work-log/` 是同步出来的副本。
+**skill 的唯一源是工作区的 `.pi/skills/project-work-log/`**（**不在本仓库**），本仓库里的 `skills/project-work-log/` 是同步出来的副本。
+同步脚本 `_package.py` 也在那个工作区里，同样**不在本仓库**——纯 dsh 的维护者需要先拿到那份源。
 
 `lib/index.js`、`cordis.patch.yml`、`package.json`、`README.md`、`CHANGELOG.md` 是**插件自有文件**，
 直接在 `publish/worklog/` 里改（它们不参与同步）；`_package.py --check` 只校验它们在位，不比对内容。
@@ -100,11 +101,13 @@ git tag -a v0.4.1 -m "v0.4.1" && git push origin v0.4.1   # 有行为变化时
 ```bash
 cd <工作区>/publish/worklog
 
-# 包内路径下也能跑通（验证相对路径没有写死）
-python skills/project-work-log/scripts/_selftest.py        # 期望 95/95 passed
-
 # 源与包没有漂移，插件自有文件也都在位
+# （源不在本仓库：脚本与源技能都在工作区的 .pi/skills/ 下，见 RELEASING.md）
 python ../../.pi/skills/project-work-log/scripts/_package.py --check
+
+# 包内路径下也能跑通（验证相对路径没有写死）
+# 断言条数故意不写在这里 —— 它每加一条断言就过期一次（见 RELEASING.md 的检查点 4）
+python skills/project-work-log/scripts/_selftest.py
 
 # 插件清单自洽：dsh.bundle.patch 指向的文件存在、补丁是合法 YAML、入口能解析出技能 frontmatter
 node -e "const p=require('./package.json'); const f=require('fs'); \
@@ -118,16 +121,24 @@ node --input-type=module -e "const m=await import('./lib/index.js'); console.log
 git status --porcelain
 ```
 
+> **顺序是有讲究的：先 `--check`，后跑自测。** `_selftest.py` 会在
+> `skills/project-work-log/scripts/` 下留下 `__pycache__/` —— 它被 `.gitignore` 盖着，
+> `git status` 看不见，但 `_package.py --check` 会把它算成一处置换漂移。
+> 那是**派生文件不该随包发**的同一道提醒（`RELEASING.md`「常见坑」有这条），跑一次同步即可清掉。
+
 ## 7. 别人怎么装（写进 README 的三条路）
 
 ```bash
 # dsh（本包声明了 dsh.bundle，装进某个 profile）
-dsh plugin --profile desktop install /绝对/路径/worklog
+dsh plugin --profile desktop install /绝对/路径/<你的 checkout>
 
 # pi 用户
 pi install git:github.com/IThinkItsaName/dsh-lore
 
 # 手动 / 其它 harness：把 skills/project-work-log 放进技能搜索路径（Agent Skills 标准布局）
+# dsh：全局 <DSH_HOME>/skills/（默认 ~/.dsh/skills/），或项目级 .dsh/skills/
+cp -r skills/project-work-log "${DSH_HOME:-$HOME/.dsh}/skills/"
+# pi：全局 ~/.pi/agent/skills/
 cp -r skills/project-work-log ~/.pi/agent/skills/
 ```
 

@@ -680,7 +680,7 @@ function mountCard({ seed = SEED, statusFetch = null, extra = {} } = {}) {
   return { world, registration, props, form: world.forms.get(SERVED_NS) }
 }
 
-/* ---- a failed claim must not be silent (2026-09-30, work_log/0062) ---- */
+/* ---- a failed claim must not be silent (2026-09-30, work_log/07-rename-070/0062) ---- */
 //
 // The claim is strict on purpose, and its price is that editing `Config` makes the card vanish
 // **until DSH restarts** (the running host projects the old schema). On 2026-09-30 that happened

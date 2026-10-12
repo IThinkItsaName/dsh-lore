@@ -2011,7 +2011,7 @@ def memory_phase(parent: str) -> None:
     **都被专门测过** —— 变异驱动正是拿它们开刀：`reverse-verify.py` 的 memory 相里
     「`--memory` 不再覆盖路径」与「环境变量那一档失效」两条，就是把前两档打断。
     两条一断，兜底就落到**用户真实的** `~/.dsh/memory`。2026-09-28 真发生过：
-    真实记忆库里留下 8 条 `wsA` 夹具条目，并且被注入了每个请求（清理记录见 `work_log/0051`）。
+    真实记忆库里留下 8 条 `wsA` 夹具条目，并且被注入了每个请求（清理记录见 `work_log/06-release-060/0051`）。
     `DSH_HOME` 在那两条变异之外，所以拿它兜底 —— 变异要红的那两条断言都是**进程内**比对，
     不受这里影响。
     """
@@ -2333,6 +2333,53 @@ def _memory_phase(parent: str) -> None:
        r.stdout)
     ok(not any("不该外流" in JOURNAL.memory_body_line(e) for e in ments()),
        "memory: upload:false 时一条都没进记忆库")
+
+    # --- 4b) 使用评价（`feedback:`）：镜像 / 幂等 / upload:false 不收 / 不被 search 命中 ----
+    # 评价是"给改进用的"，不是知识：它**不进正文分册**，只镜像到 <记忆根>/feedback/。
+    fb_src = os.path.join(wsA, "work_log", "评价-worklog.md")
+    write(fb_src, "# 使用评价\n\n- 卡住的：collect 的幂等断言写得太紧。\n- 建议：镜像用覆盖式，历史交给 git。\n")
+    write(mpath, read(mpath).replace("upload: true", "upload: true\nfeedback: 评价-worklog.md"))
+    r = m(wsA, "memory", "collect", wsA)
+    ok(r.returncode == 0 and "feedback/wsA.md" in r.stdout,
+       "memory: collect 把 feedback: 声明的评价镜像进来", r.stdout + r.stderr)
+    fb_dst = os.path.join(mem, "feedback", "wsA.md")
+    ok(os.path.isfile(fb_dst), "memory: 镜像落在 <记忆根>/feedback/<工作区名>.md")
+    ok("幂等断言写得太紧" in read(fb_dst), "memory: 评价正文逐字镜像", read(fb_dst))
+    ok("这不是记忆条目" in read(fb_dst),
+       "memory: 镜像文件自己声明「这不是记忆条目」（否则下一个人会以为它被检索）")
+    ok(not any("幂等断言写得太紧" in JOURNAL.memory_body_line(e) for e in ments()),
+       "memory: 评价**不进正文分册**（不是记忆条目）")
+    # 评价没变 → 一个字节都不动（连"收集时间"那行也不许变）
+    before_fb = mem_snapshot(mem)
+    time.sleep(1.05)
+    r = m(wsA, "memory", "collect", wsA)
+    ok(before_fb == mem_snapshot(mem),
+       "memory: 评价没变时 collect 不重写镜像（收集时间也不动）",
+       str([k for k in before_fb if before_fb[k] != mem_snapshot(mem).get(k)]))
+    # 只改评价源（清单不变）→ 也要收到：幂等判定必须把评价摘要算进去
+    write(fb_src, read(fb_src) + "- 又一条：清单没变但评价改了，collect 得跟上。\n")
+    r = m(wsA, "memory", "collect", wsA)
+    ok(r.returncode == 0 and "清单没变但评价改了" in read(fb_dst),
+       "memory: 清单没变、只改评价源时 collect 也会跟上", r.stdout + r.stderr)
+    r = m(wsA, "memory", "search", "幂等断言写得太紧")
+    ok(r.returncode == 0 and "0 条命中" in r.stdout,
+       "memory: 评价里的内容**不被 memory search 命中**（它不是记忆条目）", r.stdout)
+    # 声明了 feedback 但文件不在 → 报问题（与"坏引用"同规格）
+    write(mpath, read(mpath).replace("feedback: 评价-worklog.md", "feedback: 不存在.md"))
+    r = m(wsA, "memory", "collect", wsA)
+    ok(r.returncode != 0 and "不存在" in r.stdout,
+       "memory: 声明了 feedback 但文件不在 → collect 报问题", r.stdout)
+    write(mpath, read(mpath).replace("feedback: 不存在.md", "feedback: 评价-worklog.md"))
+    # upload:false 的工作区：评价也不收（同一个双向白名单）
+    write(os.path.join(wsC, "work_log", "评价.md"), "不该外流的评价。\n")
+    cpath = os.path.join(wsC, "work_log", "发布.md")
+    # 只替换**第一处**：注释块里也有「upload: false」这串字，不限定次数会把它插进注释中间，
+    # 清单随即解析失败（第一版就是这么挂的：collect 返回 1，后面依赖返回码的断言跟着红）。
+    write(cpath, read(cpath).replace("upload: false", "upload: false\nfeedback: 评价.md", 1))
+    r = m(wsC, "memory", "collect", wsC)
+    ok(not os.path.isfile(os.path.join(mem, "feedback", "wsC.md")),
+       "memory: upload:false 的工作区，评价也不收（双向白名单对评价同样生效）", r.stdout)
+
     # 登记了、但没有清单的工作区：只读不传（工具**无法自行发现工作区**，
     # 所以名册里没有它 = 它不参与；名册里有它但清单不在 = 它声明"不给"）
     wsR = mem_ws(base, "wsR", "# 01 · T\n\n- **没清单**：x。（`wl/0001`）\n")

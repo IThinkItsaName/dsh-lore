@@ -19,7 +19,7 @@
 
 ## 配置存在哪：profile patch 是**正式位置**（2026-09-29 起）
 
-插件导出 `Config`（**11 个**字段，全部 `.volatile()`），所以设置归**宿主**管：
+插件导出 `Config`（**12 个**字段，全部 `.volatile()`），所以设置归**宿主**管：
 
 | 宿主 | 存哪 | 谁写 |
 |---|---|---|
@@ -38,15 +38,20 @@
 3. 写 profile 失败 → **文件原样留着**并告警（半迁移比不迁移更糟：下一次挂载会两个副本都不敢信）；
 4. 没有可寻址的条目 → 告警并继续读旧文件。
 
-## 装/改之后要**硬刷新页面**
+## 装/改之后要**重载页面**
 
-改完客户端半边、重启过宿主之后，**还要在浏览器里硬刷新一次**（Windows/Linux `Ctrl+Shift+R`，macOS `Cmd+Shift+R`）。不刷新可能看到"半加载"的样子：页面出来了但**没有样式**，或少了新加的东西。
+改完客户端半边、重启过宿主之后，**还要真正重载一次页面**。不刷新可能看到"半加载"的样子：页面出来了但**没有样式**，或少了新加的东西。
+
+| 环境 | 怎么重载 |
+|---|---|
+| 浏览器（`dsh web`） | 硬刷新：Windows/Linux `Ctrl+Shift+R`，macOS `Cmd+Shift+R` |
+| **DSH 桌面版** | **没有刷新快捷键，也没有菜单项** —— 打包版在 Windows 上的应用菜单只挂了 F12；`Reload Page` 与 `Restart App and Host` 两项只在 `!app.isPackaged` 的**开发模式**才进菜单，托盘菜单只有"打开 / 退出"。可用：**F12 开 DevTools → Console 里跑 `location.reload()`**（最确定），或**重启应用**（代价大但永远有效） |
 
 **机制**：CSS 注入写在工厂闭包里 —— 无论本插件还是 `dsh-status-rotator`（后者的 `<style>` 在它 `client.js` 的设置面板代码旁创建并挂到 `<head>`）。工厂体在**物化时**执行一次，如果那一轮样式没进到 `<head>`，之后不会再补，直到整页真正重载。
 
 > 2026-09-26 实际踩到：`dsh-status-rotator` 的设置页在重启后显示为无样式（按钮是原生小方块、没有间距），再重启一次就好了。当时先怀疑是新装的插件干扰，方向是错的。
 
-## 已知的宿主缺陷：样式会被别的插件"认领"走（2026-09-26）
+## 已知的宿主缺陷：样式会被别的插件"认领"走（2026-09-26 记，2026-10-12 补）
 
 **这不是本插件的 bug，但本插件会触发它** —— 记在这里，因为下次它再犯时，从零查会花很久。
 
@@ -75,7 +80,14 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 
 ### 为什么偏偏是本插件触发
 
-`dsh-status-rotator` 用 `createElement("style")` 建了 4 个样式标签（它的 `client.js` L1645 / L1712 / L3108 / **L4183**），**全文没有 `data-plugin`**。其中 L4183 那个在**设置面板组件里**创建 —— 首次打开设置页它才诞生，那时两个模块都已物化，**所以它一直是无主的**，谁下次物化就归谁。
+**挑中的不是固定的某个插件，而是"谁建了 `<style>` 又没打标记"** —— 它会随插件升级换人：
+
+| 时期 | 无主样式来自哪 | 状态 |
+|---|---|---|
+| 2026-09-26 | `dsh-status-rotator` 0.27.2 / 0.27.3：4 个标签（`client.js` L1645 / L1712 / L3108 / **L4183**），全文没有 `data-plugin`。其中 L4183 在**设置面板组件里**创建 | **已修**：0.28.0 起改用 `createOwnedStyle()`（`lib/client.js:333-336`，`data-plugin = "dsh-status-rotator"`），issue #94 |
+| 2026-10-12 | **`dsh-meme`**：3 处 —— `client.js` 的设置面板 CSS 与 `[表情: …]` 选图器 CSS，外加 `index.js` 用 `webServer.tapIndex` 往 `<head>` 塞的那条图片限高规则（`client.js:1511 / 1516`、`index.js:1536`，本机 0.1.44；`main` = 0.1.47 是 `1496 / 1501 / 1548`） | **未修**，全包 `data-plugin` 命中 0 次。已报上游：`yyh-001/dsh-meme` **issue #32** |
+
+`index.js` 那处尤其阴：它在**文档加载时**就存在，所以从头到尾都是无主的，等着第一个物化的模块来认领（症状是聊天里表情包大图贴脸，不会被联想到样式归属）。设置页那两处则在打开设置页时才诞生 —— 与上一行 L4183 同一个道理。
 
 ### 症状
 
@@ -85,7 +97,8 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 
 | 角色 | 该做什么 |
 |---|---|
-| `dsh-status-rotator` | 建 `<style>` 后加一行 `el.setAttribute('data-plugin', 'dsh-status-rotator')`。宿主注释写着"预标记的标签会带上它"，说明**打标记是受支持的做法** |
+| `dsh-status-rotator` | **已按此修好**（0.28.0 的 `createOwnedStyle()`）：建 `<style>` 后立刻 `el.setAttribute('data-plugin', '<自己的模块 id>')`。宿主注释写着"预标记的标签会带上它"，说明**打标记是受支持的做法** |
+| `dsh-meme` | 同上，**3 处都要打**（含 `index.js` 里那段 HTML 字面量：直接写成 `<style data-plugin="dsh-meme">`）。值必须是**模块注册 id**（`__ModuleLoader__.load({id})`）——写成别的字符串会让卸载时清不掉自己名下的样式。已报上游 issue #32 |
 | 宿主 | `claimStyles` 的时间窗太宽：应只认领**工厂体运行期间**新增的标签，而不是"当下所有无主" |
 | 本插件 | **保持零 `<style>` 注入** —— 这是能做的最干净的一种防御，因为不注入就没有可被误认领的东西 |
 
@@ -182,7 +195,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 **官方那一组**，槽位说明原文就是 *"One **official** plugin the Plugins page lists in its
 **Official group**"*，它的 catalog 还写着 *"a bundle's configuration belongs in
 `plugins.bundle.config` or `plugins.row.config` instead"*。**我们是 bundle，所以挂在这里。**
-（第一版挂错了 `plugins.item`，于是它出现在官方那一组里；见 `work_log/0043`。）
+（第一版挂错了 `plugins.item`，于是它出现在官方那一组里；见 `work_log/05-settings-rework/0043`。）
 
 ### 认领自己的 namespace：按字段集，不按 id
 
@@ -195,11 +208,11 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 > 是 schemastery 的**重水合信封** `{uid, refs}`，字段名躺在 `refs[<uid>].dict` 里 ——
 > **顶层根本没有 `properties`**。第一版读的就是 `schema.properties`，于是判据在真机上恒为假、
 > 卡片一次都没注册过（而当时的 harness 照着自己的假设造假行，所以 151 条断言全绿）。
-> 详见 `work_log/0042`。
+> 详见 `work_log/05-settings-rework/0042`。
 
 - 认领不到 → **什么都不注册**（宁可这一页不出现，也不要在别人的命名空间上挂一张会写错地方的卡片）。
 
-> **代价：改 `Config` 字段会让卡片消失到重启为止（2026-09-30 真发生过，`work_log/0062`）。**
+> **代价：改 `Config` 字段会让卡片消失到重启为止（2026-09-30 真发生过，`work_log/07-rename-070/0062`）。**
 > 判据要求"集齐全部字段"，所以**加一个字段**（或删一个）之后，**运行中的宿主还发着旧 schema** ——
 > 于是磁盘上的客户端要 N 个、内存里的宿主只给 N−1 个，**认领失败、卡片消失**。
 > 症状只有「插件管理界面点进去没有东西」：不抛错、不报错、状态端点照样 200。
@@ -265,7 +278,7 @@ GET /plugins/dsh-lore/status.json   → { source, path, memory, error }
 
 **本节早先有一个错说法**：原来说「树外插件解析不到 `@deepseek-ai/schemastery`，
 所以导不出 `Config`，所以改完必须重启」。**那是推断，不是实测，而且已被反证** ——
-正确的做法是把它声明成 peerDependency（见 `work_log/0016`、`0021`、`0022`）。
+正确的做法是把它声明成 peerDependency（见 `work_log/03-memory-system/0016`、`0021`、`0022`）。
 反过来，本文件更早还写过「完全没有 `Config` 导出」，同样作废。
 
 现在的实测状态：

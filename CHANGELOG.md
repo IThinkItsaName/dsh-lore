@@ -8,7 +8,71 @@
 
 ## [未发布]
 
-（暂无）
+### 文档与工具链：安装说明补齐 dsh 落点，变异驱动不再假定技能源的位置
+
+- **README「手动安装」段原先只给 pi 路径**（`~/.pi/agent/skills/`、`.pi/skills/`）。dsh 的正确落点是
+  全局 `<DSH_HOME>/skills/`（默认 `~/.dsh/skills/`）与项目级 `.dsh/skills/`，现已补上；
+  并写明**光把文件放进去不够**：`skill-filesystem` 那一行被 `dsh-web-app` 关掉、改由 agent preset
+  自己声明，关着时这两个目录里的文件一律不会被发现（`cordis.patch.yml` 早就讲了这个机制，
+  只是没跟安装段接上）。
+- **README 的 pi 段补一条警告**：别和旧的 `pi-project-work-log` 同装 —— 两者技能名相同，
+  同时可见时只会有一个被看见；pi 侧本来也只拿得到技能层。
+  写法故意不带旧仓库 URL：`tests/audit-versions.mjs` 要求所有仓库提及指向同一个 slug，
+  带上就是红的（这条门禁当场拦下了初稿）。
+- **两处会把维护者带沟里的路径与顺序问题**：
+  - `RELEASING.md` 的变异驱动命令少了**一级**（`../logs/…` → `../../logs/…`），照抄必失败。
+  - `PUBLISHING.md` §6 原先**先跑自测、后跑漂移检查**，而自测会在 `skills/…/scripts/` 下留
+    `__pycache__/`（被 `.gitignore` 盖住、`git status` 看不见），紧接着的 `_package.py --check`
+    就报一处置换漂移、退出 1。顺序已调正并写明原因。`--check` 报 `__pycache__` 本身**有意保留**
+    （曾经把 398 KB 的陈旧 `.pyc` 发进包），所以没有去改宽它。
+  - `PUBLISHING.md` §6 里「期望 95/95 passed」是过期计数，删掉并写明**断言条数故意不写**
+    （与 `RELEASING.md` 检查点 4 同一口径；实测现在是 **553/553**）。
+- **修正一处过期计数**：`SETTINGS.md` 仍写着 `Config` 有「11 个字段」（现为 12）—— 0.7.0 那次
+  「顺带修掉两处过期计数」漏了它；`lib/client.js` 里四处「十一个」的注释也一并改成十二个。
+- **`tests/reverse-verify.py` 不再假定技能源在 `.pi/skills/`**：它原先从 `WORKSPACE` 推导路径，
+  在作者工作区（`logs/tests/`）下正确，同步进仓库镜像（`tests/`）后却多算一级而落空，
+  于是仓库内 `--phase config` 直接 `FileNotFoundError`。现在按候选解析（先作者布局、再镜像布局），
+  新增 `--skill-dir` 覆盖，找不到时打印**试过的路径**与下一步命令。
+  夹具是作者侧数据、不随包发布，所以在仓库里跑仍需显式 `--root` —— 默认值与报错都写清了这一点。
+- **「硬刷新」这句话对 DSH 桌面版是错的，已补正**：`SETTINGS.md` 与 `RELEASING.md` 原先只写
+  `Ctrl+Shift+R`，而**打包版根本没有重载入口** —— Windows 的应用菜单只挂了 F12，
+  `Reload Page` / `Restart App and Host` 两项只在 `!app.isPackaged` 的开发模式才进菜单，托盘只有"打开/退出"。
+  现在两处都写明桌面版的做法（**F12 → Console `location.reload()`**，或重启应用）。
+- **「样式被认领」那一节换了主角**：`dsh-status-rotator` 自 0.28.0 起已修（`createOwnedStyle()`），
+  当前的无主样式来自 **`dsh-meme`**（3 处，其中 `index.js` 用 `webServer.tapIndex` 塞的那条
+  从文档加载起就无主）；本机 0.1.44 与核对过的 `main`（= 0.1.47）都未修 —— 已报上游
+  `yyh-001/dsh-meme` issue #32，`SETTINGS.md` 那一节改成了按插件列的状态表。
+- **实跑**：`_selftest.py` **553/553**；`npm run test:plugin` **13 支全绿**；`npm run audit`
+  **`AUDIT CLEAN`**（入口 sha256 仍是 `bc5894af8473e5a3`，本次没动 `lib/index.js`）；
+  `npm run test:skill-only` 无漂移；`reverse-verify.py --phase config` 在**源位置与仓库镜像下
+  都是 4/4 如期变红**；`_package.py --check` 前后均 0 漂移。
+- **散文引用改指记录的新位置**：记录容器做了一次**阶段重划**（5 个混用小节 → 8 个连续阶段，
+  旧记录移进 `work_log/<阶段>/`，作者侧 `work_log/0072` 有全过程），于是本仓库文档里那些
+  `work_log/00xx` 的**指路**跟着更新：`docs/settings-spec.md` **9** 处、`SETTINGS.md` **4** 处、
+  `RELEASING.md` **3** 处、`lib/index.js` 与 `lib/client.js` 各 **1** 处；
+  随包技能里的 `_selftest.py` 与 `journal.py` 各 1 处改的是 **`.pi/skills/` 的源**、
+  `tests/audit-client-runtime.mjs` 那 1 处改的是 **`logs/tests/` 的源**，改完由 `_package.py` 同步进仓库。
+  **`CHANGELOG.md` 自己那两条历史引用故意没改**（本文件只追加、不改写历史条目），
+  技能文档里的**示例路径**（`references/commands.md` 的样例 check 输出、`skill-only/` 的 `work_log/0042-*.md`）
+  也没动 —— 后者原文已写「已归档则在 `<stage>/` 下」，本来就对。
+- **入口 sha256 变了**：上一条「实跑」里写的「**仍是 `bc5894af8473e5a3`**」只对那一轮成立；
+  本轮为了上面那处注释动了 `lib/index.js`，`npm run audit` 现在报 **`547a71a8b07a77e9`**。
+  再跑一次 `_selftest.py` **553/553**、`test:plugin` **13 支全绿**、`test:skill-only` 无漂移、
+  `_package.py --check` **0 漂移**。
+- **新增：工作区使用评价（`发布.md` 的 `feedback:` → `<记忆根>/feedback/`）** —— 这套记录体系还没到"完成"，
+  所以开一条**从真实使用回到改进**的回路。`发布.md` 新增可选声明 `feedback: <容器相对路径>`：
+  `memory collect` 把那份文件**原样镜像**到 `<记忆根>/feedback/<工作区名>.md`（**正文逐字不动**，
+  只加一层出处头，其中第一条就是"**这不是记忆条目**"：不进 `INDEX.md`、不被 `memory search` 命中、
+  不参与 `memory lint`）。四条纪律：① 与教训受**同一道白名单**管（`upload: false` 时评价也不收）；
+  ② 声明了但文件不在 → `collect` 报问题（与"坏引用"同规格）；③ **幂等按内容** —— `.state.json` 里
+  每个工作区存**两枚摘要**（清单的 + 评价的），**只改评价也会被收到**；④ 镜像**正文没变就不重写**
+  （否则出处头里的收集时间会每次 `collect` 都改动文件，把幂等一起毁掉）。`memory status` 多一行
+  「反馈 N 个工作区 / 字节」。规格同步：`docs/memory-spec.md` §二（布局）/§五（清单）/§七（幂等）、
+  `references/memory.md` §五、`references/commands.md` 的 `memory collect`。
+  自测 **553 → 563**（+10 条：镜像落点 / 正文逐字 / 自带"不是记忆条目"声明 / 不进正文分册 /
+  评价没变不重写 / 只改评价也跟上 / `search` 命中不了 / 文件不在报问题 / `upload:false` 不收）。
+  改的全是 **`.pi/skills/` 的源**，再由 `_package.py` 同步进仓库 —— 本轮我两次改错方向（改到镜像上），
+  靠 `--check` 的漂移报错与"源侧自测失败"抓回来，记在作者侧 `work_log/0073`。
 
 ## [0.7.0] - 2026-09-30
 

@@ -271,6 +271,12 @@ MEMORY_INDEX_NAME = "INDEX.md"
 MEMORY_PERSONAL_DIR = "personal"
 # 跨工作区信箱：不进 git。它**不是记忆**，是通信 —— 阅后即删或转移为记录。
 MEMORY_INBOX_DIR = "inbox"
+# 工作区使用评价：`<记忆根>/feedback/`。**不是记忆条目** —— 见 memory_feedback_dir()。
+MEMORY_FEEDBACK_DIR = "feedback"
+# 该目录里那两个**非评价**文件：约定说明与骨架（status 报数时要排除）。
+MEMORY_FEEDBACK_README = "README.md"
+# 镜像文件里"以下是原样正文"的分隔标记（正文比对用它，别改字面量）。
+MEMORY_FEEDBACK_MARK = "<!-- 以下是原样正文（工具不解析） -->"
 # 名册与候选。工具**没有跨工作区读文件的权限**，无法自行发现工作区，
 # 所以只能靠工作区自己 `memory publish` 时登记；候选只提示、不自动收录。
 MEMORY_REGISTRY_NAME = "workspaces.json"
@@ -878,6 +884,55 @@ def memory_personal_dir(root: str) -> str:
 
 def memory_inbox_dir(root: str) -> str:
     return os.path.join(root, MEMORY_INBOX_DIR)
+
+
+def memory_feedback_dir(root: str) -> str:
+    """工作区使用评价目录：`<记忆根>/feedback/`。
+
+    **它不是记忆条目** —— `memory_volumes()` 只认"直下一级 + `NN-<领域>.md` + 是文件"，
+    所以这个目录既不进 `INDEX.md`、也不被 `memory search` 命中、更不参与 `memory lint`。
+    它由 `memory collect` 从各工作区发布清单里 `feedback:` 声明的那份文件**镜像**进来，
+    用途是"根据真实使用改进"，不是"被检索的知识"。
+    """
+    return os.path.join(root, MEMORY_FEEDBACK_DIR)
+
+
+def memory_feedback_path(root: str, name: str) -> str:
+    """`<记忆根>/feedback/<工作区名>.md`。名字要能直接当文件名（分隔符与控制字符换掉）。"""
+    safe = "".join("-" if (c in '\\/:*?"<>|' or ord(c) < 32) else c for c in name).strip(" .")
+    return os.path.join(memory_feedback_dir(root), f"{safe or 'workspace'}.md")
+
+
+def feedback_body_of(text: str) -> str | None:
+    """已镜像文件里的**正文部分**（标记之后）；没有标记就返回 `None`。"""
+    i = text.find(MEMORY_FEEDBACK_MARK)
+    if i < 0:
+        return None
+    return text[i + len(MEMORY_FEEDBACK_MARK):].lstrip("\r\n")
+
+
+def write_feedback_mirror(memory: str, name: str, body: str) -> bool:
+    """把一份使用评价**原样**镜像进 `<记忆根>/feedback/<工作区名>.md`。
+
+    返回是否真的写了。两条纪律：
+      - **正文逐字不动**，只在前面加一层出处头（说明它不是记忆条目 + 来源 + 收集时间）；
+      - **正文没变就不重写** —— 否则每次 collect 都会因为"收集时间"那一行而改写文件，
+        把「幂等」和「这份文件只在工作区那份变了时才动」两件事一起破坏掉。
+    """
+    path = memory_feedback_path(memory, name)
+    if os.path.isfile(path):
+        old = feedback_body_of(read_raw(path))
+        if old is not None and old == body:
+            return False
+    os.makedirs(memory_feedback_dir(memory), exist_ok=True)
+    nl = nl_of(body) if body else "\n"
+    header = (f"# {name} · 工作区使用评价{nl}{nl}"
+              f"> **这不是记忆条目**：不进 `INDEX.md`、不被 `memory search` 命中、不参与 `memory lint`。{nl}"
+              f"> 来源：`{name}` 的发布清单里 `feedback:` 声明的那份文件（`journal.py memory collect` 镜像）。{nl}"
+              f"> 收集时间：{_memory_now()}。**本文件由工具覆写 —— 要改请改工作区里那份。**{nl}"
+              f"{nl}{MEMORY_FEEDBACK_MARK}{nl}{nl}")
+    write_raw(path, header + body)
+    return True
 
 
 def memory_manifest_path(workspace: str, container: str | None = None) -> str:
@@ -4099,7 +4154,7 @@ def parse_manifest(text: str) -> dict:
     之后每行点名一条允许外流的教训。**认得出多少算多少**：解析器不做判断，
     判断归 `memory lint`。
     """
-    header: dict[str, object] = {"applies-to": [], "upload": None}
+    header: dict[str, object] = {"applies-to": [], "upload": None, "feedback": None}
     items: list[dict] = []
     problems: list[tuple[str, str]] = []
     started = False
@@ -4126,8 +4181,13 @@ def parse_manifest(text: str) -> dict:
                     problems.append(("WARN", f"第 {lineno} 行：upload 认不出 `{value}`"
                                              f"（只认 true / false），按 false 处理"))
                     header["upload"] = False
+            elif key == "feedback":
+                # 使用评价文件（容器相对路径，也可以给绝对路径）。它**不进正文分册**：
+                # `collect` 把它原样镜像到 `<记忆根>/feedback/<工作区名>.md`，供后续改进用。
+                header["feedback"] = value or None
             else:
-                problems.append(("WARN", f"第 {lineno} 行：未知声明 `{key}`（只认 applies-to / upload）"))
+                problems.append(("WARN", f"第 {lineno} 行：未知声明 `{key}`"
+                                         f"（只认 applies-to / upload / feedback）"))
             continue
         started = True
         m = MEMORY_MANIFEST_ITEM_RE.match(s)
@@ -4146,19 +4206,28 @@ def parse_manifest(text: str) -> dict:
                       "id": mid.group(1) if mid else derive_manifest_id(ref),
                       "lineno": lineno})
     return {"applies-to": header["applies-to"], "upload": header["upload"],
-            "items": items, "problems": problems}
+            "feedback": header["feedback"], "items": items, "problems": problems}
 
 
-def render_manifest(applies_to: list[str], upload: bool, items: list[dict]) -> str:
-    """渲染发布清单。头两行是本工作区的声明 —— 顺序固定，别在前面加标题行。"""
+def render_manifest(applies_to: list[str], upload: bool, items: list[dict],
+                    feedback: str | None = None) -> str:
+    """渲染发布清单。头两行是本工作区的声明 —— 顺序固定，别在前面加标题行。
+
+    `feedback:` **只在声明过时才写**：不写这一行时渲染结果与从前逐字节相同
+    （老清单再 `publish` 一次不会被动过），这条保证由自测钉着。
+    """
     out = [f"applies-to: {', '.join(applies_to)}",
-           f"upload: {'true' if upload else 'false'}",
-           "",
-           "# `upload: false` 表示只读不传（默认，也是常见选择）。改成 true 才会被",
-           "# `memory collect` 收走。每一行点名「哪条教训允许外流」；每行那句话就是它进",
-           "# 全局记忆后的正文 —— 所以它得自己站得住，不能靠「点进去看」。",
-           "# `→ id:` 是它进全局记忆后的 id（不写就按引用机械兜底）。手改这个文件是允许的。",
-           ""]
+           f"upload: {'true' if upload else 'false'}"]
+    if feedback:
+        out.append(f"feedback: {feedback}")
+    out += ["",
+            "# `upload: false` 表示只读不传（默认，也是常见选择）。改成 true 才会被",
+            "# `memory collect` 收走。每一行点名「哪条教训允许外流」；每行那句话就是它进",
+            "# 全局记忆后的正文 —— 所以它得自己站得住，不能靠「点进去看」。",
+            "# `→ id:` 是它进全局记忆后的 id（不写就按引用机械兜底）。手改这个文件是允许的。",
+            "# 可选 `feedback: <评价文件>`（容器相对路径）：那是给**改进**用的使用评价，",
+            "# 不进正文分册，`collect` 会把它镜像到 `<记忆根>/feedback/<工作区名>.md`。",
+            ""]
     for it in items:
         out.append(f"- {it['ref']}  {it['title']}  →  id: {it['id']}")
     return "\n".join(out) + "\n"
@@ -4200,7 +4269,8 @@ def load_manifest_items(workspace: str) -> tuple[dict, str]:
     """读一个工作区的清单 → `(解析结果, 说明)`；没有清单就返回空结果。"""
     path = memory_manifest_path(workspace)
     if not os.path.isfile(path):
-        return {"applies-to": [], "upload": None, "items": [], "problems": []}, "无清单（只读不传）"
+        return ({"applies-to": [], "upload": None, "feedback": None, "items": [], "problems": []},
+                "无清单（只读不传）")
     return parse_manifest(read(path)), ""
 
 
@@ -4420,11 +4490,13 @@ def cmd_memory_publish(args: argparse.Namespace) -> int:
         if it["ref"] not in fresh:
             draft.append({"ref": it["ref"], "title": it["title"], "id": it["id"]})
             kept += 1
-    text = render_manifest(applies, upload, draft)
+    text = render_manifest(applies, upload, draft, feedback=old.get("feedback"))
     print(f"工作区：{memory_workspace_name(root)}  （{root}）")
     print(f"清单：{rel(root, path)}")
     print(f"applies-to: {', '.join(applies) or '(空 = 到处都适用)'}")
     print(f"upload: {'true（允许外流）' if upload else 'false（只读不传）'}")
+    if old.get("feedback"):
+        print(f"feedback: {old['feedback']}（使用评价，镜像到 <记忆根>/feedback/，不进正文分册）")
     print(f"条目：{len(draft)} 条（这一轮从经验层挑出 {len(fresh)} 条；沿用旧清单 {kept} 条）")
     if args.dry_run:
         print("[dry-run] 清单与名册都不写")
@@ -4481,12 +4553,27 @@ def cmd_memory_collect(args: argparse.Namespace) -> int:
         text = read_raw(memory_manifest_path(ws))
         digest = _memory_sha1(text)
         st = state["workspaces"].get(ws)
-        if isinstance(st, dict) and st.get("digest") == digest:
+        # 使用评价：清单里 `feedback:` 声明的那份文件（容器相对路径，也接受绝对路径）。
+        # 它**不进正文分册**，只镜像到 `<记忆根>/feedback/<工作区名>.md`。
+        fb_rel = (manifest.get("feedback") or "").strip()
+        fb_body = ""
+        if fb_rel:
+            fb_path = (fb_rel if os.path.isabs(fb_rel)
+                       else os.path.join(os.path.dirname(memory_manifest_path(ws)), fb_rel))
+            if os.path.isfile(fb_path):
+                fb_body = read_raw(fb_path)
+            else:
+                problems.append(f"{name}: `feedback: {fb_rel}` 指向的文件不存在"
+                                f"（按容器相对路径找：{rel(ws, fb_path)}）")
+        fb_digest = _memory_sha1(fb_body) if fb_body else ""
+        st_fb = st.get("feedback_digest", "") if isinstance(st, dict) else ""
+        if isinstance(st, dict) and st.get("digest") == digest and st_fb == fb_digest:
             skipped.append(f"{name}（清单没变）")
             continue
         if not manifest["upload"]:
             if not args.dry_run:
-                state["workspaces"][ws] = {"digest": digest, "at": _memory_now()}
+                state["workspaces"][ws] = {"digest": digest, "at": _memory_now(),
+                                           "feedback_digest": fb_digest}
                 wrote_any = True
             skipped.append(f"{name}（upload: false，只读不传）")
             continue
@@ -4531,8 +4618,16 @@ def cmd_memory_collect(args: argparse.Namespace) -> int:
                 continue
             if upsert_memory_entry(memory, entry):
                 wrote_any = True
+        # 使用评价：正文变了就镜像一次（正文没变则不重写，连"收集时间"那行都不动）。
+        if fb_body and st_fb != fb_digest:
+            if args.dry_run:
+                changed.append(f"± feedback/{name}.md（--dry-run：将镜像）")
+            elif write_feedback_mirror(memory, name, fb_body):
+                changed.append(f"± feedback/{name}.md（使用评价镜像）")
+                wrote_any = True
         if not args.dry_run:
-            state["workspaces"][ws] = {"digest": digest, "at": _memory_now()}
+            state["workspaces"][ws] = {"digest": digest, "at": _memory_now(),
+                                       "feedback_digest": fb_digest}
             wrote_any = True
 
     cand = observe_candidate(memory, os.path.abspath(args.root), registry)
@@ -4676,7 +4771,7 @@ def memory_lint_report(root: str, memory: str, strict: bool) -> Report:
                                         f"（只认小写拉丁 / 数字 / 连字符）")
         body = memory_body_line(e)
         # 退役 = 出局：**只判结构**（上面的 id / state / 标签），不再判来源、名册与内容要求。
-        # 理由（用户 2026-09-30 拍板，见 work_log/0060）：退役的语义是"默认搜不到、**文件永不删**"
+        # 理由（用户 2026-09-30 拍板，见 work_log/07-rename-070/0060）：退役的语义是"默认搜不到、**文件永不删**"
         # （规格 §三），而工作区与记录都会消失 —— 一条退役条目若永久报错，那条非破坏性出路
         # 就等于不存在，用户只剩删除一条路，而那与"文件永不删"直接冲突。
         if e["state"] == "retired":
@@ -4872,6 +4967,13 @@ def cmd_memory_status(args: argparse.Namespace) -> int:
     print(f"  信箱      {len(items)} 条 / {total} 字节"
           f"（上限 {MEMORY_INBOX_MAX_ITEMS} 条 / {MEMORY_INBOX_MAX_BYTES} 字节）")
     print(f"  personal  {len(personal)} 条（不进索引、默认不检索）")
+    fb_dir = memory_feedback_dir(memory)
+    fb_files = sorted(f for f in os.listdir(fb_dir)
+                      if f.endswith(".md") and f != MEMORY_FEEDBACK_README
+                      and not f.startswith("_")) if os.path.isdir(fb_dir) else []
+    fb_bytes = sum(os.path.getsize(os.path.join(fb_dir, f)) for f in fb_files)
+    print(f"  反馈      {len(fb_files)} 个工作区 / {fb_bytes} 字节"
+          f"（使用评价：不进索引、不被 search、不参与 lint）")
     return 0
 
 

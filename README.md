@@ -115,7 +115,7 @@ dsh plugin --profile <profile> add dsh-lore
 dsh plugin --profile <profile> add dsh-lore@0.7.0
 
 # 3) 从本地 checkout 装 —— 记住上面那条：这是链接安装
-dsh plugin --profile <profile> add /绝对/路径/worklog
+dsh plugin --profile <profile> add /绝对/路径/<你的 checkout>
 ```
 
 也可以让 agent 用 `plugin_manager` 工具装（spec 支持绝对路径 / `file:` / 包名 / git / tarball）。
@@ -172,13 +172,37 @@ pi install git:github.com/IThinkItsaName/dsh-lore@v0.7.0
 pi install -l git:github.com/IThinkItsaName/dsh-lore
 ```
 
+> ⚠ **别和旧的 `pi-project-work-log` 同装。** 那是改名前的另一份独立扩展（`worklog` 那个仓库，
+> 不是本仓库），提供的是**同名技能** `project-work-log`。两者同时可见时只会有一个被遮蔽，
+> 谁赢取决于平台 —— 二者留一个。另外 pi 侧只拿得到**技能层**：记忆索引注入、
+> `worklog_memory` 工具与配置卡片都是 DSH 专属。
+
 ### 手动（任意 harness）
 
+**dsh 用不着这一节**：装 bundle（上一节第 1、2 条）会自己注册技能，不必复制文件。
+确实要手动放时，dsh 的技能发现目录是全局 `<DSH_HOME>/skills/`（`<DSH_HOME>` 未设时为 `~/.dsh`）
+与项目级 `.dsh/skills/`：
+
 ```bash
-# 全局
+# dsh：全局
+cp -r skills/project-work-log "${DSH_HOME:-$HOME/.dsh}/skills/"
+
+# dsh：项目级
+mkdir -p <project>/.dsh/skills && cp -r skills/project-work-log <project>/.dsh/skills/
+```
+
+> ⚠ **只把文件放进去，可能什么都不出现。** dsh 的文件系统技能发现行 `skill-filesystem`
+> 在 `dsh-base` 里是开的、却被 `dsh-web-app` 关掉，改由每个 agent preset 自己声明
+> （见上一节「本包的 `cordis.patch.yml` 做两件事」）。**那一行关着时，
+> `~/.dsh/skills` 与 `.dsh/skills` 里的文件一律不会被发现**，插件自己注册的技能也查不到。
+
+pi 与其它 harness：
+
+```bash
+# pi：全局
 cp -r skills/project-work-log ~/.pi/agent/skills/
 
-# 项目级（项目受信任后生效）
+# pi：项目级（项目受信任后生效）
 mkdir -p <project>/.pi/skills && cp -r skills/project-work-log <project>/.pi/skills/
 ```
 
@@ -314,7 +338,8 @@ python <skill>/scripts/journal.py memory search "样式"
 - **`dist/` 是产物**，手改会被下次构建覆盖；一致性由 `tests/audit-paths.mjs` 与
   `build-skill-only.mjs --check` 把关。
 - **`tests/` 是镜像**：harness 的源在工作区的 `logs/tests/`，由 `_package.py` 同步进来，**不要手改**。
-- **技能源在一个位置**：`.pi/skills/` 是源，`skills/` 是镜像（同一道漂移门禁）。
+- **技能源不在本仓库**：源在工作区的 `.pi/skills/`；本仓库的 `skills/` 与 `tests/` 都是
+  `_package.py` 同步出来的**镜像**，`dist/skill-only/` 是构建产物 —— 改源再同步，直接改镜像会被下次同步覆盖。
 
 ## 七、领域适配（不限于编程）
 

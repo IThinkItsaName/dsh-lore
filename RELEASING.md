@@ -14,6 +14,10 @@
 | 测试 harness | `logs/tests/` | `publish/worklog/tests/` | 同上（一次跑完三处） |
 | 纯文档变体 | `skill-only/`（手写源） | `dist/skill-only/`（构建产物） | `node tools/build-skill-only.mjs` |
 
+> **前两处源与同步脚本本身都不在本仓库。** `publish/worklog/` 里没有 `scripts/_package.py`，
+> 也没有 `.pi/skills/`、`logs/tests/`——它们都在**工作区**里（本仓库只是它们的下游副本）。
+> 所以只拿到本仓库的人跑不了第 1 行的同步命令；要发版得先有那份工作区。
+
 **两条纪律**：
 
 1. **改实现只改源。** 直接改副本不会被发现——直到下一次同步把它覆盖掉。
@@ -42,7 +46,7 @@ npm test
 npm run test:skill-only
 
 # 6. 变异驱动（约 10 分钟，故意不进 npm 脚本）
-python ../logs/tests/reverse-verify.py --root ../../logs/fixtures
+python ../../logs/tests/reverse-verify.py --root ../../logs/fixtures
 ```
 
 **三份只读语料**（跨工作区，不许改）：
@@ -116,7 +120,7 @@ git push origin v0.5.0
 - [ ] 在 `work_log/` 写一条记录：这一版发了什么、验证到什么程度、有没有未覆盖的
 - [ ] **破坏性改动（改名 / 行名变更）必须在发布说明里写清迁移步骤**：profile 的
       `dependencies` 与 `dsh.profile.bundles` **两处**换成新名 → `pnpm install` → **重启 DSH**。
-      不改就**根本加载不上**（比"卡片消失"更彻底）。0.7.0 的改名是第一个例子（`work_log/0063`）
+      不改就**根本加载不上**（比"卡片消失"更彻底）。0.7.0 的改名是第一个例子（`work_log/07-rename-070/0063`）
 
 ## 常见坑（都真发生过）
 
@@ -125,11 +129,11 @@ git push origin v0.5.0
 | `_package.py --check` 报漂移 | 改了源没同步，**或者改了副本**（后者更危险：同步会覆盖它） |
 | `_package.py --check` 只报 `__pycache__` | 刚在**副本**目录里跑过自测（`npm test` 或 `skills/.../\_selftest.py`）。它是派生文件、不该随包发（实测过一次：包里躺着一个 398 KB 的陈旧 `.pyc`），同步一下即可清掉 |
 | 门禁在开发者机器上变红 | harness 读了真实设置文件或真实记忆根；夹具必须写到系统临时目录 |
-| 页面改了没效果 | 客户端半边由 `__ModuleLoader__` 按页会话缓存，**要硬刷新**（`Ctrl+Shift+R`） |
-| 配置卡片整页不出现 | 客户端按字段集认领 namespace，两种原因：① `FORM_FIELDS` 与 `lib/index.js` 的 `Config` **漂移**（`tests/audit-client-runtime.mjs` 会对账这两边）；② **改了 `Config` 但宿主没重启** —— 运行中的宿主还发着旧 schema，于是认领失败。两种都会让卡片**消失**。从 2026-09-30 起不再静默：那一行确实是我们的时，浏览器控制台会点名缺哪个字段（`work_log/0062`）。修法：重启 DSH + 硬刷新 |
+| 页面改了没效果 | 客户端半边由 `__ModuleLoader__` 按页会话缓存，**要重载页面**：浏览器 `Ctrl+Shift+R`；**DSH 桌面版没有刷新快捷键/菜单项**（打包版只挂了 F12）——用 F12 → Console `location.reload()`，或重启应用。细则见 `SETTINGS.md`「装/改之后要重载页面」 |
+| 配置卡片整页不出现 | 客户端按字段集认领 namespace，两种原因：① `FORM_FIELDS` 与 `lib/index.js` 的 `Config` **漂移**（`tests/audit-client-runtime.mjs` 会对账这两边）；② **改了 `Config` 但宿主没重启** —— 运行中的宿主还发着旧 schema，于是认领失败。两种都会让卡片**消失**。从 2026-09-30 起不再静默：那一行确实是我们的时，浏览器控制台会点名缺哪个字段（`work_log/07-rename-070/0062`）。修法：重启 DSH + 硬刷新 |
 | 在卡片上改完没写进 profile | 那个宿主没有 `configEditor`（headless）—— 配置退回插件自己的 `settings.json`，而**没有程序写它**，那时应手工编辑；卡片底部的「设置位置」一行会说明当前是哪一种 |
 | 卡片改了没反应 | 那个键是**装载期**读的（见 `SETTINGS.md` 的「改完需重启」）；只有 `memoryInjectIndex` / `memoryPersonalSearchable` 是即时生效的 |
 | 版本审计失败 | `package.json` 的 `version` 与 tag / CHANGELOG 不一致；三处要同时改 |
 | 改了包名却忘了 profile | 新名**加载不上**；`dependencies` 与 `dsh.profile.bundles` **两处**都要改，
-再 `pnpm install`、重启 DSH。`npm run audit` 会直接点名缺哪个链接（`work_log/0063`） |
+再 `pnpm install`、重启 DSH。`npm run audit` 会直接点名缺哪个链接（`work_log/07-rename-070/0063`） |
 | 新加的随包技能当场查不到 | 插件自带技能在**插件挂载时**注册；新文件要**重启宿主**才登记（放进 `<DSH_HOME>/skills/` 的则会被文件系统 provider 活查发现） |

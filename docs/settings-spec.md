@@ -3,9 +3,9 @@
 > **状态**：设置界面与 `journal.py config` 都已实现。
 >
 > **2026-09-29 的两次改动（本规格的 §二/§四/§五 已按结果校正）**：
-> 1. **事实源换成 profile patch**（`work_log/0039` 的 A1）：有 `configEditor` 的宿主以
+> 1. **事实源换成 profile patch**（`work_log/05-settings-rework/0039` 的 A1）：有 `configEditor` 的宿主以
 >    `<profile>/cordis.patch.yml` 为准，写回由宿主校验；headless 仍读插件自己的文件。
-> 2. **界面换成官方配置卡片**（`work_log/0040` 的 A2+A3）：客户端半边注册进
+> 2. **界面换成官方配置卡片**（`work_log/05-settings-rework/0040` 的 A2+A3）：客户端半边注册进
 >    **`plugins.bundle.config`**（本 bundle 自己那一页）而不再是设置页的 `settings.section`；
 >    读写走 `ctx.configForms`，自建 HTTP 路由**只剩一个只读状态端点**。
 >    分页也从两个变成**三个**（技能 / 记忆 / 高级）—— 记忆那三个键此前在规格里根本
@@ -117,7 +117,7 @@
 > （槽位 `plugins.bundle.config`，`key` = 本包包名），不再是设置页的分区。
 > 理由见 `SETTINGS.md` §「配置界面」：这一页管的是插件自己的配置，归属就在它的 bundle 页上。
 > **不是 `plugins.item`** —— 那是插件页的**官方**组，catalog 明写 "a bundle's configuration
-> belongs in `plugins.bundle.config` or `plugins.row.config` instead"（`work_log/0043`）。
+> belongs in `plugins.bundle.config` or `plugins.row.config` instead"（`work_log/05-settings-rework/0043`）。
 
 ### 三个分页：技能 / 记忆 / 高级
 
@@ -298,12 +298,12 @@ window.__ModuleLoader__.load({
 > **本 bundle 那一页**的 `plugins.bundle.config`（keyed，`key` = 包名），而且**不是写死
 > namespace 的** —— 卡片按这一行投影出来的 **`value`**（生效配置）是否带齐那 12 个字段来认领
 > 自己那一行（`ns` 是部署相关的）。
-> **代价（2026-09-30，`work_log/0062`）**：判据要"集齐全部字段"，所以**改了 `Config` 的字段集之后、
+> **代价（2026-09-30，`work_log/07-rename-070/0062`）**：判据要"集齐全部字段"，所以**改了 `Config` 的字段集之后、
 > 在 DSH 重启之前，卡片会消失**（运行中的宿主还发着旧 schema）。症状只有"这一页没有东西"，
 > 不抛错也不报错；修法是重启。**认领失败不再静默**：那一行确实是我们的时，控制台会打印缺了哪个字段
 > （`lib/client.js` 的 `warnAboutMissingNamespace`）。
 > **注意不是 `schema`**：宿主发的是 schemastery 的 `{uid, refs}` 信封、顶层没有
-> `properties`，第一版就是栽在这里（`work_log/0042`）。现行写法见 `lib/client.js` 的 `apply()`。
+> `properties`，第一版就是栽在这里（`work_log/05-settings-rework/0042`）。现行写法见 `lib/client.js` 的 `apply()`。
 > 旧写法留在这里，是因为"当初为什么那么挂"与"后来为什么换"是两条不同的信息。
 
 ```js
@@ -492,11 +492,11 @@ WebRoute = { kind: 'exact'|'prefix', path: string,
 
 **它是拿"手放目录"测出来的** —— 量错了对象。装进 profile 的插件由宿主按自己的
 锚点解析依赖，`Config` 照常工作；条件是把宿主包声明成 **`peerDependencies`**
-（不声明时链接安装下会 `MODULE_NOT_FOUND`，那是另一回事，见 `work_log/0021`）。
+（不声明时链接安装下会 `MODULE_NOT_FOUND`，那是另一回事，见 `work_log/03-memory-system/0021`）。
 
-实测终点（`work_log/0022`、`0031`）：`Config.listConfigs{name:"dsh-lore"}` →
+实测终点（`work_log/03-memory-system/0022`、`0031`）：`Config.listConfigs{name:"dsh-lore"}` →
 `schema`，11 个字段全带 `x-cordis.volatile: true`。
-教训写在 `work_log/0016`：**一条错误结论会被固化进门禁与文档，并且很难再被发现**。
+教训写在 `work_log/03-memory-system/0016`：**一条错误结论会被固化进门禁与文档，并且很难再被发现**。
 
 ## 七、实现顺序
 
@@ -505,7 +505,7 @@ WebRoute = { kind: 'exact'|'prefix', path: string,
 2. ~~**插件配置界面** —— 先做一个最小可用的（一个开关 + 一个下拉），确认能注册、
    能存取、能显示，再加别的~~ —— **已实现**，并且走完了一条更长的路：
    自建设置页 → 换事实源到 profile patch → 换成官方 `configForms` 驱动的插件页卡片
-   （`work_log/0038`、`0039`、`0040`）。
+   （`work_log/05-settings-rework/0038`、`0039`、`0040`）。
 
 > 第一次真跑仍可能撞到意外（`ctx.slots.inject` 的签名细节、`ctx.effect` 的清理语义）。
 > 上面的结论来自**读源码，不是实跑** —— 所以第 2 步按"最小可用先行"推进。

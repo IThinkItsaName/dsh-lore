@@ -25,6 +25,9 @@
 //   6. it re-derives the volatile field names from `lib/index.js` and compares
 //      them with the client's claim predicate, so the two can never drift apart
 //      silently (a drift means the card stops appearing at all).
+//   7. it pins the three appendix findings that turned out to be real (2026-10-15)
+//      at the SOURCE level, because their fixes are invisible in the tree: no dead
+//      locale key, and a failed write always reaches the console with its cause.
 //
 // What this still cannot decide: layout, styling, and the shell's own behaviour.
 // It IS everything up to the point where only a browser can decide.
@@ -1059,11 +1062,25 @@ const openDisclosure = async (index = 0) => {
 
   mounted.form.behaviour.reject = false
   mounted.form.behaviour.throwError = true
-  getInputs(runtime.tree)[0].props.onChange({ target: { value: '/also-nope' } })
-  getInputs(runtime.tree)[0].props.onBlur()
-  await settle()
+  // A throwing write is one of the two paths that used to drop the cause on the
+  // floor (2026-10-15 修). Capture the console so the gate output stays readable —
+  // and assert on it, because "the card says 保存失败" is only half the promise.
+  const warns = []
+  const realWarn = console.warn
+  console.warn = (message, ...rest) => { warns.push([String(message), rest[0]]) }
+  try {
+    getInputs(runtime.tree)[0].props.onChange({ target: { value: '/also-nope' } })
+    getInputs(runtime.tree)[0].props.onBlur()
+    await settle()
+  } finally {
+    console.warn = realWarn
+  }
   ok(textOf(runtime.tree).includes('保存失败'),
     'a throwing write reports a failure too', textOf(runtime.tree).slice(-160))
+  ok(warns.length === 1 && /^dsh-lore: writing `[A-Za-z]+` failed$/.test(warns[0][0])
+    && warns[0][1] instanceof Error && warns[0][1].message === 'transport down',
+    'and the cause reaches the console: field name + the original error, not a generic line',
+    JSON.stringify(warns.map(([m, e]) => [m, e?.message])))
 }
 
 /* ---- 4f. a write that is refused is NOT reported as saved ---- */
@@ -1127,6 +1144,40 @@ const openDisclosure = async (index = 0) => {
   ok(declared.join(',') === claimed.join(','),
     'the client claims exactly the volatile fields the Config declares',
     `Config: ${declared.join(',')} | client: ${claimed.join(',')}`)
+}
+
+/* ============ 6. the appendix findings that were real (2026-10-15) ========= */
+// Three of the deep-read items in the review's appendix turned out to be real. The
+// fixes are invisible in the rendered tree (the notice text is deliberately
+// unchanged), so they are pinned at the SOURCE level: a re-introduced dead locale
+// key or a swallowed write error has to fail HERE, not surface later as "the card
+// said 出错 and nobody knows why" in somebody's session.
+{
+  // (a) no dead locale key: every `*.placeholder` entry defined in this file must
+  // have a reader — either its field is keyed, or the non-keyed branch falls back
+  // to the same dictionary entry when the host inherits nothing.
+  const defined = [...code.matchAll(/'([A-Za-z]+)\.placeholder':/g)].map((m) => m[1])
+  const keyed = new Set(
+    code.split('PLACEHOLDER_KEYED = new Set([')[1].split(']')[0]
+      .split(',').map((s) => s.trim().replace(/'/g, '')).filter(Boolean))
+  const fallback = code.includes("|| t(field + '.placeholder')")
+  ok(defined.length > 0, 'the dictionary defines placeholder text', defined.join(','))
+  ok(defined.every((field) => keyed.has(field) || fallback),
+    'every placeholder key has a reader (no dead locale entry)',
+    `defined: ${defined.join(',')} | keyed: ${[...keyed].join(',')} | fallback: ${fallback}`)
+  ok(!code.includes("'state.loading'"),
+    'the never-referenced `state.loading` key is gone (one message covers idle and loading)')
+
+  // (b) a write that throws or rejects must reach the console with its cause, even
+  // though the card keeps showing the same generic notice. Two paths: the
+  // synchronous throw from save/reset, and the rejected promise.
+  const writeBlock = code.split('const write = useCallback(')[1].split('}, [props, clearDraft])')[0]
+  ok((writeBlock.match(/reportWriteFailure\(field, error\)/g) || []).length === 2,
+    'both write-failure paths hand the cause to the reporter', writeBlock)
+  const helper = (code.split('function reportWriteFailure')[1] || '').split('\n\n')[0]
+  ok(helper.includes('console.warn'), 'and the reporter really warns on the console', helper)
+  ok(helper.includes('try') && helper.includes('catch'),
+    'a console that refuses to warn cannot break the card', helper)
 }
 
 report('client runtime OK — the card claims its namespace, mounts, edits and reports') 

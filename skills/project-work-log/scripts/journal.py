@@ -2755,8 +2755,12 @@ def cmd_index_compact(args: argparse.Namespace) -> int:
     skipped: list[tuple[str, str]] = []
     for head_i, end_i, title in reversed(stages):
         if title.count("/") != depth - 1:
-            if args.stage:
-                skipped.append((title, f"不是 {depth} 级小节（`--depth {depth}`）"))
+            # 层级不符时**一律**记账（2026-10-15 修）：原来只在给了 `--stage` 时才记，
+            # 于是默认跑只打印「折叠 0 个小节」——用户无从知道该加 `--depth N`，
+            # 而这一条恰恰是"跑了没反应"里最常见的那一种。
+            want = title.count("/") + 1
+            if not args.stage or args.stage in title:
+                skipped.append((title, f"{want} 级小节，要折得加 `--depth {want}`"))
             continue
         if args.stage and args.stage not in title:
             continue
@@ -2782,6 +2786,9 @@ def cmd_index_compact(args: argparse.Namespace) -> int:
             #   ② 多级归档里指向**主题目录**的行（2026-10-14 新增）。
             # 判据是"整个目录里每一篇都是归档记录"，所以真折过的行照样折不动（幂等没丢）。
             if not all(dir_is_archived_stage(journal, p, skip_dirs) for p in resolved):
+                # 与下面"文件目标"那一支同因同报（2026-10-15 修）：原来这里直接
+                # `continue`，同一句原因在两条分支上一种有说明、一种完全静默。
+                skipped.append((title, "含活跃记录或非记录文件的目录"))
                 continue
             dirs = {os.path.normpath(t).replace(os.sep, "/") for t in targets}
         else:
@@ -2917,7 +2924,7 @@ def cmd_status(args: argparse.Namespace) -> int:
                 continue
             key, val = pair.split("=", 1)
             key = key.strip()
-            found = False
+            hits = []
             for i in range(span[1], span[2]):
                 m = re.match(r"^(\s*-\s*)([^：:\r\n]+)[：:][ \t]*(.*?)(\r?\n?)$", lines[i])
                 if not m:
@@ -2927,23 +2934,30 @@ def cmd_status(args: argparse.Namespace) -> int:
                     continue
                 # 命中已有字段时**沿用台账上的写法**，避免把 `核对 / 验证` 改写成 `核对`。
                 lines[i] = f"{m.group(1)}{existing}：{val}{m.group(4)}"
-                found = True
-                changed.append(existing)
-                break
-            if not found:
-                end = last_content_line(lines, span[1], span[2]) + 1
-                # 行尾可能没有换行符（手写台账常见）；补一个，否则新字段会粘到上一行末尾。
-                if end > 0 and not lines[end - 1].endswith(("\n", "\r")):
-                    lines[end - 1] = lines[end - 1] + nl_of(text)
-                    end += 1
-                lines.insert(end, f"- {key}：{val}{nl_of(text)}")
-                span = (span[0], span[1], span[2] + 1)
-                changed.append(key + "(新增)")
+                hits.append(existing)
+            if hits:
+                # 同一字段在块里写了多行时**全部**改掉（2026-10-15 修）：原来是命中第一行就
+                # `break`，第二行留着旧值 —— 块里同时印着新旧两个状态，命令却报成功。
+                changed.append(hits[0] if len(hits) == 1 else f"{hits[0]}（{len(hits)} 行）")
+                continue
+            end = last_content_line(lines, span[1], span[2]) + 1
+            # 行尾可能没有换行符（手写台账常见）；补一个，否则新字段会粘到上一行末尾。
+            if end > 0 and not lines[end - 1].endswith(("\n", "\r")):
+                lines[end - 1] = lines[end - 1] + nl_of(text)
+                end += 1
+            lines.insert(end, f"- {key}：{val}{nl_of(text)}")
+            span = (span[0], span[1], span[2] + 1)
+            changed.append(key + "(新增)")
         if args.dry_run:
             print("[dry-run] 将更新：" + ", ".join(changed))
             return 0
+        if not changed and not args.date:
+            # 空手而归就别改文件、别报成功（2026-10-15 修）：原实现在这里照样 write_raw，
+            # 再打印一句 `status 已更新：`（后面空着），退出码 0。
+            print("WARN: 没有任何字段被更新（--set 的 key 都对不上，或没写成 key=value）；文件未改写")
+            return 1
         write_raw(os.path.join(journal, "README.md"), "".join(lines))
-        print("status 已更新：" + ", ".join(changed))
+        print("status 已更新：" + (", ".join(changed) if changed else "（只改了日期）"))
         return 0
 
     print("".join(lines[span[0]:span[2]]).strip())
@@ -3220,7 +3234,12 @@ def cmd_todo(args: argparse.Namespace) -> int:
         print(f"已追加待办：{args.add}")
         return 0
 
-    if args.done:
+    if args.done is not None:
+        # `is not None`（2026-10-15 修）：原来写的是 `if args.done:`，空串是假值，
+        # 于是 `--done ""` **悄悄掉进下面的列清单分支并返回 0** —— 调用方以为勾上了。
+        if not args.done.strip():
+            print("ERROR: `--done` 要一个用来认人的子串，空串我不猜（想看清单就不带参数跑 `todo`）")
+            return 1
         for i in range(span[1], span[2]):
             if re.match(r"^\s*-\s*\[ \]", lines[i]) and args.done in lines[i]:
                 lines[i] = re.sub(r"\[ \]", "[x]", lines[i], count=1)
@@ -5072,7 +5091,14 @@ def cmd_memory_add(args: argparse.Namespace) -> int:
         print(render_memory_entry(entry).rstrip())
         return 0
     os.makedirs(memory, exist_ok=True)
-    upsert_memory_entry(memory, entry)
+    # `update_cited_by=False` + 看返回值（2026-10-15 修）：单进程里走不到 False（:5079 的
+    # id 唯一性预检用的是同一份视野），但**并发**下走得通 —— 而默认的 `update_cited_by=True`
+    # 在这种情况下会去改那条已存在条目的 `cited-by`（把它写空）然后返回 True，
+    # 于是"添加"变成"改别人的引用"，还报「已加入」。这里要的是"只新增"。
+    if not upsert_memory_entry(memory, entry, update_cited_by=False):
+        print(f"ERROR: 没有写入 {entry['volume']}：同 id `{eid}` 的条目已经存在"
+              f"（并发写入时可能是另一个进程刚写进去的）")
+        return 1
     note_usage(memory, eid)
     print(f"已加入 {entry['volume']}")
     print(render_memory_entry(entry).rstrip())

@@ -622,6 +622,103 @@ def nested_stage_phase(parent: str) -> None:
        "a theme directory holding no records of its own is never folded", dtext)
 
 
+def appendix_phase(parent: str) -> None:
+    """审查报告 §附录那几条的常驻判据（2026-10-15）。
+
+    附录那几条的共同点是"看着像问题"：光读代码只能得出"代码是这样写的"，得不出
+    "这件事会不会真的发生"。所以那时先把每一条写成可执行判据（`logs/sr-check/probe-appendix-5.py`），
+    该修的修掉，再把判据钉成这里的行为断言：
+
+      ① `status --set` 命中重复字段时**每一行**都要改（原来命中第一行就 break，
+         块里同时印着新旧两个值，命令却报成功）；空手而归还**不许**改文件、不许报成功。
+      ② `todo --done ""` 要报错退 1（空串是假值，原来会静默掉进列清单分支并退 0）。
+      ③ `index compact` 跳过任何一个小节都要说明原因（层级不符 / 目录里有活跃记录）——
+         只打印「折叠 0 个小节」等于告诉用户"没得折"。
+      ④ `memory add` 撞上已存在的 id 只拒绝，**不去改**那条已存在条目的 `cited-by`。
+    """
+    def make_fixture(name: str, ledger: str, extra=None) -> str:
+        root = os.path.join(parent, name)
+        os.makedirs(os.path.join(root, CONTAINER))
+        for rel, text in (extra or {}).items():
+            write(os.path.join(root, CONTAINER, rel), text)
+        write(os.path.join(root, CONTAINER, "README.md"), ledger)
+        return root
+
+    def skeleton(index: str = "", todos: str = "- [ ] x", status: str = "- 阶段：v1") -> str:
+        return (f"# P\n\n## 文件索引\n\n{index}\n"
+                f"## 待办（滚动清单）\n\n{todos}\n\n"
+                f"## 当前状态（2026-10-15）\n\n{status}\n")
+
+    def ledger_text(root: str) -> str:
+        return read(os.path.join(root, CONTAINER, "README.md"))
+
+    # ① 状态块里的重复字段 + "空手而归" ------------------------------------
+    dup = make_fixture("appendix-dup-status",
+                       skeleton(status="- 阶段：v1\n- 阶段：v0（手滑复制的那行）\n- 版本：1.0"))
+    r = run(dup, "status", "--set", "阶段=v2")
+    ok(r.returncode == 0 and ledger_text(dup).count("- 阶段：v2") == 2,
+       "status --set 改掉重复字段的每一行", r.stdout + ledger_text(dup))
+    ok("v0" not in ledger_text(dup),
+       "块里不留旧值（不会再同时印着新旧两个状态）", ledger_text(dup))
+
+    noop = make_fixture("appendix-noop-status", skeleton(status="- 阶段：v1"))
+    before = ledger_text(noop)
+    r = run(noop, "status", "--set", "阶段")
+    ok(r.returncode == 1 and "没有任何字段被更新" in r.stdout and ledger_text(noop) == before,
+       "status --set 空手而归：退 1、明说、文件一字不动", r.stdout)
+    r = run(noop, "status", "--date", "2026-10-16")
+    ok(r.returncode == 0 and "（2026-10-16）" in ledger_text(noop),
+       "status --date 单独给（字段没变）照样写盘", r.stdout + ledger_text(noop))
+
+    # ② `--done` 的空串 ----------------------------------------------------
+    todo_root = make_fixture("appendix-empty-done", skeleton(todos="- [ ] alpha\n- [ ] beta"))
+    r = run(todo_root, "todo", "--done", "")
+    ok(r.returncode == 1 and "ERROR" in r.stdout and "[x]" not in ledger_text(todo_root),
+       'todo --done "" 报错退 1：不静默列清单、也不乱勾', r.stdout)
+    r = run(todo_root, "todo", "--done", "alpha")
+    ok(r.returncode == 0 and "- [x] alpha" in ledger_text(todo_root),
+       "todo --done 给了子串照旧勾得上", r.stdout)
+
+    # ③ `index compact` 的每一次跳过都要有说明 -----------------------------
+    nested = ("### stage-one/stage-two\n\n"
+              "| [stage-one/stage-two/](stage-one/stage-two/) | 两级归档 |\n\n"
+              "### stage-three\n\n"
+              "| [stage-three/](stage-three/) | 目录里有一篇不是记录 |\n\n"
+              "### stage-four\n\n"
+              "| [0009-live.md](0009-live.md) | 活跃记录（住在容器根上） |\n\n")
+    comp = make_fixture("appendix-compact-silent", skeleton(index=nested), extra={
+        os.path.join("stage-one", "stage-two", "0001-a.md"): entry("0001", "A", "2020-01-01"),
+        os.path.join("stage-three", "notes.md"): "不是记录。\n",
+        "0009-live.md": entry("0009", "Live", "2026-10-15"),
+    })
+    r = run(comp, "index", "compact")
+    ok("折叠 0 个小节" in r.stdout, "默认 --depth 1 下这三节一个都折不动", r.stdout)
+    ok("stage-one/stage-two" in r.stdout and "--depth 2" in r.stdout,
+       "层级不符的小节说清要加 --depth 2（原来完全静默）", r.stdout)
+    ok("stage-three" in r.stdout,
+       "目录里有活跃记录的那一节也说了原因（原来静默）", r.stdout)
+    ok("stage-four" in r.stdout, "文件目标是活跃记录的那一节照旧说原因", r.stdout)
+    r = run(comp, "index", "compact", "--dry-run", "--depth", "2")
+    ok("折叠 1 个小节" in r.stdout and "stage-one/stage-two" in r.stdout,
+       "加上 --depth 2 之后它确实折得动（证明上面那节不是「没得折」）", r.stdout)
+
+    # ④ `memory add` 撞上已存在的 id ---------------------------------------
+    mem = os.path.join(parent, "appendix-mem")
+    write(os.path.join(mem, "01-general.md"),
+          "# 01 · general\n\n"
+          "- id: dup-claim\n  applies-to: ws\n  state: active\n  source: manual:tested\n"
+          "  cited-by: [wl/0001]\n  一条已有引用的教训。\n")
+    mem_before = read(os.path.join(mem, "01-general.md"))
+    # `--memory` 必须显式给：第一个位置参数是**容器根**（用来认 `--source wl/0001` 这类来源），
+    # 不给 `--memory` 时记忆根会落到宿主的真实记忆库上 —— 自测绝不许碰它。
+    r = run(mem, "memory", "add", mem, "新的东西。", "--source", "manual:tested",
+            "--id", "dup-claim", "--memory", mem)
+    ok(r.returncode == 1 and "已经存在" in r.stdout,
+       "memory add 撞上已存在的 id：拒绝", r.stdout + r.stderr)
+    ok(read(os.path.join(mem, "01-general.md")) == mem_before,
+       "而且一个字节都没动（尤其那条的 cited-by）", read(os.path.join(mem, "01-general.md")))
+
+
 def safety_phase(tmp: str) -> None:
     """数据安全：不能静默毁掉非 UTF-8 文件，也不能把 LF 掺进 CRLF 台账。"""
     # 1) 非 UTF-8 目标必须**拒绝写入**，而不是写成 U+FFFD ------------------
@@ -3452,6 +3549,9 @@ def main() -> int:
 
         # 目标文件（<容器>/目标.md，可选）------------------------------------
         goals_phase(tmp)
+
+        # 审查报告 §附录那几条：判据先行的常驻断言 ---------------------------
+        appendix_phase(tmp)
 
         # 全局记忆（跨工作区：分档 / 清单 / 收集 / 索引 / 门禁 / 收敛 / 信箱 / 升格）--
         memory_phase(tmp)

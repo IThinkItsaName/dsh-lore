@@ -46,7 +46,8 @@ jobs:
           print("SKILL.md frontmatter OK")
           PY
 
-      # 别在步骤名里写断言条数：那个数字会过期（这里曾写死 95，实际已是 586）。
+      # 别在步骤名里写断言条数：那个数字会过期（这里曾写死 95，后来写"实际已是 586"，
+      # 一样会过期 —— 所以现在连那个数字也不写了）。
       # 要看条数就读这一步的输出最后一行。
       - name: Skill self-test
         run: python skills/project-work-log/scripts/_selftest.py

@@ -302,6 +302,11 @@ python <skill>/scripts/journal.py memory search "样式"
 **字段、默认值、哪些改动需要重启、两个设置面的分界，全部在 [`SETTINGS.md`](SETTINGS.md)** ——
 这里只给最小示例，不复制那张表。
 
+> **多 profile 的机器注意**：`<DSH_HOME>/worklog/settings.json` 是**全机一份**，而配置卡片
+> 是**每个 profile 一份**。两个 profile 都改 `memoryDir` 时以最后一次保存为准；某个 profile
+> 把那一栏留空保存会删掉共享文件里的这一行（它自己的行配置还在，所以它看着没变）。
+> 细节见 [`SETTINGS.md`](SETTINGS.md) 的「这份文件是全机一份」（审查报告 N6）。
+
 改语言/关掉准则，可以在**本插件自己的那一页**上点（插件页 → `dsh-lore` → 描述与行列表之间那张卡片），
 也可以写进 profile 补丁（profile 层在所有 bundle 层之后应用，所以能盖住包内默认值）：
 
@@ -385,8 +390,8 @@ python <skill>/scripts/journal.py memory search "样式"
 # 技能：临时工程跑通全部命令 + 断言
 python skills/project-work-log/scripts/_selftest.py
 
-# 插件门禁：15 支 harness（注册表契约、补丁清单、版本/文档/路径/本地化一致性、客户端运行期、
-# 设置、记忆注入、记忆根设置、记忆迁移）
+# 插件门禁：16 支 harness（注册表契约、补丁清单、版本/文档/路径/本地化一致性、客户端运行期、
+# 设置、记忆注入、记忆根设置、记忆迁移、门禁自身的卫生）
 npm run test:plugin
 
 # 端到端审计：宿主将会 import 什么、sha256 是否为当前工作树

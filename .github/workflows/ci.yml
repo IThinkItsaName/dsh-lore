@@ -52,13 +52,15 @@ jobs:
       - name: Skill self-test
         run: python skills/project-work-log/scripts/_selftest.py
 
-      # `dist/skill-only/` 是 `tools/build-skill-only.mjs` 的产物，不在 git 里；
-      # `tests/audit-paths.mjs` 会核对它与源逐字节一致，所以要先把检查过的产物建出来。
-      - name: Build the skill-only copy
+      # `dist/skill-only/` 是 `tools/build-skill-only.mjs` 的产物，但**有 3 个文件是跟踪的**
+      # （SKILL.md 与两份 references）；`tests/audit-paths.mjs` 会核对它与源逐字节一致，
+      # 所以这一步是**检查**而不是"建出来"——产物缺失或过期时它会报错并退出 1。
+      - name: Check the skill-only copy
         run: npm run test:skill-only
 
-      # 15 支 harness。它们各自的收尾都用 tests/_report.mjs 的 `report()`，
+      # 16 支 harness。它们各自的收尾都用 tests/_report.mjs 的 `report()`，
       # 有 FAIL 就 exit 1；有 SKIP 会在末行注明 `(N skipped)`，别把"没验"读成"验过"。
+      # `tests/audit-harness-hygiene.mjs` 守着这份名单本身：磁盘上的门禁与这里列的对不上就红。
       - name: Plugin harnesses
         run: npm run test:plugin
 

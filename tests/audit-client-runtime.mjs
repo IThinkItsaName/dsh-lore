@@ -1180,4 +1180,35 @@ const openDisclosure = async (index = 0) => {
     'a console that refuses to warn cannot break the card', helper)
 }
 
+/* ============ 7. the English side tracks the Chinese (2026-10-15, review N3) == */
+// The zh copy was updated twice while the en copy kept the old claim. Nothing renders
+// en on this machine, so the drift was invisible here and would only show up in an
+// English session — exactly the kind of thing that has to be pinned in a gate.
+{
+  const dict = (name) => {
+    const src = (code.split(`const ${name} = {`)[1] || '').split('\n    }\n')[0]
+    return src
+  }
+  const zh = dict('DICT_ZH')
+  const en = dict('DICT_EN')
+  ok(zh.length > 0 && en.length > 0, 'both dictionaries are found', `${zh.length}/${en.length}`)
+
+  // (a) "does not appear at all" was wrong twice over: the tool IS registered and
+  // answers that it is off (lib/index.js memoryAnswer). Only the prompt sections
+  // are load-time.
+  ok(!/does not appear at all/.test(en),
+    'EN memoryEnabled.hint no longer claims the tool disappears')
+  ok(/stays on the list|stays registered/.test(en),
+    'EN memoryEnabled.hint says the tool itself stays registered (matching the code)')
+  ok(/need a restart/.test(en) && /还需要重启/.test(zh),
+    'both languages still say the switch needs a restart')
+
+  // (b) the mechanism the reader cannot guess: saving the path also writes it into
+  // the settings file, because journal.py is another process.
+  ok(/设置文件/.test(zh.split("'memoryDir.hint'")[1].split("'memoryDir.placeholder'")[0]),
+    'zh memoryDir.hint still explains the settings-file mirror')
+  ok(/settings file/.test(en.split("'memoryDir.hint'")[1].split("'memoryDir.placeholder'")[0]),
+    'en memoryDir.hint explains the settings-file mirror too (it used to be zh-only)')
+}
+
 report('client runtime OK — the card claims its namespace, mounts, edits and reports') 

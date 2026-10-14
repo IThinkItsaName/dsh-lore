@@ -133,6 +133,55 @@
   并把「抛异常的写入」那条测试改为**捕获并断言**控制台输出（字段名 + 原始错误），门禁输出里
   不再出现裸警告。自测 **601 → 614/614**（新增 `appendix_phase` 13 条，钉住上面四条 CLI 行为）。
 
+### 第四轮（第二轮复查）：门禁自己的隔离漏洞、take 的占号窗口与文案口径
+
+> 复查 21 项里 15 项已修、5 项部分修、1 项按另一种方式处理，另发现 2 条新问题。
+> 两条新的都属于「防护措施本身漏了」这一类：隔离垫片写成条件式（等于没钉）、
+> 新加的并发回归恰好断言不到「号不能重」。都已修，判据同样转成常驻断言。
+
+- **门禁的 `$DSH_HOME` 隔离是条件式的，在真机上等于没钉**（medium）：`tests/_pkg.mjs` 文档写着
+  "unconditionally"，代码却是 `if (process.env.DSH_HOME === undefined)` —— 而真实桌面会话**本来
+  就会导出** `$DSH_HOME`，于是条件不成立、门禁跑在真实环境上：一次性迁移把整份真实记忆库
+  （45 个文件含 `.git`）复制进了 `<tmpdir>/…-isolated`。三处钉（`DSH_WORKLOG_SETTINGS` /
+  `DSH_WORKLOG_MEMORY` / `DSH_HOME`）现在**无条件**赋值，隔离用的设置文件也移出包目录。
+  另加一道常驻门禁 `tests/audit-harness-hygiene.mjs`（16 支）：磁盘上的门禁与 `test:plugin`
+  链必须一一对应、每支都 import 垫片、那三处钉不许再写成条件式、隔离路径不在包内、
+  CI 注释里的支数与真跑数一致 —— "没人跑的新审计等于一盏什么都不表示的绿灯"。
+- **`inbox take --into-record` 的占号仍有窗口**（medium）：`算号 → os.path.exists → write_raw`
+  三步之间没有原子性，标题相同时后写者会**静默覆盖**先写的记录。现在与 `new` 走同一条
+  `reserve_new_record`（`O_CREAT | O_EXCL`）并逐号重试。修的过程里发现 `new` 自己也有同一处
+  重号：`O_EXCL` 键在**整名**上，两个进程用不同 slug 占同一个号时谁都不撞名 —— 于是加了
+  `taken_numbers()` 与落地后的 `settle_number_collision()` 对账（数字大的那个让号），
+  并给两条路径都补了「6 路并发后篇号恰好是 1..6」的断言（原来的用例用不同标题，六份全叫
+  `0001-race-i.md` 也照样全绿）。
+- **CLI 侧的六处小口径**：`reserve_new_record` 不再把「目录根本写不进去」当成「名字被占」
+  （原来空转一千轮再抛一个没人接的 `PermissionError`，现在 `main` 报一句「写不进去」并退 2）；
+  `$DSH_WORKLOG_SETTINGS` 现在 CLI 也读（此前只有 `lib/index.js` 读，两个进程对"设置文件在哪"
+  可能各说各话）；`write_raw` 在 `os.replace` 之前把目标原有的权限位套到临时文件上
+  （`chmod 600` 的记录不会被一次改写变成 644）；兜底命名不再复用已占的号；`prune` 跳过坏日期时会打印
+  `! 跳过 #0001：日期 … 解析不出来`；`status --dry-run` 与真跑同判（空手而归也退 1，不再打印
+  一句空的「将更新」），`index compact` 一个都没折时说明「没有可折叠的小节」（退出码仍是 0，
+  因为幂等的第二次跑本来就该成功）。
+- **`12-.md` 的根因**（medium → 修）：`NUM_FILE_RE` 允许空号段，于是"是不是记录名"与
+  "取不取得出号"两处判据互相矛盾 —— 这类文件原先让 11 个命令全线崩，加守卫后改成**处处静默
+  不可见**。现在正则不再认它（判据与取号对齐），`check` 另报一条 WARN 点名
+  「破折号后面是空的」，`--strict` 下升级为 ERROR。
+- **文案口径**（low）：`SKILL.md` 两处与 `journal.py` 两处仍把 `<DSH_HOME>/memory` 当现在时
+  ——那是 0.8.0 之前的位置、现在只是**一次性迁移的来源**（默认已是 `<用户主目录>/dsh-lore-memory`）；
+  `CHANGELOG` 里那个 audit 入口哈希再过期一次，这次直接不再抄第二个数字（它是"与上一版不同"的
+  判据，不是某个字面值）；`docs/settings-spec.md` 的「记忆那三个键」补上 0.8.1 的第四个
+  `memoryDir`；卡片英文词条落后中文两处（关掉记忆后工具「does not appear at all」与代码相反；
+  `memoryDir.hint` 少了"保存时会写进设置文件、`journal.py` 是另一个进程"这条机制）。
+- **多 profile 提醒**（low）：设置文件是**全机一份**、卡片是**每 profile 一份**，两个 profile 都
+  改 `memoryDir` 时以最后一次保存为准（某个 profile 留空保存会删掉共享文件里那一行）。
+  `README.md` 与 `SETTINGS.md` 各加一段说明 —— 这条是测试明确钉住的设计，不算缺陷，但没人被告知过。
+- **判据转常驻断言**：自测 **614 → 642/642**（新增 `review2_phase`：退化名三处判据同口径 +
+  `check` / `check --strict` 的表现 + 三个命令不崩、占名失败原样抛出 + `main` 的「写不进去」、
+  `$DSH_WORKLOG_SETTINGS` 端到端决定记忆根并压过环境变量、`write_raw` 保住权限位（POSIX）、
+  `prune` 跳过说明；`appendix_phase` 补 dry-run 同判与「没有可折叠的小节」两组）；
+  `audit-client-runtime.mjs` 新增第 7 节（英文词条不再与代码相反、两处机制在两种语言里都在），
+  `audit-harness-hygiene.mjs` 增加 CI 文案与支数的一致性断言。
+
 ## [0.8.0] - 2026-10-14
 
 > **升级须知**：本版**改了记忆的默认落点** —— 从 `<DSH_HOME>/memory` 移到
@@ -240,7 +289,8 @@
   本轮为了上面那处注释动了 `lib/index.js`，`npm run audit` 现在报 **`547a71a8b07a77e9`**（当时）。
   > 这类数字**只在写下它的那一版成立**：任何一次碰 `lib/index.js` 都会让它过期，而 `audit` 的
   > 判据是"与上一版不同"、不是"等于某个字面值"（见 `docs/README.md`：不写会过期的具体数字）。
-  > 0.8.1 期间实测入口是 `21f11b1424a11996`；再往后请以当轮 `npm run audit` 的输出为准（审查报告 F17）。
+  > 0.8.1 期间也抄过一次入口值，同样过期了 —— 这里不再抄第二个具体数字：**要入口值就跑
+  > 当轮的 `npm run audit`**（审查报告 F17）。
   再跑一次 `_selftest.py` **553/553**、`test:plugin` **13 支全绿**、`test:skill-only` 无漂移、
   `_package.py --check` **0 漂移**。
 - **新增：工作区使用评价（`发布.md` 的 `feedback:` → `<记忆根>/feedback/`）** —— 这套记录体系还没到"完成"，

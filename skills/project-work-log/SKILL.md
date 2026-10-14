@@ -220,7 +220,8 @@ python scripts/journal.py retro --from 27 --to 45 --out /tmp/retro.md     # 阶�
 ## 工作流 E · 把教训带出去（跨工作区）
 
 一个工作区里确证过的教训，要让**别的工作区**也用得上，走全局记忆这一层
-（落在 `<DSH_HOME>/memory/`，**不在工作区里**）。三步，每步都由人决定要不要走：
+（默认落在 `<用户主目录>/dsh-lore-memory`，**不在工作区里**；`--memory`、设置文件里的
+`memoryDir`、`$DSH_WORKLOG_MEMORY` 都能把它指到别处）。三步，每步都由人决定要不要走：
 
 ```bash
 python scripts/journal.py memory publish --applies-to dsh-plugin --upload   # 1. 声明：哪些教训允许外流
@@ -292,7 +293,7 @@ python scripts/journal.py digest --out HANDOFF.md          # 交接摘要
 python scripts/journal.py retro --from 100 --to 151 --out r.md  # 阶段复盘骨架
 python scripts/journal.py export --csv --out work_log.csv   # 机器可读导出
 
-# —— 跨工作区：全局记忆（落在 <DSH_HOME>/memory/，不在工作区里）——
+# —— 跨工作区：全局记忆（默认在 <用户主目录>/dsh-lore-memory，不在工作区里）——
 python scripts/journal.py memory publish --applies-to dsh-plugin --upload  # 写发布清单（双向白名单）
 python scripts/journal.py memory collect                                    # 按清单收集（幂等）
 python scripts/journal.py memory add "…" --source wl/0042 --id some-slug    # 新增一条（来源分档准入）

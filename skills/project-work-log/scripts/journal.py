@@ -26,7 +26,7 @@
 所以读配置文件之前就得先知道它们——只能按目录发现，配置里的值只当"新项目该叫什么"的备注。
 `mode`（配置里的）只提供**新项目的初始档位**；项目里显式切过档之后，台账的 `精细度` 才是权威。
 
-全局记忆（`<DSH_HOME>/memory/`，跨工作区）
+全局记忆（默认 `<用户主目录>/dsh-lore-memory`，跨工作区）
 ------------------------------------------
 工作区的经验层只在工作区内可见。要把一条确证过的教训带到**别的工作区**，走这一层：
 唯一的出口是 `<工作区>/<容器>/发布.md`（双向白名单，也是全局层唯一获准读的工作区文件），
@@ -73,7 +73,7 @@
 
 读写 · 跨工作区（全局记忆，见 references/memory.md）
     memory    全局记忆：publish 发布清单 / collect 收集 / add 新增 / search 检索 /
-              index 索引 / lint 门禁 / status 状态（落在 <DSH_HOME>/memory/，不进工作区）
+              index 索引 / lint 门禁 / status 状态（默认 <用户主目录>/dsh-lore-memory，不进工作区）
     dream     把一个项目的记录收敛成摘要：发骨架 / accept 收下（回指机械校验）/ check 复查
     inbox     跨工作区信箱：put / list / take / sweep / count（它是通信，不是记忆）
     promote   升格为技能的建议（三条件同时满足才报候选；**只报，不自动打包**）
@@ -141,7 +141,13 @@ NUM_NAME_RE = re.compile(r"^(\d{1,4})-(.+)\.md$")
 # 编号式也允许纯编号名（纯中文标题的退化形式，见 slugify）。
 NUM_BARE_RE = re.compile(r"^(\d{1,4})\.md$")
 # 记录文件（两种约定之一）。`is_record_name` 是唯一的判据，别在别处另写一套。
-NUM_FILE_RE = re.compile(r"^(?:\d{1,4}(?:-[^/\\]*)?)\.md$", re.I)
+# 破折号后面**必须真有内容**（`+` 而不是 `*`，2026-10-15 修，审查报告 F8）：
+# `12-.md` 这种退化名原来是"`is_record_name` 认它是记录、`name_number()` 又取不出篇号"，
+# 于是 11 个命令要么崩、要么把它当空气 —— 两处判据矛盾。现在它干脆不是记录名，
+# 判定与取号对齐（`lint` 会另报一条，免得这种文件名彻底没人提）。
+NUM_FILE_RE = re.compile(r"^(?:\d{1,4}(?:-[^/\\]+)?)\.md$", re.I)
+# 形如 `12-.md`（篇号在、slug 空）：**不是**记录名，但值得 lint 提一句"这里少了个 slug"。
+DEGENERATE_NUM_RE = re.compile(r"^\d{1,4}-\.md$", re.I)
 
 # 按年分卷后的目录名：**恰好 4 位数字**才算年份卷，所以 `02-research` 这类阶段名不会被误认。
 YEAR_DIR_RE = re.compile(r"^\d{4}$")
@@ -594,6 +600,12 @@ def write_raw(path: str, text: str) -> None:
     try:
         with open(tmp, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
+        # 保住目标原来的权限位（审查报告 N5）：新 tmp 是 `0666 & ~umask`，直接 replace
+        # 会把一条 `chmod 600` 的记录悄悄变成 644 —— 这个容器里"谁都能读"不是等价状态。
+        try:
+            os.chmod(tmp, os.stat(path).st_mode)
+        except OSError:
+            pass  # 首次创建（目标还不存在）或平台不支持（Windows 只有只读位）：按默认
         os.replace(tmp, path)
     finally:
         # 写失败（磁盘满、目标只读、被 kill 之前的那一瞬）也要把临时文件收走，
@@ -633,8 +645,11 @@ def reserve_new_record(journal: str, num: int, slug: str, body: str) -> str | No
     except FileExistsError:
         return None
     except OSError:
-        # 目录不可写之类：占名都做不到，那就没有第二个候选可言，交给上层的兜底写法。
-        return None
+        # 目录不可写（只读盘、权限不够、父目录被删）之类：这**不是**"名字被占"，
+        # 换一千个篇号也一样写不进去。以前这里和撞名一起 `return None`，于是要空转
+        # 一千轮、再在兜底的 `write_raw` 里抛一个没人接的 `PermissionError`
+        # （审查报告 N5）。直接往上抛，由 `main` 报成一句话。
+        raise
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(body)
@@ -643,6 +658,74 @@ def reserve_new_record(journal: str, num: int, slug: str, body: str) -> str | No
         # 偷偷用这个篇号要好——用户看得见一个空文件，看不见一次静默覆盖。
         raise
     return path
+
+
+def taken_numbers(journal: str) -> set[int]:
+    """目录里**已经用掉的篇号**（不管名字带不带 slug、也不管文件是不是别的形制）。
+
+    判据是"号"，不是"名"：`O_EXCL` 只能保证"这个名字是我的"，保证不了"这个号是我的" ——
+    两个进程各带不同 slug 时，`0005-a.md` 与 `0005-b.md` 都能创建成功，而容器的承诺是
+    **编号永不复用**（`--insert` 之后还按号索引）。所以占号前先看一眼号有没有人用。
+    """
+    try:
+        names = os.listdir(journal)
+    except OSError:
+        return set()
+    return {n for n in (name_number(name) for name in names) if n is not None}
+
+
+def _move_without_overwrite(src: str, dst: str) -> bool:
+    """把 `src` 挪成 `dst`，**绝不覆盖**（目标已存在就失败）。
+
+    `os.replace` 会静默盖掉目标、`os.rename` 在 POSIX 上同样会 —— 而"覆盖"正是这个容器
+    最怕的那一种丢。`os.link` 是原子的"目标已存在就 FileExistsError"，所以先链再删。
+    链不动的文件系统（少数）退回 `rename`，但**先自己问一次**目标在不在。
+    """
+    try:
+        os.link(src, dst)
+    except FileExistsError:
+        return False
+    except OSError:
+        if os.path.exists(dst):
+            return False
+        try:
+            os.rename(src, dst)
+        except OSError:
+            return False
+    try:
+        os.remove(src)
+    except OSError:
+        # 链接已经建好、原名字没删掉：多一份硬链接（两个名字看到同一份内容）比丢内容好，
+        # 而且用户看得见。真正的内容丢只可能发生在"既没链上也没改名"的时候，那时返回 False。
+        pass
+    return True
+
+
+def settle_number_collision(journal: str, path: str, slug: str) -> tuple[str, int]:
+    """并发下同一个篇号可能落在**两个不同名字**上，落地之后对一次账。
+
+    返回（最终路径, 最终篇号）—— 调用方必须用返回值，因为**自己可能就是让路的那一份**。
+
+    规则：同号里名字最大的那份改到下一个空号。两边看到的是同一批文件，所以只有一份会让路；
+    让路用的是"下一号"，不是"对方的号"，所以不会两个进程互相搬来搬去。
+    号挪不走（文件系统不让链也不让改）就留着 —— 重号是难看，丢内容是事故。
+    """
+    num = name_number(os.path.basename(path))
+    if num is None:                              # 兜底名字（带进程号）本来就不占号
+        return path, num
+    peers = sorted(name for name in os.listdir(journal) if name_number(name) == num)
+    if len(peers) < 2 or os.path.basename(path) != peers[-1]:
+        return path, num                         # 没有同号同伴，或者我不是最后那一个
+    used = taken_numbers(journal)
+    target = (max(used) + 1) if used else 1
+    for _ in range(NEW_RECORD_TRIES):
+        dst = _record_name(journal, target, slug)
+        if not os.path.exists(dst) and _move_without_overwrite(path, dst):
+            return dst, target
+        target += 1
+        while target in used:
+            target += 1
+    return path, num
 
 
 def new_record_fallback_name(num: int, slug: str) -> str:
@@ -957,10 +1040,19 @@ def dsh_home() -> str:
 def host_settings_file() -> str:
     """插件自己的设置文件（headless 那条路的退路）：`<DSH_HOME>/worklog/settings.json`。
 
-    与 `lib/index.js` 的 `settingsFilePath()` 同一个落点。**没有 configEditor 的宿主**
-    才写这个文件；有官方设置通道时，用户改的是 profile patch —— 那种情况下本文件可能
-    不存在，`memoryDir` 也就读不到，退回环境变量与默认（见 `memory_root`）。
+    与 `lib/index.js` 的 `settingsFilePath()` 同一个落点，**并且同样认
+    `$DSH_WORKLOG_SETTINGS` 的整路径覆盖**（2026-10-15 修，审查报告 N5）：JS 那边一直读这个
+    变量，CLI 这边原来不读 —— 于是"设置文件在哪"两个进程可能各说各话，正是 0.8.1 在修的那类
+    分叉。**没有 configEditor 的宿主**才写这个文件；有官方设置通道时，用户改的是 profile
+    patch —— 那种情况下本文件可能不存在，`memoryDir` 也就读不到，退回环境变量与默认
+    （见 `memory_root`）。
     """
+    override = os.environ.get("DSH_WORKLOG_SETTINGS", "").strip()
+    if override:
+        # 与 JS 那边**逐字同口径**：直接用给的值，不 abspath、不展开 `~`
+        # （它按字面设计成"整路径"，两边各自转换就会分叉）。相对路径会被两个进程
+        # 按各自的 cwd 解析 —— 那不是这条变量的用法。
+        return override
     return os.path.join(dsh_home(), "worklog", "settings.json")
 
 
@@ -1298,12 +1390,10 @@ def find_records(container: str, skip_dirs: tuple[str, ...] = ()) -> list[dict]:
                 rid, num, date = f[:10], None, f[:10]
             else:
                 num = name_number(f)
-                # `12-.md` 这类**退化名**：`NUM_FILE_RE` 认它是记录名（`is_record_name` 的
-                # 唯一判据），但破折号后面没有正文，`name_number()` 取不出篇号。
-                # 不挡掉就会在下一行 `f"{num:05d}"` 抛 `TypeError: unsupported format
-                # string passed to NoneType.__format__`，于是 `brief` / `show` / `search` /
-                # `stats` / `topics` / `export` / `archive` / `split` / `index sync` **全线崩**。
-                # 判据与 `by_number()` 的同名守卫一致：取不出篇号就不是记录，跳过。
+                # `12-.md` 这类退化名现在**已经不在 `NUM_FILE_RE` 里**（2026-10-15 收紧了正则，
+                # 见那里的注释），所以这条守卫平时走不到 —— 留着是因为它挡过一次真实的
+                # 全线崩溃（`f"{num:05d}"` 对 None 抛 TypeError，11 个命令一起挂），
+                # 而"判据与取号必须对齐"这件事值得有一道兜底。`check` 会为这种名字报一条 WARN。
                 if num is None:
                     continue
                 rid, date = f"{num:05d}", ""
@@ -2049,6 +2139,17 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
 
     entries = find_entries(journal, lessons_skip(lessons))
     recs = find_records(journal, lessons_skip(lessons))
+    # `12-.md` 这类"篇号在、slug 空"的名字现在**不算记录名**了（判据与取号对齐，见
+    # `NUM_FILE_RE`），于是没有任何命令会再提到它 —— 那就由这道门提一句，
+    # 免得用户的文件从"崩"变成"静默消失"（审查报告 F8）。
+    skip = {".git", "node_modules", *NON_RECORD_DIRS, *lessons_skip(lessons)}
+    for dp, dn, fn in os.walk(journal):
+        dn[:] = [d for d in dn if d not in skip]
+        for f in fn:
+            if DEGENERATE_NUM_RE.match(f):
+                rep.add("WARN", rel(root, os.path.join(dp, f)),
+                        "文件名像篇号记录但破折号后面是空的（如 `12-.md`）：补一个 slug 或改名，"
+                        "否则没有任何命令认它")
     # 兜底判据只在**没有**显式清单时生效；显式给了就完全按它判（含 `--legacy ""`）。
     auto_paths = set() if explicit else auto_legacy_paths(recs)
     # 兜底生效时说一句：否则一个成熟容器里，新写的记录缺验证小节只会得到 info，
@@ -2683,6 +2784,10 @@ def cmd_new(args: argparse.Namespace) -> int:
     path = ""
     for attempt in range(NEW_RECORD_TRIES):
         n = num + attempt
+        # 号也要现问一次（`O_EXCL` 只管名字）：另一个进程可能刚用**别的 slug** 占了同一个号，
+        # 那时 `0005-它的.md` 与 `0005-我的.md` 都不会撞名 —— 撞的是号（审查报告 N2）。
+        if n in taken_numbers(journal):
+            continue
         got = reserve_new_record(journal, n, slug, entry_body(n))
         if got is not None:
             path = got
@@ -2691,10 +2796,16 @@ def cmd_new(args: argparse.Namespace) -> int:
     else:
         # 连一千个篇号都被占着：不再空转，用一个带进程号与时间戳的名字落地。
         # 仍然是个合法记录名，`brief` / `index sync` 照旧认它。
+        # 号要**从已占的最大号往后取**（审查报告 N5）：兜底名字里若还用 `first_free`，
+        # 那个号已经属于别人，落完就又是一次重号，而 `--insert` 是按号索引的。
+        num = max(taken_numbers(journal) | {num}) + 1
         fname = new_record_fallback_name(num, slug)
         path = os.path.join(journal, fname)
         write_raw(path, entry_body(num))
         print(f"WARN: 连续 {NEW_RECORD_TRIES} 个篇号都被占，改用 {fname}")
+    # 落地之后对一次账：并发下号可能已经被两份记录用掉（名字不同，`O_EXCL` 挡不住）。
+    # 让路的可能是**我自己**，所以后面的篇号与文件名都要用返回值。
+    path, num = settle_number_collision(journal, path, slug)
     if num != first_free:
         print(f"注意：篇号 {first_free:04d} 已被别的进程占走，本次用 {num:04d}")
     fname = os.path.basename(path)
@@ -2839,6 +2950,12 @@ def cmd_index_compact(args: argparse.Namespace) -> int:
         print(f"  · {title}：{old_block.count(chr(10))} 行 → 1 行")
     for title, why in skipped:
         print(f"  ! 跳过 {title}：{why}")
+    if not done:
+        # 「空手而归」也要有话说（审查报告 §附录 (d) 的小瑕疵）：退出码**保持 0** ——
+        # 幂等的第二次跑本来就该成功（已经折过的行不该再报错），所以这里改的是"说清楚"，
+        # 不是把成功改判成失败。
+        print("（没有可折叠的小节：" + (f"{len(skipped)} 条被上面那几条原因挡着" if skipped
+                                       else "这个深度下已经没有多行小节了") + "）")
     if done and not args.dry_run:
         write_raw(index, "".join(lines))
         print("已写入；建议接着跑 `check` 确认 0 死链。")
@@ -2949,7 +3066,13 @@ def cmd_status(args: argparse.Namespace) -> int:
             span = (span[0], span[1], span[2] + 1)
             changed.append(key + "(新增)")
         if args.dry_run:
-            print("[dry-run] 将更新：" + ", ".join(changed))
+            # dry-run 要与真跑**同判**（2026-10-15 修，审查报告 §附录 (a) 的小瑕疵）：
+            # 原来这里无条件打印 `将更新：`（空的时候就是一句空话）并返回 0，
+            # 于是"真跑会失败"的输入在 dry-run 下看着是成功的。
+            if not changed and not args.date:
+                print("WARN: 没有任何字段会被更新（--set 的 key 都对不上，或没写成 key=value）；真跑也是这个结果")
+                return 1
+            print("[dry-run] 将更新：" + (", ".join(changed) if changed else "（只改了日期）"))
             return 0
         if not changed and not args.date:
             # 空手而归就别改文件、别报成功（2026-10-15 修）：原实现在这里照样 write_raw，
@@ -3680,6 +3803,7 @@ def cmd_prune(args: argparse.Namespace) -> int:
                 cited |= {int(x) for x in CITE_RE.findall(read(os.path.join(lessons, f)))}
     cutoff = _dt.date.today() - _dt.timedelta(days=args.older_than)
     cands: list[tuple[int, str, str, int]] = []
+    bad_dates: list[tuple[int, str]] = []
     for n, paths in sorted(find_entries(journal, lessons_skip(lessons)).items()):
         p = paths[0]
         if is_active_entry(journal, p) or n in cited:
@@ -3689,7 +3813,11 @@ def cmd_prune(args: argparse.Namespace) -> int:
         # 拿不准的时候不动它才是安全的那一边。以前这里直接 `fromisoformat`，一篇坏日期
         # 就让整个 `prune` 抛 `ValueError`（审查报告 F9）。
         day = parse_iso_date(d)
-        if day is None or day > cutoff:
+        if day is None:
+            # 跳过要说出来（审查报告 N5）：静默跳过会让"没进候选"看着像"判据说不该进"。
+            bad_dates.append((n, d or "（日期字段是空的）"))
+            continue
+        if day > cutoff:
             continue
         if args.stage and args.stage not in rel(journal, p):
             continue
@@ -3698,6 +3826,8 @@ def cmd_prune(args: argparse.Namespace) -> int:
     print(f"冷存候选（已归档 + 未被 lessons 引用 + 早于 {cutoff}）：{len(cands)} 篇 / {total} B")
     for n, p, d, sz in cands:
         print(f"  #{n:04d}  {d}  {sz:>7} B  {rel(root, p)}")
+    for n, d in bad_dates:
+        print(f"  ! 跳过 #{n:04d}：日期 `{d}` 解析不出来，拿不准就不动它（先改成 `YYYY-MM-DD`）")
     if not cands:
         print("没有候选，无需处理。")
         return 0
@@ -5649,36 +5779,74 @@ def cmd_inbox_take(args: argparse.Namespace) -> int:
             print("ERROR: 找不到记录容器，无法转移为记录")
             return 1
         entries = find_entries(journal, lessons_skip(lessons))
-        num = (max(entries) + 1) if entries else 1
+        first_free = (max(entries) + 1) if entries else 1
         slug = slugify(args.into_record)
-        fname = f"{num:04d}-{slug}.md" if slug else f"{num:04d}.md"
-        rpath = os.path.join(journal, fname)
-        if os.path.exists(rpath):
-            print(f"ERROR: 已存在 {rel(root, rpath)}")
-            return 1
-        body = ENTRY_TEMPLATE.format(num=num, title=args.into_record, date=today(), iter="-",
-                                     cmd="<命令 / 数据 / 引用 / 样本>")
-        lines = body.splitlines(keepends=True)
-        nl = nl_of(body)
-        # 转移过来的原文**原样放进去**（只统一换行）：这是"把信箱里那条搬进记录"，
-        # 不是"重新表述它"。**搬的是正文** —— 头部（from / at / note）由工具渲染，
-        # 不进记录；发件方改记在这行出处里。
-        # 开头那个空行是为了别把正文顶到小节标题上。
-        sender = meta.get("from", "—")
-        payload = [nl, f"（来自信箱 `{item['name']}`，发件方 `{sender}`）{nl}", nl]
-        payload += [l + nl for l in msg.replace("\r\n", "\n").splitlines()]
-        payload.append(nl)
-        span = find_section(lines, 2, "背景与事实核查")
-        if span:
-            insert_at_end_of_section(lines, span[1], span[2], payload)
-            body = "".join(lines)
-        else:
-            body = (body.rstrip("\n") + nl + nl + "## 来源（信箱）" + nl + nl
+
+        def record_body(n: int) -> str:
+            """第 `n` 号的记录正文（模板 + 转移过来的原文）。
+
+            抽成函数是因为占号要**逐号重试**：撞名时告吹的是那个篇号，不是这次转移，
+            所以正文得能按新号重画一份（`entry_body` 在 `cmd_new` 里是同一个写法）。
+            """
+            body = ENTRY_TEMPLATE.format(num=n, title=args.into_record, date=today(), iter="-",
+                                         cmd="<命令 / 数据 / 引用 / 样本>")
+            lines = body.splitlines(keepends=True)
+            nl = nl_of(body)
+            # 转移过来的原文**原样放进去**（只统一换行）：这是"把信箱里那条搬进记录"，
+            # 不是"重新表述它"。**搬的是正文** —— 头部（from / at / note）由工具渲染，
+            # 不进记录；发件方改记在这行出处里。
+            # 开头那个空行是为了别把正文顶到小节标题上。
+            sender = meta.get("from", "—")
+            payload = [nl, f"（来自信箱 `{item['name']}`，发件方 `{sender}`）{nl}", nl]
+            payload += [l + nl for l in msg.replace("\r\n", "\n").splitlines()]
+            payload.append(nl)
+            span = find_section(lines, 2, "背景与事实核查")
+            if span:
+                insert_at_end_of_section(lines, span[1], span[2], payload)
+                return "".join(lines)
+            return (body.rstrip("\n") + nl + nl + "## 来源（信箱）" + nl + nl
                     + "".join(payload[1:]))
+
         if args.dry_run:
-            print(f"[dry-run] 将创建 {rel(root, rpath)}，并删除信箱条目 `{item['name']}`")
+            # dry-run 不占名，所以这里"只问不写"是安全的 —— 但要**问到底**（照 `cmd_new`）：
+            # 占着的篇号要跳过，报出来的才是真会用的那个。
+            n = first_free
+            while (os.path.exists(_record_name(journal, n, slug))
+                   and n - first_free < NEW_RECORD_TRIES):
+                n += 1
+            print(f"[dry-run] 将创建 {rel(root, _record_name(journal, n, slug))}，"
+                  f"并删除信箱条目 `{item['name']}`")
             return 0
-        write_raw(rpath, body)
+
+        # 占号与写正文一步做完（`reserve_new_record` 的 `O_CREAT | O_EXCL`，2026-10-15 修）：
+        # 原来这里是"算号 → `os.path.exists` → `write_raw`"，三步之间没有原子性 —— 两个进程
+        # 同时 take 同一个标题，后写者会**静默覆盖**先写者刚建好的记录（`write_raw` 用的是
+        # `os.replace`）；标题不同则两份记录共用一个篇号，`--insert` 之后按号索引就不唯一了。
+        # 每轮都重新问一次"号有没有人用"（`O_EXCL` 键在整名上，只管得住同名那一半），落地后
+        # 再由 `settle_number_collision` 对一次账。重复的标题因此不再报"已存在"，而是像 `new`
+        # 一样拿到下一个空号。
+        rpath = ""
+        num = first_free
+        for attempt in range(NEW_RECORD_TRIES):
+            n = first_free + attempt
+            if n in taken_numbers(journal):
+                continue
+            got = reserve_new_record(journal, n, slug, record_body(n))
+            if got is not None:
+                rpath, num = got, n
+                break
+        else:
+            # 连一千个篇号都被占着：不再空转，用一个带进程号与时间戳的名字落地（照 `cmd_new`）。
+            # 号同样从已占的最大号往后取，别复用别人的号。
+            num = max(taken_numbers(journal) | {num}) + 1
+            fname = new_record_fallback_name(num, slug)
+            rpath = os.path.join(journal, fname)
+            write_raw(rpath, record_body(num))
+            print(f"WARN: 连续 {NEW_RECORD_TRIES} 个篇号都被占，改用 {fname}")
+        rpath, num = settle_number_collision(journal, rpath, slug)
+        if num != first_free:
+            print(f"注意：篇号 {first_free:04d} 已被别的进程占走，本次用 {num:04d}")
+        fname = os.path.basename(rpath)
         print(f"created {rel(root, rpath)}")
         print("索引建议行：")
         print(f"| [{fname}]({fname}) | {args.into_record} |")
@@ -6505,6 +6673,11 @@ def main(argv: list[str] | None = None) -> int:
         # 免得"安静地变成一句通用错误"。
         print(f"ERROR: 这条数据没通过校验：{exc}")
         print(f"       （{type(exc).__name__}；多半是记录里的日期/编号/字段写错了，与编码无关）")
+        return 2
+    except OSError as exc:
+        # 写不进去（只读盘、权限不够、父目录没了、磁盘满）。别抛一屏 traceback：
+        # 这类失败跟数据无关，用户要做的事只有一件（换个能写的位置 / 放开权限）。
+        print(f"ERROR: 写不进去：{exc}")
         return 2
     return result if isinstance(result, int) else 0
 

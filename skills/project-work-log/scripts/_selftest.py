@@ -14,11 +14,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -670,6 +673,15 @@ def appendix_phase(parent: str) -> None:
     ok(r.returncode == 0 and "（2026-10-16）" in ledger_text(noop),
        "status --date 单独给（字段没变）照样写盘", r.stdout + ledger_text(noop))
 
+    # ① 的后半：dry-run 与真跑**同判**（第二轮审查 §附录 (a) 的小瑕疵）--------
+    now = ledger_text(noop)
+    r = run(noop, "status", "--dry-run", "--set", "阶段")
+    ok(r.returncode == 1 and "没有任何字段会被更新" in r.stdout and "将更新：" not in r.stdout,
+       "status --dry-run 空手而归：也退 1，不再打印一句空的「将更新」", r.stdout)
+    r = run(noop, "status", "--dry-run", "--set", "阶段=v3")
+    ok(r.returncode == 0 and "[dry-run] 将更新：阶段" in r.stdout and ledger_text(noop) == now,
+       "status --dry-run 真会改的那种照旧退 0、并且不写盘", r.stdout)
+
     # ② `--done` 的空串 ----------------------------------------------------
     todo_root = make_fixture("appendix-empty-done", skeleton(todos="- [ ] alpha\n- [ ] beta"))
     r = run(todo_root, "todo", "--done", "")
@@ -702,6 +714,15 @@ def appendix_phase(parent: str) -> None:
     ok("折叠 1 个小节" in r.stdout and "stage-one/stage-two" in r.stdout,
        "加上 --depth 2 之后它确实折得动（证明上面那节不是「没得折」）", r.stdout)
 
+    # ③ 的后半：一个都没折时也要有话说（第二轮审查 §附录 (d) 的小瑕疵）------
+    bare = make_fixture("appendix-compact-bare", skeleton(index=""))
+    bare_before = ledger_text(bare)
+    r = run(bare, "index", "compact")
+    ok(r.returncode == 0 and "没有可折叠的小节" in r.stdout and "多行小节" in r.stdout,
+       "index compact 这层深度下没有可折的小节：说清是「没有」而不是只说「折叠 0 个」，退 0（幂等）",
+       r.stdout)
+    ok(ledger_text(bare) == bare_before, "index compact 空手而归时也不写盘", ledger_text(bare))
+
     # ④ `memory add` 撞上已存在的 id ---------------------------------------
     mem = os.path.join(parent, "appendix-mem")
     write(os.path.join(mem, "01-general.md"),
@@ -717,6 +738,123 @@ def appendix_phase(parent: str) -> None:
        "memory add 撞上已存在的 id：拒绝", r.stdout + r.stderr)
     ok(read(os.path.join(mem, "01-general.md")) == mem_before,
        "而且一个字节都没动（尤其那条的 cited-by）", read(os.path.join(mem, "01-general.md")))
+
+
+def review2_phase(parent: str) -> None:
+    """第二轮审查（`_tmp/worklog-review-2026-10-15.md`）里 CLI 侧的常驻判据（2026-10-15）。
+
+    那一轮的 JS 半边（N1 门禁要无条件钉 `$DSH_HOME`、N2 take 的并发占号）判据在 `logs/tests/`；
+    这里收 CLI 半边：
+
+      · N5-① `reserve_new_record` 不再把"目录根本写不进去"当成"名字被占"（原来要空转一千轮，
+        最后在兜底 `write_raw` 抛一个没人接的 `PermissionError`）；`main` 统一报成一句。
+      · N5-② `$DSH_WORKLOG_SETTINGS` 现在 CLI 也读 —— 两个进程对"设置文件在哪"同一个口径，
+        所以"设置文件里的 `memoryDir` 生效"这条链路能端到端验。
+      · N5-③ `write_raw` 保住目标原有的权限位。
+      · N5-④ `prune` 跳过坏日期要说出来 —— 断言在 `safety_phase` 的 F9 夹具里。
+      · F8     `12-.md` 这种退化名**不再是记录名**（判据与取号对齐），另有一条 WARN 兜着。
+    """
+    ledger = ("# P\n\n## 文件索引\n\n### 当前\n\n| 文件 | 方面 |\n|---|---|\n"
+              "| [0001-a.md](0001-a.md) | 样例 |\n\n"
+              "## 待办（滚动清单）\n\n- [ ] x\n\n"
+              "## 当前状态（2026-10-15）\n\n- 阶段：v1\n")
+
+    def make_fixture(name: str, extra=None) -> str:
+        root = os.path.join(parent, name)
+        os.makedirs(os.path.join(root, CONTAINER))
+        for rel, text in (extra or {}).items():
+            write(os.path.join(root, CONTAINER, rel), text)
+        write(os.path.join(root, CONTAINER, "README.md"), ledger)
+        return root
+
+    # F8：退化名 `12-.md` 的三处判据必须**同口径** ---------------------------
+    deg = make_fixture("review2-degenerate", {
+        "12-.md": "# 12 · 退化名\n",
+        "0001-a.md": entry("0001", "A", "2026-10-01"),
+    })
+    ok(JOURNAL.NUM_FILE_RE.match("12-.md") is None
+       and not JOURNAL.is_record_name("12-.md")
+       and JOURNAL.name_number("12-.md") is None,
+       "F8：`12-.md` 在「是不是记录名」与「取不取得出号」上口径一致（都不是/都取不出）",
+       f"NUM_FILE_RE={JOURNAL.NUM_FILE_RE.match('12-.md')} "
+       f"is_record_name={JOURNAL.is_record_name('12-.md')} "
+       f"name_number={JOURNAL.name_number('12-.md')}")
+    r = run(deg, "check")
+    ok("12-.md" in r.stdout and r.returncode == 0,
+       "F8：`check` 点出这种名字（WARN，默认不改退出码）—— 不再静默不可见", r.stdout)
+    r = run(deg, "check", "--strict")
+    ok(r.returncode == 1, "F8：`--strict` 下它升级成 ERROR，门禁真的拦得住", r.stdout)
+    for cmd in ("brief", "stats", "topics"):
+        r = run(deg, cmd)
+        ok(r.returncode == 0 and "Traceback" not in r.stderr,
+           f"F8：`{cmd}` 碰到退化名不崩（原先 TypeError 让 11 个命令全线崩）", (r.stdout + r.stderr)[-200:])
+
+    # N5-①：写不进去 ≠ 名字被占 --------------------------------------------
+    try:
+        JOURNAL.reserve_new_record(os.path.join(parent, "review2-no-such-dir"), 1, "x", "body\n")
+        lifted = None
+    except OSError as exc:  # FileNotFoundError 也是 OSError
+        lifted = exc
+    ok(isinstance(lifted, OSError),
+       "N5-①：占名时「目录写不进去」原样抛出去（原来吞成 None，于是空转一千轮）", repr(lifted))
+
+    def boom(_args):
+        raise OSError(28, "No space left on device", "x.md")
+
+    saved, JOURNAL.cmd_brief = JOURNAL.cmd_brief, boom
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            rc = JOURNAL.main(["brief", "--root", parent])
+    finally:
+        JOURNAL.cmd_brief = saved
+    out = buf.getvalue()
+    ok(rc == 2 and "写不进去" in out and "Traceback" not in out,
+       "N5-①：`main` 把 OSError 报成一句「写不进去」并退 2（不再是一屏 traceback）",
+       f"rc={rc} out={out!r}")
+
+    # N5-②：`$DSH_WORKLOG_SETTINGS` 决定的设置文件里的 `memoryDir` 要生效 ----
+    ws = make_fixture("review2-settings-root", {"0001-a.md": entry("0001", "A", "2026-10-01")})
+    from_settings = os.path.join(parent, "review2-mem-from-settings")
+    decoy = os.path.join(parent, "review2-mem-decoy")
+    os.makedirs(from_settings)
+    settings = os.path.join(parent, "review2-settings.json")
+    write(settings, json.dumps({"memoryDir": from_settings}, ensure_ascii=False))
+    old_env = os.environ.get("DSH_WORKLOG_SETTINGS")
+    os.environ["DSH_WORKLOG_SETTINGS"] = settings
+    try:
+        ok(JOURNAL.host_settings_file() == settings,
+           "N5-②：`host_settings_file()` 认 `$DSH_WORKLOG_SETTINGS`（与 lib/index.js 同口径）",
+           JOURNAL.host_settings_file())
+        ok(JOURNAL.memory_root() == os.path.abspath(from_settings),
+           "N5-②：`memory_root()` 因此读到设置文件里的 `memoryDir`", JOURNAL.memory_root())
+    finally:
+        if old_env is None:
+            os.environ.pop("DSH_WORKLOG_SETTINGS", None)
+        else:
+            os.environ["DSH_WORKLOG_SETTINGS"] = old_env
+    # 端到端：真跑一条 `memory add`，不给 `--memory`，让 CLI 自己去设置文件里找根；
+    # 同时摆一个 `$DSH_WORKLOG_MEMORY` 诱饵，证明优先级是"设置文件 > 环境变量"。
+    r = run_env(ws, {"DSH_WORKLOG_SETTINGS": settings, "DSH_WORKLOG_MEMORY": decoy},
+                "memory", "add", ws, "从设置文件里读到根的一条。",
+                "--source", "manual:tested", "--id", "settings-root-probe")
+    volume = os.path.join(from_settings, "01-general.md")
+    ok(r.returncode == 0 and os.path.isfile(volume) and "settings-root-probe" in read(volume),
+       "N5-②：条目落进设置文件指定的根（不给 `--memory` 也行）", r.stdout + r.stderr)
+    ok(not os.path.exists(decoy),
+       "N5-②：并且压过了 `$DSH_WORKLOG_MEMORY`（优先级 2 > 3）", decoy)
+
+    # N5-③：`write_raw` 不该顺手改掉目标的权限位 ---------------------------
+    if os.name == "posix":
+        target = os.path.join(parent, "review2-mode.md")
+        write(target, "原文\n")
+        os.chmod(target, 0o600)
+        JOURNAL.write_raw(target, "改过的\n")
+        mode = stat.S_IMODE(os.stat(target).st_mode)
+        ok(mode == 0o600 and read(target) == "改过的\n",
+           "N5-③：`chmod 600` 的记录被改写后仍是 600（原来会变成 644）", oct(mode))
+    else:
+        note("N5-③ write_raw 保住权限位", "本机是 Windows：chmod 只有只读位，这条件验不出来")
 
 
 def safety_phase(tmp: str) -> None:
@@ -830,11 +968,14 @@ def safety_phase(tmp: str) -> None:
     ok(r.returncode == 0, "prune survives a record whose 日期 does not exist", r.stdout + r.stderr)
     # 同目录里那篇日期合法的老记录必须在候选里 —— 这证明循环真的走到了日期解析那一行，
     # 所以"没崩"不是因为它提前被过滤掉了（否则这条断言是空的）。
-    ok("#0002" in r.stdout and "#0001" not in r.stdout,
+    ok("#0002" in r.stdout and "#0001  2026-02-30" not in r.stdout,
        "the neighbour with a valid old date is still a cold-storage candidate", r.stdout)
     ok("UTF-8" not in r.stdout,
        "the impossible date is NOT reported as an encoding problem (F9's wrong diagnosis)", r.stdout)
     ok("Traceback" not in r.stderr, "the impossible date does not traceback", r.stderr[:200])
+    # 跳过要说出来（第二轮审查 N5-④）：静默跳过会让"没进候选"看着像"判据说不该进"。
+    ok("! 跳过 #0001" in r.stdout and "解析不出来" in r.stdout,
+       "prune says out loud why the impossible date was skipped (N5-④)", r.stdout)
     ok(JOURNAL.parse_iso_date("2026-02-30") is None
        and JOURNAL.parse_iso_date("2026-02-28") is not None
        and JOURNAL.parse_iso_date("") is None,
@@ -3367,6 +3508,58 @@ def main() -> int:
         ok(all(f"race {i}" in "\n".join(bodies) for i in range(6)),
            "6 个进程同时 new：每份正文都在，没有谁被谁吃掉",
            f"{[b.splitlines()[3] if len(b.splitlines()) > 3 else '?' for b in bodies]}")
+        # 条数对**不等于**号不重：六份文件全叫 `0001-race-i.md` 时上面两条照样全绿，
+        # 而"编号永不复用"正是容器承诺过的那条不变量（审查报告 §附录 N2 就是这么漏的）。
+        nums = sorted(JOURNAL.name_number(f) for f in made)
+        ok(nums == list(range(1, 7)),
+           "6 个进程同时 new：篇号互不相同（判据是「号不重」，不是「文件数对」）", str(nums))
+
+        # ---- `inbox take --into-record` 是**另一条**占号路径（2026-10-15 修）------------ #
+        #
+        # 它原来自己算号 + `os.path.exists` + `write_raw`：6 个进程同时 take、且目标标题相同
+        # 时，六份都算到同一个文件名 —— `write_raw` 用的是 `os.replace`，后写者**静默覆盖**
+        # 先写者，而且每个进程都把自己取走的那条信箱消息删掉了（那条消息就此永久消失）。
+        # 判据与上面 `new` 那条同源，但刻意用**同一个标题**：不同标题只会撞号（号重的记录
+        # 还都在），相同标题才会撞名 —— 撞名才是覆盖，也才是"只会丢"里最坏的那一种。
+        take_con = os.path.join(fx, "take")
+        take_mem = os.path.join(fx, "take-mem")
+        os.makedirs(os.path.join(take_con, CONTAINER))
+        write(os.path.join(take_con, CONTAINER, "README.md"), INDEX)
+        for i in range(6):
+            r = run(take_con, "inbox", "put", f"payload {i}", "--memory", take_mem)
+            ok(r.returncode == 0, f"concurrency fixture: inbox put {i}", r.stdout + r.stderr)
+        take_inbox = JOURNAL.memory_inbox_dir(take_mem)
+        items = sorted(os.listdir(take_inbox))
+        procs = [subprocess.Popen(
+            [sys.executable, TOOL, "inbox", "take", items[i], "--into-record", "same title",
+             "--memory", take_mem, "--root", take_con],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", cwd=HERE)
+            for i in range(len(items))]
+        outs2 = []
+        for p in procs:
+            try:
+                o, e = p.communicate(timeout=120)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                o, e = p.communicate()
+            outs2.append((p.returncode, o, e))
+        made2 = sorted(f for f in os.listdir(os.path.join(take_con, CONTAINER))
+                       if f != "README.md")
+        ok(all(rc == 0 for rc, _, _ in outs2) and len(made2) == 6,
+           "6 个进程同时 take 同一个标题：一人一份，没有静默覆盖",
+           f"rc={[rc for rc, _, _ in outs2]} files={made2} "
+           f"err={[e.strip().splitlines()[-1:] for _, _, e in outs2 if e.strip()]}")
+        nums2 = sorted(JOURNAL.name_number(f) for f in made2)
+        ok(nums2 == list(range(1, 7)),
+           "6 个进程同时 take：篇号互不相同（原来六份都算在 0001 上）", str(nums2))
+        taken = "\n".join(read(os.path.join(take_con, CONTAINER, f)) for f in made2)
+        ok(taken.count("（来自信箱") == 6 and all(f"payload {i}" in taken for i in range(6)),
+           "6 个进程同时 take：六条正文都在，没有哪一条被覆盖掉",
+           f"（来自信箱 ×{taken.count('（来自信箱')}；"
+           f"缺={[i for i in range(6) if f'payload {i}' not in taken]}）")
+        ok(os.listdir(take_inbox) == [],
+           "6 个进程同时 take：取走的六条都从信箱里删干净了", str(os.listdir(take_inbox)))
 
         # 兜底名字也得是**合法记录名**，否则连撞一千次之后会造出一个 `brief` 看不见的文件。
         fb = JOURNAL.new_record_fallback_name(42, "some-slug")
@@ -3552,6 +3745,9 @@ def main() -> int:
 
         # 审查报告 §附录那几条：判据先行的常驻断言 ---------------------------
         appendix_phase(tmp)
+
+        # 第二轮审查（2026-10-15）CLI 侧：N5 四条 + F8 的根因 ----------------
+        review2_phase(tmp)
 
         # 全局记忆（跨工作区：分档 / 清单 / 收集 / 索引 / 门禁 / 收敛 / 信箱 / 升格）--
         memory_phase(tmp)

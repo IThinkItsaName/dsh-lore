@@ -8,6 +8,62 @@
 
 ## [未发布]
 
+## [0.8.0] - 2026-10-14
+
+> **升级须知**：本版**改了记忆的默认落点** —— 从 `<DSH_HOME>/memory` 移到
+> `<用户主目录>/dsh-lore-memory`。第一次装载时若旧位置有内容，会**复制**一份到新位置并
+> **保留旧的那份**（不会自动删）；想继续用旧位置，在设置卡片「记忆存放位置」里填回原路径即可。
+> 其余改动向后兼容：技能、命令与记忆条目格式都没变。
+
+### 记忆根可配置（默认移到用户主目录）＋ 技能设置改成"用到时现读"，只剩两项需要重启
+
+- **记忆根不再挂在 `$DSH_HOME` 下**：默认变成 `<用户主目录>/dsh-lore-memory/`，
+  并且**可配置** —— 设置卡片新增「记忆存放位置」（`memoryDir`，`Config` 第 13 个字段）。
+  解析优先级：`--memory` > 设置里的 `memoryDir`（相对路径按**用户主目录**解析）>
+  `$DSH_WORKLOG_MEMORY` > 默认。CLI（`journal.py`）也认同一个设置文件 ——
+  不认就会"卡片改了新路径、模型跑 CLI 仍写旧根"的**静默劈叉**，那正是本项目最防的失效模式。
+- **一次性迁移**：首次解析时若新根为空、旧根 `<DSH_HOME>/memory` 有内容，整份**复制**过去
+  并写 `.moved-from-dsh-home` 留痕；**旧根绝不自动删**（跨卷 rename 会失败、删了不可回滚），
+  日志与设置页都写明"确认后可自行删"。已迁过（有标记）或新根非空即不再动。
+- **技能那 8 项从"装载参数"改成"用到时现读"**（`skillEnabled` / `modelInvocable` /
+  `userInvocable` / `skillDir` / `skillFile` / `guidelinesEnabled` / `guidelinesDir` /
+  `guidelinesLanguage`）。依据 `cordis` §Volatile configuration 与官方 cookbook
+  「在操作开始时读取 `.get()`」：只变 `.volatile()` 字段时 Loader **不重挂载**，
+  只把新值提交进运行中的引用并发 `loader/volatile-update`。
+  落地方式：provider **常驻注册**，开关与路径在 `list()`/`get()` 里现读；关掉的技能报
+  **空且完整**的目录（`complete: true`），并在 `loader/volatile-update` 时主动 `invalidate()`
+  掉注册表的目录缓存。**代价写在这里**：关掉一个技能不再让它的 provider 消失（注册与否是装载期事实，
+  摘了再挂会撞重名拒绝），对用户可见的行为没有差别 —— 技能不再被服务。
+- **现在只剩两项需要重启**：`memoryEnabled`（两个注入注册不注册是装载期事实）与 `verbose`（诊断在装载时装配）。
+  卡片文案跟着收敛：技能页写"即时生效"、记忆页写"只有总开关要重启"、高级页只对诊断日志那一项写"需重启"。
+- **规格同步**：`docs/memory-spec.md` §零 重写（旧版"为什么放 `$DSH_HOME` 下"的三条理由逐条重新裁决，
+  其中"与既有约定一致"明确不再采纳）、§一/§二 与 `references/memory.md`、`references/commands.md` 同步新口径。
+- 自测 **580 → 586**（+6 条记忆根解析：默认 / 绝对 / 相对 / 坏文件回退 / 设置压过环境变量 / 目录名）。
+  仓库侧 `run.mjs` 新增 4 条"配置现读"回归断言（用带 `.get()` 的引用桩模拟 Loader 的 volatile 提交）。
+  仓库门禁：`test:plugin` 全绿、`audit` **`AUDIT CLEAN`**（入口 sha256 已变）。
+
+### 归档支持多级（`--stage <主题>/<阶段>`），`index compact` 增加 `--depth`
+
+- **`archive --stage` 从"只能一层名字"放开到"可带主题层"**（`研究/01-采样`）。动机是长期容器的实际形态：
+  一个阶段一个平铺目录，跑上几十个阶段就平铺一大片（同工作区另一个用这套技能的容器根上就躺着 34 篇未归档记录）。
+  规则是**逐段**套用原来那套名字校验（4 位数字是年份卷、`lessons`/`logs` 是容器内非记录目录），
+  另加两条防越界：`.` / `..` 段与绝对路径一律拒绝。归档表与索引里写的都是**完整相对路径**。
+- **同一个归档目录分几次归档时，`ARCHIVE.md` 那一行就地更新并并入篇号区间**：
+  先归档 1–2、后补 3，表里显示 `0001–0003（3 篇）`，而不是只剩最后一批。
+- **`index compact --depth N`**：只处理 `###` 标题**恰好 N 层**的小节（标题里 `/` 数 = 层数 − 1）。
+  多级归档先 `--depth 2` 折阶段层、再默认的 `--depth 1` 折主题层。单级扁平布局行为不变。
+- **顺带修掉两个只有多级归档才会暴露的判定缺陷**（都是实测踩出来的）：
+  - `index compact` 原先用「目标是目录就跳过」实现幂等，于是**指向主题目录的父级行永远折不动**。
+    现在补上目录那一侧的判据（目录在容器内、且每一篇 `*.md` 都是编号记录），幂等改由
+    「已经是区间行才跳过」表达。
+  - 折一个未处理的目录行时，篇号取不到（目录名里没有篇号），原先会写成"1 篇"——
+    现在**数目录里的记录**，没有才退回行数。
+- 自测 **563 → 580**（新增 17 条：两级落点、索引与归档表的完整路径、重复归档并集、
+  五类非法 `--stage` 逐一拒绝且不留下容器外目录、`--depth 2` 折 / 不动一级 / 幂等、
+  主题目录（自身没有记录）永不折）。
+- 规格与命令参考同步：`references/conventions.md` §目录布局、`references/commands.md`、
+  `SKILL.md` 的三处用法示例；`docs/` 里没有写死"归档只能一层"的段落，未改。
+
 ### 文档与工具链：安装说明补齐 dsh 落点，变异驱动不再假定技能源的位置
 
 - **README「手动安装」段原先只给 pi 路径**（`~/.pi/agent/skills/`、`.pi/skills/`）。dsh 的正确落点是
@@ -1183,7 +1239,8 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.7.0...HEAD
+[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.5.0...v0.5.1

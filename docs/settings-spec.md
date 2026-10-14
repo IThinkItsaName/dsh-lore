@@ -157,7 +157,7 @@
 **只有"注册不注册"这件事需要重启，其余都是现读**。
 
 **记忆那三个键此前没有登记在规格里** —— 这是规格与实际的一处遗漏，2026-09-29 补上。
-它们都由 `apply()`/工具调用读取，`memoryEnabled` 是装载期，另两个用时现读。
+它们都由 `apply()`/工具调用读取：`memoryEnabled` 是装载期，其余（含 `memoryDir`）用时现读。
 
 **最后三行是项目级设置**，不是插件设置。它们**不在 `Config` 里**，所以既不进
 profile patch，也没有任何界面展示或提交它们；`projectDefaults()` 仍会解析它们
@@ -178,10 +178,16 @@ profile patch，也没有任何界面展示或提交它们；`projectDefaults()`
 
 ### 必须标注的事
 
-1. **只有"要不要注册"需要重启**：`memoryEnabled`（两个注入都不注册）、`skillEnabled` /
-   `guidelinesEnabled` / `modelInvocable` / `userInvocable` / `skillDir` / `guidelinesDir` /
-   `guidelinesLanguage` / `verbose` 都是装载参数 —— 界面上**按页**标"改完需重启"是准确的，
-   但记忆页只剩总开关这一条属于这一类（`memoryInjectIndex` 已改为按装配现读，见上表）。
+1. **只有"要不要注册"需要重启**，而**2026-10-14 起只剩两条**属于这一类：
+   `memoryEnabled`（两个注入都不注册）与 `verbose`（诊断在装载时装配）。
+   `skillEnabled` / `guidelinesEnabled` / `modelInvocable` / `userInvocable` / `skillDir` /
+   `skillFile` / `guidelinesDir` / `guidelinesLanguage` / `memoryDir` **都改成用到时现读** ——
+   依据是 `cordis/README.md` §Volatile configuration（只变 `.volatile()` 字段时 Loader
+   **不重挂载**，把新值提交进运行中的引用并发 `loader/volatile-update`）与官方 cookbook
+   「在操作开始时读取 `.get()`」。技能那几项的落地方式见 `lib/index.js` 的 `createProvider`：
+   provider **常驻注册**，开关与路径在 `list()`/`get()` 里现读，关掉的技能报**空目录**
+   （`complete: true`），并在 `loader/volatile-update` 时主动 `invalidate()` 掉注册表的目录缓存。
+   界面上**按页**标"改完需重启"因此要跟着收敛：技能页现在写"即时生效"，高级页只对诊断日志那一项写"需重启"。
 2. **诊断只有一个开关，落点由环境变量定**：`verbose`（界面）决定开不开，
    `DSH_WORKLOG_TRACE` / `<包>/lib/.trace` 决定落到哪个文件；没设落点就进宿主日志。
    从前这是两套互不相干的东西（界面那个只打一行、环境变量那个打很多行到文件），
@@ -296,7 +302,7 @@ window.__ModuleLoader__.load({
 
 > **已被取代（2026-09-29）**：下面这段是**旧**设计（设置页分区）。现在的挂载点是
 > **本 bundle 那一页**的 `plugins.bundle.config`（keyed，`key` = 包名），而且**不是写死
-> namespace 的** —— 卡片按这一行投影出来的 **`value`**（生效配置）是否带齐那 12 个字段来认领
+> namespace 的** —— 卡片按这一行投影出来的 **`value`**（生效配置）是否带齐那 13 个字段来认领
 > 自己那一行（`ns` 是部署相关的）。
 > **代价（2026-09-30，`work_log/07-rename-070/0062`）**：判据要"集齐全部字段"，所以**改了 `Config` 的字段集之后、
 > 在 DSH 重启之前，卡片会消失**（运行中的宿主还发着旧 schema）。症状只有"这一页没有东西"，

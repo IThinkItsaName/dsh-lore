@@ -365,22 +365,75 @@ ok(flat(bodyEn).includes('Your explicit decision outranks these defaults'),
 ok(flat(bodyEn).includes('not a licence to refuse the user'),
    'the en copy drops the refuse-the-user licence')
 
-/* ---- disabling the guidelines ---- */
+/* ---- disabling the guidelines: **注册常驻、服务为空**（2026-10-14 起）----
+   改前是"关掉就不注册那个 provider"。那个写法让开关必须重启才生效（注册与否是装载期事实），
+   所以改成常驻注册 + `list()` 报空目录；断言于是从"少一个 provider"改成"服务技能数不变"。 */
 const ctxOff = fakeCtx()
 mod.apply(ctxOff, { guidelinesEnabled: false })
-ok(ctxOff.providers.length === 1 + extraBundledSkills().length,
-   'guidelinesEnabled=false drops the guidelines provider but keeps the bundled skills',
+ok(ctxOff.providers.length === 2 + extraBundledSkills().length,
+   'guidelinesEnabled=false keeps the provider registered (switch is read live, not at mount)',
    String(ctxOff.providers.length))
+{
+  const [offMain, offGuidelines] = mountAll(ctxOff)
+  const offMainCatalog = await offMain.list({ cwd: 'X', scope: {} })
+  const offGuidelinesCatalog = await offGuidelines.list({ cwd: 'X', scope: {} })
+  ok(offMainCatalog.candidates.length === 1,
+     'the work-log skill is still served when only the guidelines are off',
+     JSON.stringify(offMainCatalog.candidates.map((c) => c.name)))
+  ok(offGuidelinesCatalog.candidates.length === 0 && offGuidelinesCatalog.complete === true,
+     'the guidelines provider reports an EMPTY catalog (complete), so the skill really is gone',
+     JSON.stringify(offGuidelinesCatalog))
+}
 
 /* ---- disabling the work-log skill itself (the memory half stays up) ---- */
 const ctxSkillOff = fakeCtx()
 mod.apply(ctxSkillOff, { skillEnabled: false })
-ok(ctxSkillOff.providers.length === 1 + extraBundledSkills().length,
-   'skillEnabled=false drops the work-log provider but keeps the guidelines and bundled skills',
+ok(ctxSkillOff.providers.length === 2 + extraBundledSkills().length,
+   'skillEnabled=false keeps the work-log provider registered too',
    String(ctxSkillOff.providers.length))
+{
+  const [skillOffMain] = mountAll(ctxSkillOff)
+  const catalog = await skillOffMain.list({ cwd: 'X', scope: {} })
+  ok(catalog.candidates.length === 0,
+     'and that provider serves nothing while the switch is off',
+     JSON.stringify(catalog))
+}
 ok(ctxSkillOff.registeredTools.length === 1,
    'and the memory tool still mounts — the skill half and the memory half are independent',
    String(ctxSkillOff.registeredTools.length))
+
+/* ---- REGRESSION: 配置是**现读**的，不是装载时快照的 ----
+   这条是"改完即时生效"的全部意义所在。生产里的机制是：Loader 对 volatile-only 的改动**不重挂载**，
+   它把新值提交进运行中的 `.volatile()` 引用。所以这里用一个**带 `.get()` 的引用桩**（`volatile()`）
+   模拟真实形状 —— 用普通对象会测不到那条路（`live()` 只对引用优先现读）。 */
+{
+  const cell = (initial) => {
+    let value = initial
+    return { get: () => value, set: (next) => { value = next } }
+  }
+  const skillEnabled = cell(true)
+  const guidelinesEnabled = cell(true)
+  const ctxLive = fakeCtx()
+  mod.apply(ctxLive, { skillDir: 'skills/project-work-log', skillEnabled, guidelinesEnabled })
+  const [liveMain, liveGuidelines] = mountAll(ctxLive)
+  const before = await liveMain.list({ cwd: 'X', scope: {} })
+  ok(before.candidates.length === 1, 'live: the skill is served before the change')
+
+  skillEnabled.set(false)             // ← Loader 的 volatile-only 提交 = 改引用里的值
+  const after = await liveMain.list({ cwd: 'X', scope: {} })
+  ok(after.candidates.length === 0,
+     'live: flipping skillEnabled takes effect on the NEXT list() — no restart',
+     JSON.stringify(after.candidates.map((c) => c.name)))
+
+  guidelinesEnabled.set(false)
+  const guidelinesAfter = await liveGuidelines.list({ cwd: 'X', scope: {} })
+  ok(guidelinesAfter.candidates.length === 0,
+     'live: flipping guidelinesEnabled likewise takes effect immediately')
+
+  skillEnabled.set(true)
+  const back = await liveMain.list({ cwd: 'X', scope: {} })
+  ok(back.candidates.length === 1, 'live: flipping it back works too', JSON.stringify(back))
+}
 
 /* ---- diagnostics: one switch decides WHETHER, the environment decides WHERE ---- */
 const ctxVerbose = fakeCtx()
@@ -448,14 +501,35 @@ ok(ctxD.providers.length === 2 + extraBundledSkills().length,
 
 const ctxE = fakeCtx()
 mod.apply(ctxE, { skillDir: `${PKG}/no/such/dir`, guidelinesDir: `${PKG}/no/such/dir` })
-ok(ctxE.providers.length === 0, 'missing bundles mount no provider')
+// 2026-10-14 起 provider **常驻注册**（开关与路径现读），所以"文件不在"不再表现为
+// "一个 provider 都没有"，而是"两个显式 provider 都在、但服务 0 个 + 装载期各报一条错"。
+// 注意随包 bundle 那一路：`skills/` 是**按 `skillDir` 的父目录**枚举的，两个显式目录都
+// 指向不存在的路径时父目录也不存在，于是 extras 自然为 0（这是 `listBundledSkills` 的既有行为）。
+ok(ctxE.providers.length === 2,
+   'missing bundles still register their two explicit providers (registration is not file-gated)',
+   String(ctxE.providers.length))
+{
+  const catalogs = []
+  for (const provider of mountAll(ctxE)) catalogs.push((await provider.list({})).candidates.length)
+  ok(catalogs[0] === 0 && catalogs[1] === 0,
+     'and neither of them serves a skill when its directory does not exist',
+     JSON.stringify(catalogs))
+}
 ok(errorsIn(ctxE).length === 2, 'both missing bundles are reported, not swallowed',
    JSON.stringify(ctxE.logs))
 
 const ctxF = fakeCtx()
 mod.apply(ctxF, { skillDir: `${PKG}/no/such/dir` })
-ok(ctxF.providers.length === 1, 'a missing worklog bundle does not stop the guidelines mounting',
+ok(ctxF.providers.length === 2,
+   'a missing worklog bundle does not stop the guidelines mounting (both providers register)',
    String(ctxF.providers.length))
+{
+  const [, guidelinesProvider] = mountAll(ctxF)
+  const catalog = await guidelinesProvider.list({})
+  ok(catalog.candidates.length === 1,
+     'and the guidelines skill is still served while the work-log directory is broken',
+     JSON.stringify(catalog.candidates.map((c) => c.name)))
+}
 
 const ctxG = fakeCtx()
 mod.apply(ctxG, { verbose: true })

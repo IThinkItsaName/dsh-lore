@@ -312,8 +312,10 @@ let clientExports = null
     seen.join(','))
   ok(typeof clientExports.claimNamespace === 'function',
     'the namespace claim is exported (the test drives it directly)')
-  ok(Array.isArray(clientExports.FORM_FIELDS) && clientExports.FORM_FIELDS.length === 12,
-    'the claim fingerprint is exported and names twelve fields',
+  // 十三：2026-10-14 加 `memoryDir`（记忆存放位置）。**这个数字每加一个字段都要跟着改**，
+  // 而且它与 `lib/index.js` 的 `Config` 是同一件事 —— 下面那条"exactly the volatile fields"才是真判据。
+  ok(Array.isArray(clientExports.FORM_FIELDS) && clientExports.FORM_FIELDS.length === 13,
+    'the claim fingerprint is exported and names thirteen fields',
     JSON.stringify(clientExports.FORM_FIELDS))
   ok(clientExports.STATUS_URL === '/plugins/dsh-lore/status.json',
     'the read-only status endpoint is the only HTTP surface the client has',
@@ -890,7 +892,7 @@ const openDisclosure = async (index = 0) => {
   // DICTIONARY, so that is what gets asserted. `textOf` cannot reach copy inside
   // nested components; asserting rendered text there would be a test that can
   // never fail — a mistake this project already made once.
-  ok(clientExports.DICT_ZH['restart.memory'].includes('需重启')
+  ok(clientExports.DICT_ZH['restart.memory'].includes('需要重启')
     && clientExports.DICT_ZH['restart.memory'].includes('即时生效'),
     'the 记忆 copy distinguishes the load-time switch from the live ones',
     clientExports.DICT_ZH['restart.memory'])
@@ -937,8 +939,9 @@ const openDisclosure = async (index = 0) => {
 
   /* ---- the footers ---- */
   const footers = textOf(advanced)
-  ok(footers.includes('这一页是装载参数：改完需重启 DSH 才生效。'),
-    'the panel says a restart is required, in the panel-specific wording')
+  // 高级页现在只剩"诊断日志"是装载参数（模型调用许可已改成现读，2026-10-14）。
+  ok(footers.includes('诊断日志开关是装载参数'),
+    'the panel says which of its options still needs a restart, in the panel-specific wording')
   ok(footers.includes('设置位置'),
     'the card says WHERE the settings live (the official channel is not a guess)')
   ok(!footers.includes('where.config'),

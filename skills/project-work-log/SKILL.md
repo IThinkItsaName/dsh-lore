@@ -41,7 +41,8 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 - 引用地址不引入短锚点编号：文件名/编号已经唯一自明。
 
 容器里的其他固定位置：归档记录在 `work_log/<stage>/…`（阶段目录直接建在容器下，
-**没有** `archive/` 一层）、旧状态块在 `work_log/STATE-HISTORY.md`、归档索引在 `work_log/ARCHIVE.md`、
+**没有** `archive/` 一层；长期容器可用 `--stage <主题>/<阶段>` 再加一层主题）、
+旧状态块在 `work_log/STATE-HISTORY.md`、归档索引在 `work_log/ARCHIVE.md`、
 旧记录声明（可选）在 `work_log/LEGACY.md`、日志与运行产物在 `work_log/logs/<来源>/`。完整布局与
 「日志归位要求」见 [references/conventions.md](references/conventions.md)。
 
@@ -204,7 +205,9 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 
 ```bash
 python scripts/journal.py archive --stage 02-research --from 27 --to 45   # 搬 + 全仓链接重写 + 死链自检
+python scripts/journal.py archive --stage 研究/01-采样 --from 46 --to 52   # 多级：可加一层主题
 python scripts/journal.py index compact --stage 02-research               # 已归档小节折叠成一行区间
+python scripts/journal.py index compact --depth 2                         # 多级时：先折阶段层，再 --depth 1 折主题层
 python scripts/journal.py retro --from 27 --to 45 --out /tmp/retro.md     # 阶段复盘骨架
 ```
 
@@ -270,7 +273,9 @@ python scripts/journal.py append 42 --section 更正 --text "…" --bullet
 
 # —— 整理与清理：只搬不删，全部支持 --dry-run ——
 python scripts/journal.py archive --stage 02-research --from 27 --to 45   # 归档 + 链接重写 + 死链自检
+python scripts/journal.py archive --stage 研究/01-采样 --from 46 --to 52   # 多级归档（加一层主题）
 python scripts/journal.py index compact --stage 02-research               # 索引瘦身（已归档小节→一行）
+python scripts/journal.py index compact --depth 2                         # 多级：折阶段层（再默认折主题层）
 python scripts/journal.py split --by-year --dry-run                       # 按年分卷（超长期，编号式）
 python scripts/journal.py prune                                           # 冷存候选（只报告）
 
@@ -316,7 +321,7 @@ python scripts/journal.py promote suggest                                   # �
    （编号式 `# NNN · 标题` / 日期式 `# YYYY-MM-DD 标题`）。
 3. **收尾**：把「工作流 C 收尾清单」当人工检查表逐条走；把 `check` / `lint` 的判据（见 [references/commands.md](references/commands.md)）当核对清单。
 4. **检索导航**：用 `grep` / `rg` 代替 `search`，用 `snapshot` 的判据手工汇总最近几篇，用索引表代替 `brief` / `outline`。
-5. **整理**：归档就是"移文件 + 改链接"（容器根 → `<stage>/`），手工做时**先全仓 grep 链接再改**——脚本的价值主要就在这里（自动重写 + 死链自检）。
+5. **整理**：归档就是"移文件 + 改链接"（容器根 → `<stage>/`，可带主题层 `<主题>/<阶段>/`），手工做时**先全仓 grep 链接再改**——脚本的价值主要就在这里（自动重写 + 死链自检）。
 
 脚本全部只用 Python 标准库，**不需要 `pip install`**；只要 Python 3.9+ 在 PATH 里就能跑
 （更精确的实测范围见下方「环境边界」）。若连命令都不能执行（纯聊天环境），技能退化为一份

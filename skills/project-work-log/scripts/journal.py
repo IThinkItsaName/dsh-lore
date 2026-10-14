@@ -261,9 +261,13 @@ GOALS_STATUSES = ("未开始", "进行中", "已完成", "已放弃")
 GOALS_COLUMNS = ("目标", "阶段", "状态", "相关记录")
 
 # ---- 全局记忆（跨工作区，见 references/memory.md）----
-# 落在 DSH home 下、与**插件目录平级**，不放进 worklog 插件自己的目录：
-# 记忆是跨插件的公共知识，不该锁在一个插件的私有柜子里（卸载 worklog 也不该带走它）。
-MEMORY_DIR_NAME = "memory"
+# **2026-10-14 起**默认落在**用户主目录**下的 `dsh-lore-memory/`，不再挂在 `$DSH_HOME` 下：
+# 记忆是与 agent 无关的公共知识，跟着 `$DSH_HOME` 走意味着换一次 harness / 换一次安装位置
+# 就换个库；位置也由插件设置（`memoryDir`）与 `--memory` / `$DSH_WORKLOG_MEMORY` 覆盖。
+# 它仍然**不放进插件自己的目录**：卸载 worklog 不该带走记忆。
+# 旧位置 `<DSH_HOME>/memory` 只作为**一次性迁移的来源**保留（见 lib/index.js 的
+# `migrateMemoryIfNeeded()`），本文件不再把它当默认。
+MEMORY_DIR_NAME = "dsh-lore-memory"
 # 注入用的索引。**生成物，不手写** —— 手写的索引与正文一定会分叉。
 MEMORY_INDEX_NAME = "INDEX.md"
 # 个人内容单设目录：不进 git、不进索引、不被默认检索。
@@ -846,19 +850,58 @@ def dsh_home() -> str:
     return os.path.join(os.path.expanduser("~"), ".dsh")
 
 
-def memory_root(explicit: str | None = None) -> str:
-    """全局记忆的根目录。三级：`--memory` > `$DSH_WORKLOG_MEMORY` > `$DSH_HOME/memory`。
+def host_settings_file() -> str:
+    """插件自己的设置文件（headless 那条路的退路）：`<DSH_HOME>/worklog/settings.json`。
 
-    环境变量那一档是为**测试隔离**留的：harness 必须能指向一个临时目录，
-    否则跑一次测试就会动到用户真实的记忆库 —— 这个坑我们在设置文件上已经踩过一次
-    （见 tests/_pkg.mjs 里那段注释）。
+    与 `lib/index.js` 的 `settingsFilePath()` 同一个落点。**没有 configEditor 的宿主**
+    才写这个文件；有官方设置通道时，用户改的是 profile patch —— 那种情况下本文件可能
+    不存在，`memoryDir` 也就读不到，退回环境变量与默认（见 `memory_root`）。
+    """
+    return os.path.join(dsh_home(), "worklog", "settings.json")
+
+
+def _memory_dir_from_host_settings() -> str:
+    """从宿主设置文件里读 `memoryDir`；读不到（文件缺失/损坏/字段为空）返回空串。
+
+    这**不是**可选的优化：卡片把记忆根改到别处之后，CLI 若不认这个字段，
+    写入会落在旧根、而插件从新根读 —— 写进去的东西读不出来，且**不报错**。
+    这正是本项目定义里最坏的一类失效，所以宁可多读一个小 JSON。
+    """
+    path = host_settings_file()
+    try:
+        if not os.path.isfile(path):
+            return ""
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(doc, dict):
+        return ""
+    value = doc.get("memoryDir")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def memory_root(explicit: str | None = None) -> str:
+    """全局记忆的根目录。优先级（2026-10-14 起）：
+
+    1. `--memory`（显式参数，最高）
+    2. 宿主设置里的 `memoryDir` —— **相对路径按用户主目录解析**（与插件侧同一口径）
+    3. `$DSH_WORKLOG_MEMORY`（逃生舱，也是 harness 的隔离手段）
+    4. 默认 `<用户主目录>/dsh-lore-memory`
+
+    第 2 条替代了原先的 `<DSH_HOME>/memory`：记忆是**与 agent 无关**的东西，不该跟着
+    `$DSH_HOME` 走（见 `docs/memory-spec.md` §零）。旧位置只作为**一次性迁移的来源**。
     """
     if explicit:
         return os.path.abspath(explicit)
+    configured = _memory_dir_from_host_settings()
+    if configured:
+        return os.path.abspath(os.path.expanduser(configured)) if os.path.isabs(configured) \
+            else os.path.join(os.path.expanduser("~"), configured)
     env = os.environ.get("DSH_WORKLOG_MEMORY", "").strip()
     if env:
         return os.path.abspath(env)
-    return os.path.join(dsh_home(), MEMORY_DIR_NAME)
+    return os.path.join(os.path.expanduser("~"), MEMORY_DIR_NAME)
 
 
 def memory_index_path(root: str) -> str:
@@ -1508,6 +1551,25 @@ def all_metas(entries: dict[int, list[str]]) -> dict[int, dict]:
 def heading_level(line: str):
     m = re.match(r"^(#{1,6})[ \t]+(.*?)[ \t]*\r?\n?$", line)
     return (len(m.group(1)), m.group(2)) if m else None
+
+
+def norm_title(title: str) -> str:
+    """把标题当路径看：反斜杠归一、去掉首尾空白与斜杠、去掉能去掉的目录前缀。
+
+    只用来跟归档目录做**字面比较**（判断"这一行是不是已经指向本小节自己的目录"）。
+    `### theme-b/01-second` 与目录 `theme-b/01-second/` 归一后相等。
+    """
+    return (title or "").strip().strip("/").replace("\\", "/")
+
+
+def is_folded_row(line: str) -> bool:
+    """这一行是不是**已经折叠过**的目录行（`0001–0003（3 篇，已归档）`）。
+
+    为什么需要它：`index compact` 必须幂等。旧实现靠"目标是目录就跳过"实现幂等，
+    但目录目标在多级归档里还有第二种含义（指向**主题目录**的父级行，那种要能折），
+    所以幂等改由本判据表达：**已经是区间行**就不再折。
+    """
+    return re.search(r"\d{1,4}[–—~]\d{1,4}（\d+\s*篇", line) is not None
 
 
 def find_section(lines: list[str], level: int, keyword: str):
@@ -2514,6 +2576,10 @@ def cmd_index_compact(args: argparse.Namespace) -> int:
     """把「整节都已归档」的索引小节折叠成一行区间——治索引的线性膨胀。
 
     只动索引，不动任何记录；混合（含活跃记录）或有死链的小节一律跳过。
+
+    `--depth N` 只处理 `###` 标题**恰好 N 级**的小节（标题里的 `/` 数 = 层数 − 1）：
+    多级归档（`### <主题>/<阶段>`）时，先用 `--depth 2` 把阶段折成一行、
+    再用 `--depth 1` 把主题折成一行；单级扁平布局用默认的 `--depth 1` 即可。
     """
     root = os.path.abspath(args.root)
     journal, lessons = resolve_layout(root, args.journal, args.lessons)
@@ -2529,6 +2595,7 @@ def cmd_index_compact(args: argparse.Namespace) -> int:
         print("ERROR: 索引里没有 `## 文件索引` 小节")
         return 1
 
+    depth = max(1, int(getattr(args, "depth", 1) or 1))
     stages: list[tuple[int, int, str]] = []
     i = span[1]
     while i < span[2]:
@@ -2548,6 +2615,10 @@ def cmd_index_compact(args: argparse.Namespace) -> int:
     done: list[tuple[str, str, str]] = []
     skipped: list[tuple[str, str]] = []
     for head_i, end_i, title in reversed(stages):
+        if title.count("/") != depth - 1:
+            if args.stage:
+                skipped.append((title, f"不是 {depth} 级小节（`--depth {depth}`）"))
+            continue
         if args.stage and args.stage not in title:
             continue
         rows = [k for k in range(head_i + 1, end_i)
@@ -2565,27 +2636,48 @@ def cmd_index_compact(args: argparse.Namespace) -> int:
             skipped.append((title, "行里没有可解析的链接目标"))
             continue
         resolved = [os.path.normpath(os.path.join(journal, t)) for t in targets]
+        skip_dirs = lessons_skip(lessons)
         if any(os.path.isdir(p) for p in resolved):
-            # 已经折叠过的行：目标是个目录。再折一次会把 `5–6（2 篇）` 变成 `1 篇`，
-            # 所以这里必须跳过，保证 `index compact` 幂等。
-            continue
-        if not all(is_archived_entry(journal, p, lessons_skip(lessons)) for p in resolved):
-            # 「已归档」= 编号记录 + 在容器的阶段目录里；经验分册、README、
-            # STATE-HISTORY、年份卷这些同样在容器内但不是归档记录，落进这一支被跳过。
-            skipped.append((title, "含活跃记录或非记录文件"))
-            continue
+            # 目标是个**目录**：两种情形都靠 dir_is_archived_stage() 判，不再一律跳过。
+            #   ① 已经是折叠行（本小节只有一行）——原来靠"是目录就 continue"实现幂等；
+            #   ② 多级归档里指向**主题目录**的行（2026-10-14 新增）。
+            # 判据是"整个目录里每一篇都是归档记录"，所以真折过的行照样折不动（幂等没丢）。
+            if not all(dir_is_archived_stage(journal, p, skip_dirs) for p in resolved):
+                continue
+            dirs = {os.path.normpath(t).replace(os.sep, "/") for t in targets}
+        else:
+            if not all(is_archived_entry(journal, p, skip_dirs) for p in resolved):
+                # 「已归档」= 编号记录 + 在容器的阶段目录里；经验分册、README、
+                # STATE-HISTORY、年份卷这些同样在容器内但不是归档记录，落进这一支被跳过。
+                skipped.append((title, "含活跃记录或非记录文件"))
+                continue
+            dirs = {os.path.dirname(t).replace(os.sep, "/") for t in targets}
         if not all(os.path.exists(p) for p in resolved):
             skipped.append((title, "有死链，先修链接"))
             continue
-        dirs = {os.path.dirname(t).replace(os.sep, "/") for t in targets}
         if len(dirs) != 1:
             skipped.append((title, "跨多个归档目录"))
             continue
+        common = dirs.pop()
+        if len(rows) == 1 and is_folded_row(lines[rows[0]]):
+            # 已经是折叠行 ⇒ 幂等：不再折一次（否则 `5–6（2 篇）` 会被写成 `1 篇`）。
+            continue
         nums = [n for t in targets
                 if (n := name_number(os.path.basename(t))) is not None]
-        common = dirs.pop()
-        label = (f"{min(nums):04d}–{max(nums):04d}（{len(rows)} 篇，已归档）" if nums
-                 else f"{len(rows)} 篇，已归档")
+        # 目录行折叠时 `nums` 是空的（basename 是目录名、没有篇号）——那就**数目录里的记录**。
+        # 再退一步才用旧行已记的区间。实测：不加这一步，`--depth 2` 折一个两级目录行
+        # 会把 `0004–0005` 写成"1 篇"，而目录里明明有两篇。
+        prior = l_entry_nums(lines[rows[0]]) if rows else []
+        if not nums:
+            dir_nums = [n for p in resolved if (n_list := stage_numbers(journal, p, skip_dirs))
+                        for n in n_list]
+            nums = sorted(set(dir_nums)) or prior
+        if len(nums) > 1:
+            label = f"{min(nums):04d}–{max(nums):04d}（{len(nums)} 篇，已归档）"
+        elif len(nums) == 1:
+            label = f"{nums[0]:04d}（1 篇，已归档）"
+        else:
+            label = f"{len(rows)} 篇，已归档"
         new_row = f"| [{common}/]({common}/) | {label} |{nl}"
         old_block = "".join(lines[rows[0]:rows[-1] + 1])
         done.append((title, old_block, new_row))
@@ -3075,8 +3167,92 @@ def _dead_links(root: str, bases: list[str]) -> list[str]:
     return [txt for lv, txt in rep.rows if lv == "ERROR"]
 
 
+def stage_numbers(container: str, dirpath: str, skip_dirs: tuple[str, ...] = ()) -> list[int] | None:
+    """目录形式的归档目标里**有哪些记录**：返回篇号表；不是"干净的归档目录"则返回 `None`。
+
+    两种用途共用同一份遍历，别写两遍（写两遍就会出现"判据说能折、算篇数又算不出来"）：
+      - `index compact` 判断这个目录算不算"整节都已归档"（`None` 即不算）；
+      - 折叠时给区间行算篇号（目录名里没有篇号，只能这样数出来）。
+
+    判据：目录在容器内、不是年份卷/非记录目录，且**每一篇 `*.md` 都是编号记录**
+    （`README.md`、日志之类的东西一律让它不算 —— 那种目录不该被折成一行区间）。
+    """
+    if not os.path.isdir(dirpath):
+        return None
+    parts = _rel_parts(container, dirpath)
+    if not parts:
+        return None
+    if parts[0] in NON_RECORD_DIRS or parts[0] in skip_dirs or YEAR_DIR_RE.match(parts[0]):
+        return None
+    found: list[int] = []
+    for dp, dn, fn in os.walk(dirpath):
+        dn[:] = [d for d in dn if d not in (".git", "node_modules")]
+        for f in fn:
+            if not f.endswith(".md"):
+                continue
+            if not (NUM_FILE_RE.match(f) and not DATE_NAME_RE.match(f)):
+                return None            # 里面有不是记录的东西（README、日志…）→ 不许折
+            n = name_number(f)
+            if n is not None:
+                found.append(n)
+    return sorted(found) if found else None
+
+
+def dir_is_archived_stage(container: str, dirpath: str, skip_dirs: tuple[str, ...] = ()) -> bool:
+    """目录形式的归档行是否算"整节都已归档"（见 `stage_numbers`）。"""
+    return stage_numbers(container, dirpath, skip_dirs) is not None
+
+
+def l_target_dir(line: str) -> str:
+    """归档表一行里那个「目录」格（去掉反引号与尾斜杠），认不出来给空串。
+
+    `ARCHIVE.md` 一行长这样：``| `2026/02-research/` | 0027–0045 | … |``
+    """
+    m = re.match(r"\|\s*`([^`]+)`\s*\|", line)
+    return m.group(1).strip().strip("/") + "/" if m else ""
+
+
+def l_entry_nums(line: str) -> list[int]:
+    """归档表一行里「篇号」格已记的编号（`0001–0003` / `0007` / `-`），认不出给空表。
+
+    注意 `0001–0003` 是**区间**，要展开成三个编号 —— 这行值是用来求并集的。
+    """
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    if len(cells) < 2:
+        return []
+    got: list[int] = []
+    for token in re.split(r"[,\s、]+", cells[1]):
+        token = token.strip()
+        rng = re.fullmatch(r"(\d{1,4})\s*[–—~]\s*(\d{1,4})", token)
+        if rng:
+            lo, hi = int(rng.group(1)), int(rng.group(2))
+            if lo <= hi and hi - lo <= 10000:
+                got.extend(range(lo, hi + 1))
+            continue
+        if re.fullmatch(r"\d{1,4}", token):
+            got.append(int(token))
+    return got
+
+
+def l_entry_span(line: str) -> str:
+    """归档表一行里「时间」格（`2026-10-01 ~ 2026-10-02` / `-`），认不出给空串。"""
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    return cells[2] if len(cells) >= 3 else ""
+
+
+def merge_span(old: str, new_dates: list[str]) -> str:
+    """把旧行的时间区间与新一批的日期并起来（都是 ISO 日期，直接比字符串即可）。"""
+    found = re.findall(r"\d{4}-\d{2}-\d{2}", old or "")
+    ds = sorted(set(found) | set(new_dates))
+    return f"{ds[0]} ~ {ds[-1]}" if ds else "-"
+
+
 def _update_archive_index(container: str, stage: str, nums: list[int], dates: list[str]) -> None:
-    """在归档索引（新布局 `<容器>/ARCHIVE.md`，旧布局 `archive/README.md`）里补一行。"""
+    """在归档索引（新布局 `<容器>/ARCHIVE.md`，旧布局 `archive/README.md`）里补一行。
+
+    `stage` 可以是多级相对路径（`<主题>/<阶段>`），表里就照它写 —— 一行 = 一个归档目录。
+    同一个目录**再归档一次**时**就地更新**那一行，不追加重复行（否则表会自相矛盾）。
+    """
     path = archive_index_path(container)
     text = read_raw(path) if os.path.exists(path) else ""
     nl = nl_of(text) if text else "\n"
@@ -3085,22 +3261,72 @@ def _update_archive_index(container: str, stage: str, nums: list[int], dates: li
         lines = [f"# 归档区{nl}", nl,
                  f"| 目录 | 篇号 | 时间 | 内容 | 归档判据 |{nl}",
                  f"|---|---|---|---|---|{nl}"]
+    rel_dir = stage.replace("\\", "/").strip("/") + "/"
     ds = sorted(d for d in dates if d)
-    span = f"{ds[0]} ~ {ds[-1]}" if ds else "-"
-    entry = (f"| `{stage}/` | {min(nums):04d}–{max(nums):04d} | {span} | "
-             f"{len(nums)} 篇 | 阶段收口 |{nl}")
     rows = [i for i, l in enumerate(lines) if l.lstrip().startswith("|")]
-    if rows:
-        lines.insert(rows[-1] + 1, entry)
+    existing = next((i for i in rows if l_target_dir(lines[i]) == rel_dir), None)
+    if existing is not None:
+        # 同一个目录**分几次**归档很常见（先 1–2，后来把 3 也补进去）。
+        # 原地更新必须**并入旧行已记的篇号**，否则表会显示成"只剩最后一批"。
+        all_nums = sorted(set([*nums, *l_entry_nums(lines[existing])]))
+        lo, hi, count = all_nums[0], all_nums[-1], len(all_nums)
+        span = merge_span(l_entry_span(lines[existing]), ds)
+        lines[existing] = (f"| `{rel_dir}` | {lo:04d}–{hi:04d} | {span} | "
+                           f"{count} 篇 | 阶段收口 |{nl}")
     else:
-        if lines and lines[-1].strip():
-            lines.append(nl)
-        lines.append(entry)
+        span = f"{ds[0]} ~ {ds[-1]}" if ds else "-"
+        entry = (f"| `{rel_dir}` | {min(nums):04d}–{max(nums):04d} | {span} | "
+                 f"{len(nums)} 篇 | 阶段收口 |{nl}")
+        if rows:
+            lines.insert(rows[-1] + 1, entry)
+        else:
+            if lines and lines[-1].strip():
+                lines.append(nl)
+            lines.append(entry)
     write_raw(path, "".join(lines))
 
 
+def plan_archive_stage(container: str, raw: str) -> tuple[str, str | None]:
+    """把 `--stage` 的取值规划成一个**归档相对路径**，返回 `(规范路径, 错误信息)`。
+
+    允许**多级**（`<主题>/<阶段>`，或更深），因为长期容器里"一阶段一个平铺目录"会平铺一大片；
+    分段规则与单级时**逐段一致**（4 位数字是年份卷、`lessons`/`logs` 是容器内非记录目录，
+    两种名字都会让归档记录被错误分类），另外这里补两条防越界的：
+
+      - `.` / `..` 段一律拒绝（否则归档会写到容器之外）；
+      - 绝对路径与目录分隔符开头一律拒绝。
+
+    返回的路径**用 `/` 连接**，与索引/归档表里写的相对路径一致（Windows 上也写 `/`）。
+    """
+    raw = (raw or "").strip().strip("/\\")
+    if not raw:
+        return "", "--stage 不能为空"
+    norm = raw.replace("\\", "/")
+    if re.match(r"^[A-Za-z]:", norm) or norm.startswith("/"):
+        return "", f"--stage「{raw}」不能是绝对路径"
+    parts = [p for p in norm.split("/") if p != ""]
+    if not parts:
+        return "", "--stage 不能为空"
+    for seg in parts:
+        if seg in (".", ".."):
+            return "", f"--stage「{raw}」不能含 `.` / `..` 段"
+        if YEAR_DIR_RE.match(seg):
+            return "", (f"--stage 的第「{seg}」段不能用 4 位数字：那是按年分卷目录，"
+                        f"记录会被当成**活跃**（`split --by-year` 也是同一个名字空间）")
+        if seg in NON_RECORD_DIRS:
+            return "", (f"--stage 的第「{seg}」段不能用「{seg}」："
+                        f"{'、'.join(NON_RECORD_DIRS)} 是容器内的非记录目录")
+    stage = "/".join(parts)
+    target = os.path.abspath(os.path.join(container, *parts))
+    if os.path.commonpath([os.path.abspath(container), target]) != os.path.abspath(container) \
+            or target == os.path.abspath(container):
+        return "", f"--stage「{raw}」会落到容器之外"
+    return stage, None
+
+
 def cmd_archive(args: argparse.Namespace) -> int:
-    """把一个篇号区间归档到 `<容器>/<stage>/`，并重写全仓链接。
+    """把一个篇号区间归档到 `<容器>/<stage>/`（`--stage` 可以是 `<主题>/<阶段>` 多级），
+    并重写全仓链接。
 
     搬完自动做一次死链自检；有死链就报错退出（内容都在，可 git 回退）。
     """
@@ -3109,15 +3335,13 @@ def cmd_archive(args: argparse.Namespace) -> int:
     if not journal:
         print("ERROR: 找不到记录容器")
         return 1
-    stage = args.stage.strip()
-    if not stage or re.search(r"[/\\:]", stage):
-        print("ERROR: --stage 只能是不含路径分隔符的名字，如 02-research")
+    stage, err = plan_archive_stage(journal, args.stage)
+    if err:
+        print(f"ERROR: {err}")
         return 1
-    if YEAR_DIR_RE.match(stage) or stage in NON_RECORD_DIRS:
-        # 4 位数字的目录会被当成按年分卷（记录仍是「活跃」），lessons/logs 是容器内
-        # 的非记录目录：两种名字都会让归档记录被错误分类，直接挡掉。
-        print(f"ERROR: --stage 不能用「{stage}」：4 位数字是年份卷、"
-              f"{'、'.join(NON_RECORD_DIRS)} 是容器内的非记录目录")
+    target_dir = os.path.join(journal, *stage.split("/"))
+    if os.path.isfile(target_dir):
+        print(f"ERROR: 目标路径已是个文件：{rel(root, target_dir)}")
         return 1
     entries = find_entries(journal, lessons_skip(lessons))
     picked = [(n, p[0]) for n, p in sorted(entries.items())
@@ -3125,7 +3349,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
     if not picked:
         print(f"ERROR: {args.from_num}–{args.to_num} 区间内没有活跃记录")
         return 1
-    target_dir = os.path.join(journal, stage)
+    target_dir = os.path.join(journal, *stage.split("/"))
     moves = {os.path.abspath(p): os.path.join(target_dir, os.path.basename(p))
              for _, p in picked}
     for dst in moves.values():
@@ -5812,6 +6036,9 @@ mode 同样只提供**新项目的初始档位**：台账 `## 当前状态` 有 
     p_compact = isub.add_parser("compact", help="把已归档阶段的逐条行折叠成区间行（索引瘦身）")
     _add_common(p_compact)
     p_compact.add_argument("--stage", default=None, help="只处理标题含该子串的小节")
+    p_compact.add_argument("--depth", type=int, default=1,
+                           help="只处理 `###` 标题恰好 N 级的小节（标题里的 `/` 数 = 层数 − 1；"
+                                "多级归档先 --depth 2 折阶段、再 --depth 1 折主题；默认 1）")
     p_compact.add_argument("--dry-run", action="store_true")
     p_compact.set_defaults(func=cmd_index_compact)
 

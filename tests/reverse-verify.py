@@ -159,15 +159,13 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      '    upload = bool(args.upload) if args.upload is not None else True',
      "memory: publish 默认 upload: false"),
     ("memory", "collect 不再按清单摘要跳过",
-     '        st = state["workspaces"].get(ws)\n'
-     '        if isinstance(st, dict) and st.get("digest") == digest:\n'
-     '            skipped.append(f"{name}（清单没变）")\n'
-     "            continue",
-     '        st = state["workspaces"].get(ws)\n'
-     '        if False:\n'
-     '            skipped.append(f"{name}（清单没变）")\n'
-     "            continue",
-     "memory: 幂等靠 .state.json 里的清单摘要"),
+         '        if isinstance(st, dict) and st.get("digest") == digest and st_fb == fb_digest:\n'
+         '            skipped.append(f"{name}（清单没变）")\n'
+         '            continue',
+         '        if False:\n'
+         '            skipped.append(f"{name}（清单没变）")\n'
+         '            continue',
+         "memory: 幂等靠 .state.json 里的清单摘要"),
     ("memory", "collect 每次都往名册里写点会变的东西",
      '    if registry_dirty and not args.dry_run:\n        save_registry(memory, registry)',
      '    if not args.dry_run:\n'
@@ -175,11 +173,11 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      '        save_registry(memory, registry)',
      "memory: collect 幂等"),
     ("memory", "collect 改写工作区的清单",
-     "        text = read_raw(memory_manifest_path(ws))",
-     "        text = read_raw(memory_manifest_path(ws))\n"
-     "        if not args.dry_run:\n"
-     '            write_raw(memory_manifest_path(ws), "clobbered\\n")',
-     "memory: collect 绝不改写工作区的清单"),
+         '        text = read_raw(memory_manifest_path(ws))',
+         '        text = read_raw(memory_manifest_path(ws))\n'
+         '        if not args.dry_run:\n'
+         '            write_raw(memory_manifest_path(ws), "clobbered\\n")',
+         "memory: collect 绝不改写工作区的清单"),
     ("memory", "cited-by 直接覆盖而不是累计",
      '                entry["cited_by"] = sorted(set(existing[0]["cited_by"]) | {name})',
      '                entry["cited_by"] = [name]',
@@ -213,9 +211,13 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "            if False and re.search(",
      "memory: manual:inferred 出现在索引里是 ERROR"),
     ("memory", "lint 不再查 cited-by",
-     '        for c in e["cited_by"]:\n            if c not in names:',
-     "        for c in []:\n            if c not in names:",
-     "memory: cited-by 引用不存在的工作区是 ERROR"),
+         '        for c in e["cited_by"]:\n'
+         '            st = registry_state(registry, c)\n'
+         '            if st == "unknown":',
+         '        for c in e["cited_by"]:\n'
+         '            st = registry_state(registry, c)\n'
+         '            if False:',
+         "memory: cited-by 引用不存在的工作区是 ERROR"),
     ("memory", "lint 不再查分册标题与文件名",
      "        elif domain not in m.group(1):",
      "        elif False:",
@@ -290,7 +292,7 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "    return []",
      "dream: 已收敛的记录不再重复挑出来（标记生效）"),
     ("memory", "inbox 不再查单条上限",
-     "    if len(data) > MEMORY_INBOX_ITEM_MAX_BYTES:",
+     "    if len(body_bytes) > MEMORY_INBOX_ITEM_MAX_BYTES:",
      "    if False:",
      "inbox: 单条超上限被拒绝"),
     ("memory", "inbox 不再查条数上限",
@@ -302,20 +304,29 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "        if not os.path.isfile(path):",
      "inbox: 读到 .tmp 半截文件时当它不存在"),
     ("memory", "inbox 用文本模式直接写（不先临时名再 rename）",
-     '    tmp = os.path.join(d, f".{name}.{os.getpid()}.tmp")\n'
-     '    with open(tmp, "wb") as fh:\n'
-     "        fh.write(data)\n"
-     "    os.replace(tmp, path)",
-     '    with open(path, "w", encoding="utf-8") as fh:\n        fh.write(text)',
-     "inbox: 落盘字节与投进去的一模一样"),
+         '    tmp = os.path.join(d, f".{name}.{os.getpid()}.tmp")\n'
+         '    with open(tmp, "wb") as fh:\n'
+         '        fh.write(data)\n'
+         '    os.replace(tmp, path)', 
+         '    with open(path, "w", encoding="utf-8") as fh:\n'
+         '        fh.write(text)',
+         "inbox: 正文与投进去的一模一样（二进制写，不翻译换行；头部之外不多不少）"),
     ("memory", "inbox take 不删原件",
      '    os.remove(item["path"])\n    print(f"已删除 {item[\'name\']}")',
      '    print(f"已删除 {item[\'name\']}")',
      "inbox: 转移之后原件被删掉"),
     ("memory", "inbox take 不搬原文",
-     '        payload += [l + nl for l in text.replace("\\r\\n", "\\n").splitlines()]',
-     "        payload += []",
-     "inbox: 信箱原文被搬进记录"),
+         '        if span:\n'
+         '            insert_at_end_of_section(lines, span[1], span[2], payload)\n'
+         '            body = "".join(lines)\n'
+         '        else:\n'
+         '            body = (body.rstrip("\\n") + nl + nl + "## 来源（信箱）" + nl + nl\n'
+         '                    + "".join(payload[1:]))',
+         '        if span:\n'
+         '            body = "".join(lines)\n'
+         '        else:\n'
+         '            body = body.rstrip("\\n") + nl',
+         "inbox: 信箱原文被搬进记录（原样，不重新表述）"),
     ("memory", "sweep 不 --apply 也删",
      "    if not args.apply:\n"
      '        print("（默认只报告；确认后加 `--apply` 才真删）")\n'
@@ -400,9 +411,15 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "        pass",
      "gates: a passing check points at the second gate"),
     ("gates", "提示连 `--quiet` 都不认",
-     '    if not args.lint and code == 0 and not getattr(args, "quiet", False):',
-     "    if not args.lint and code == 0:",
-     "gates: --quiet silences the pointer"),
+         '    if not getattr(args, "quiet", False):\n'
+         '        for text in built[0].notes if built else ():\n'
+         '            print(text)\n'
+         '        if not args.lint and code == 0:',
+         '    if True:\n'
+         '        for text in built[0].notes if built else ():\n'
+         '            print(text)\n'
+         '        if not args.lint and code == 0:',
+         "gates: --quiet silences the pointer"),
     ("gates", "合并时不再去重（同一件事报两遍）",
      "            if row in self._seen:",
      "            if False:",
@@ -532,6 +549,7 @@ def main() -> int:
 
     missed: list[str] = []
     broken: list[str] = []
+    crashed: list[str] = []
     hits = 0
     selected = [m for m in MUTATIONS if args.phase in (None, m[0])
                 and (args.only is None or args.only in m[1])]
@@ -546,6 +564,45 @@ def main() -> int:
             broken.append(f"{name}：替换源在 journal.py 里出现 {n} 次（应恰好 1 次）")
             print(f"MISS  {name}   [替换源不唯一：{n} 次]")
             continue
+        mutated = original.replace(old, new)
+
+        # ---- 变异后自检：这次替换到底改到东西了没有 ------------------------
+        #
+        # 为什么必须有这一步（2026-10-14 加的，吃过一次亏）：
+        # `count(old) == 1` **只能说明"这段文本唯一"**，不能说明"它就在你想改的那个函数里"。
+        # 真实案例：`inbox 用文本模式直接写` 的 old 是原子写那四行，而 `os.replace(tmp, path)`
+        # 在 JSON 状态写入器里也有一份同样的四行 —— `replace()` 改了**另一处**，inbox 的写法
+        # 一点没动，于是那条变异显示"没变红"。它看起来像"自测有缺口"，其实是**变异打偏**，
+        # 两者含义完全不同，却报同一个词，于是没人会去查变异体本身（那次我查了十几分钟）。
+        #
+        # 判据（只看局部，不要求整体变了 —— old 出现多次时整体一定变，所以整体判据没用）：
+        # 取 old 左右各 CONTEXT 行，替换后这段窗口里的行必须与原来不同。
+        # 打偏的替换窗口一定逐行相同（那处本来就没有 old 的结构）。
+        CONTEXT = 6
+        md_old, md_new = mutated, original
+        if md_old == md_new:
+            mistarget = "替换后与原文逐字节相同"
+        else:
+            ol = original.split("\n")
+            nl_ = mutated.split("\n")
+            pos = original.find(old)
+            line0 = original.count("\n", 0, pos)
+            span_old = old.count("\n") + 1
+            span_new = new.count("\n") + 1
+            lo = max(0, line0 - CONTEXT)
+            hi_old = min(len(ol), line0 + span_old + CONTEXT)
+            hi_new = min(len(nl_), line0 + span_new + CONTEXT)
+            mistarget = ""
+            if ol[lo:hi_old] == nl_[lo:hi_new]:
+                mistarget = (f"替换落在第 {line0 + 1} 行，但那 {hi_old - lo} 行窗口"
+                             f"逐行没变 —— 与 old 长得一样的那段在别处")
+        if mistarget:
+            broken.append(f"{name}：{mistarget}")
+            print(f"MISTARGET  {name}   [{mistarget}]")
+            if not args.keep:
+                shutil.rmtree(os.path.join(scratch_root, f"rev{i:02d}"), ignore_errors=True)
+            continue
+
         d = os.path.join(scratch_root, f"rev{i:02d}")
         # 副本要**照真实技能布局**建：`scripts/` 放代码、`references/` 放文档。
         # 平铺（代码直接放 rev00/）会让 `os.path.dirname(HERE)` 少一层——
@@ -554,7 +611,7 @@ def main() -> int:
         os.makedirs(os.path.join(d, "scripts"))
         os.makedirs(os.path.join(d, "references"))
         with open(os.path.join(d, "scripts", "journal.py"), "w", encoding="utf-8", newline="") as fh:
-            fh.write(original.replace(old, new))
+            fh.write(mutated)
         with open(os.path.join(d, "scripts", "_selftest.py"), "w", encoding="utf-8", newline="") as fh:
             fh.write(selftest_src)
         shutil.copyfile(
@@ -579,24 +636,30 @@ def main() -> int:
         if any(expect in label for label in fails):
             hits += 1
             print(f"PASS  {name}   [{len(fails)} 条断言变红]")
+        elif crash:
+            # 相跑崩 ≠ "没变红"。崩了就没有任何断言被检验过，这条变异**不构成证据**：
+            # 可能是变异把代码改坏了（值得修变异），也可能是夹具缺目录（值得补夹具）。
+            crashed.append(f"{name}：{crash}")
+            print(f"CRASH  {name}   [相跑崩了，没有任何断言被检验：{crash}]")
         else:
             missed.append(name)
-            print(f"MISS  {name}   [期望「{expect}」没变红；红了 {len(fails)} 条"
-                  f"{'；相跑崩了：' + crash if crash else ''}]")
+            print(f"MISS  {name}   [期望「{expect}」没变红；红了 {len(fails)} 条]")
         if not args.keep:
             shutil.rmtree(d, ignore_errors=True)
 
     print(f"\n{len(selected)} 条变异：{hits} 条如期变红 / {len(missed)} 条没变红"
-          f" / {len(broken)} 条替换源对不上")
+          f" / {len(crashed)} 条相跑崩 / {len(broken)} 条替换源对不上或打偏")
     for b in broken:
-        print("  ! " + b)
+        print("  ! 替换源：" + b)
+    for c in crashed:
+        print("  ! 相跑崩：" + c)
     for m_ in missed:
         print("  ! 没变红：" + m_)
     if not args.keep:
         shutil.rmtree(scratch_root, ignore_errors=True)
     else:
         print(f"（临时目录保留在 {scratch_root}）")
-    return 1 if (missed or broken) else 0
+    return 1 if (missed or broken or crashed) else 0
 
 
 if __name__ == "__main__":

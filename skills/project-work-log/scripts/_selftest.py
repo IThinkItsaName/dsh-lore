@@ -455,6 +455,96 @@ def cleanup_phase(parent: str) -> None:
     ok(r.returncode == 0, "check --strict clean on the mixed fixture", r.stdout + r.stderr)
 
 
+def nested_stage_phase(parent: str) -> None:
+    """多级归档（`<主题>/<阶段>`）与 `index compact --depth`。
+
+    2026-10-14 新增：`--stage` 不再只收单层名字（长期容器里"一阶段一个平铺目录"会平铺一大片），
+    于是归档路径可以带主题层；随之而来两件必须钉住的事：
+      - 归档表与索引里写的都是**完整相对路径**，且同一个目录分几次归档**只占一行**（区间求并集）；
+      - `index compact` 的幂等不能再用"目标是目录就跳过"（多级归档里指向**主题目录**的行要能折），
+        改成"已经是区间行才跳过"；`--depth N` 用来指定折第几层。
+    """
+    tmp = os.path.join(parent, "nested")
+    os.makedirs(os.path.join(tmp, CONTAINER, "lessons"))
+    write(os.path.join(tmp, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
+    write(os.path.join(tmp, CONTAINER, "README.md"),
+          "# N\n\n## 文件索引\n\n| 文件 | 方面 |\n|---|---|\n"
+          "| [0001-a.md](0001-a.md) | a |\n| [0002-b.md](0002-b.md) | b |\n| [0003-c.md](0003-c.md) | c |\n\n"
+          "## 待办（滚动清单）\n\n- [ ] x\n\n## 当前状态（2026-10-03）\n\n- 阶段 / 版本：v1\n")
+    write(os.path.join(tmp, CONTAINER, "0001-a.md"), entry("0001", "A", "2026-10-01"))
+    write(os.path.join(tmp, CONTAINER, "0002-b.md"), entry("0002", "B", "2026-10-02"))
+    write(os.path.join(tmp, CONTAINER, "0003-c.md"), entry("0003", "C", "2026-10-03"))
+    jidx = os.path.join(tmp, CONTAINER, "README.md")
+
+    # A) 两级归档：落点、索引链接、归档表里的完整相对路径
+    r = run(tmp, "archive", "--stage", "theme-a/01-first", "--from", "1", "--to", "2")
+    ok(os.path.exists(os.path.join(tmp, CONTAINER, "theme-a", "01-first", "0001-a.md")),
+       "nested --stage puts records under <theme>/<stage>/", r.stdout)
+    ok("theme-a/01-first/0001-a.md" in read(jidx), "nested archive rewrites the index link", read(jidx))
+    atext = read(os.path.join(tmp, CONTAINER, "ARCHIVE.md"))
+    ok("`theme-a/01-first/`" in atext and "0001–0002" in atext,
+       "the archive index records the full relative path", atext)
+
+    # B) 同一个目录再归档一次：**一行**，且区间求并集（不能变成"只剩最后一批"）
+    r = run(tmp, "archive", "--stage", "theme-a/01-first", "--from", "3", "--to", "3")
+    atext = read(os.path.join(tmp, CONTAINER, "ARCHIVE.md"))
+    rows = [l for l in atext.splitlines() if l.startswith("| `theme-a/01-first/`")]
+    ok(len(rows) == 1, "re-archiving into the same directory keeps one row", atext)
+    ok("0001–0003" in rows[0] and "3 篇" in rows[0],
+       "that row merges the number range instead of showing only the last batch", rows[0] if rows else "")
+    r = run(tmp, "check", "--strict", "--quiet")
+    ok(r.returncode == 0, "check --strict clean after nested archiving", r.stdout + r.stderr)
+
+    # C) 非法 --stage 一律挡下（含"容器外"这一类）
+    for stage, label in (("2026/01-x", "a year segment"), ("theme/../escape", "a .. segment"),
+                         ("theme/logs", "a non-record dir"), ("C:/elsewhere", "an absolute path"),
+                         ("/tmp/x", "a leading slash")):
+        r = run(tmp, "archive", "--stage", stage, "--from", "9", "--to", "9")
+        ok(r.returncode != 0 and "ERROR" in r.stdout, f"archive rejects {label}", r.stdout)
+    ok(not os.path.exists(os.path.join(tmp, "escape"))
+       and not os.path.exists(os.path.join(parent, "escape")),
+       "a rejected --stage leaves nothing outside the container")
+
+    # D) index compact --depth：2 级行能折、1 级行不动、再跑幂等、无可折记录的目录不折
+    tmp2 = os.path.join(parent, "depth")
+    os.makedirs(os.path.join(tmp2, CONTAINER, "lessons"))
+    os.makedirs(os.path.join(tmp2, CONTAINER, "theme-a", "01-first"))
+    os.makedirs(os.path.join(tmp2, CONTAINER, "theme-b", "01-second"))
+    os.makedirs(os.path.join(tmp2, CONTAINER, "stage-c"))
+    write(os.path.join(tmp2, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
+    write(os.path.join(tmp2, CONTAINER, "README.md"),
+          "# D\n\n## 文件索引\n\n"
+          "### 主题 A\n\n| [theme-a/01-first/](theme-a/01-first/) | 这一阶段的记录 |\n\n"
+          "### theme-b/01-second\n\n| [theme-b/01-second/](theme-b/01-second/) | 这一阶段的记录 |\n\n"
+          "### stage-c\n\n| 文件 | 方面 |\n|---|---|\n"
+          "| [stage-c/0006-c1.md](stage-c/0006-c1.md) | 六 |\n"
+          "| [stage-c/0007-c2.md](stage-c/0007-c2.md) | 七 |\n\n"
+          "## 待办（滚动清单）\n\n- [ ] x\n\n## 当前状态（2026-10-07）\n\n- 阶段 / 版本：v1\n")
+    write(os.path.join(tmp2, CONTAINER, "theme-a", "01-first", "0001-a.md"), entry("0001", "A", "2026-10-01"))
+    write(os.path.join(tmp2, CONTAINER, "theme-b", "01-second", "0004-d.md"), entry("0004", "D", "2026-10-04"))
+    write(os.path.join(tmp2, CONTAINER, "theme-b", "01-second", "0005-e.md"), entry("0005", "E", "2026-10-05"))
+    write(os.path.join(tmp2, CONTAINER, "stage-c", "0006-c1.md"), entry("0006", "C1", "2026-10-06"))
+    write(os.path.join(tmp2, CONTAINER, "stage-c", "0007-c2.md"), entry("0007", "C2", "2026-10-07"))
+    didx = os.path.join(tmp2, CONTAINER, "README.md")
+
+    r = run(tmp2, "index", "compact", "--depth", "2")
+    dtext = read(didx)
+    ok("[theme-b/01-second/](theme-b/01-second/) | 0004–0005（2 篇，已归档）" in dtext,
+       "compact --depth 2 folds a nested directory row and counts its records", dtext)
+    ok("[stage-c/0006-c1.md](stage-c/0006-c1.md)" in dtext,
+       "compact --depth 2 leaves 1-level sections alone", dtext)
+    once = read(didx)
+    r = run(tmp2, "index", "compact", "--depth", "2")
+    ok(read(didx) == once and "折叠 0 个小节" in r.stdout,
+       "compact --depth 2 is idempotent on an already-folded row", r.stdout)
+    r = run(tmp2, "index", "compact")
+    dtext = read(didx)
+    ok("[stage-c/](stage-c/) | 0006–0007（2 篇，已归档）" in dtext,
+       "a plain --depth 1 compact still folds ordinary stage sections", dtext)
+    ok("[theme-a/01-first/](theme-a/01-first/)" in dtext,
+       "a theme directory holding no records of its own is never folded", dtext)
+
+
 def safety_phase(tmp: str) -> None:
     """数据安全：不能静默毁掉非 UTF-8 文件，也不能把 LF 掺进 CRLF 台账。"""
     # 1) 非 UTF-8 目标必须**拒绝写入**，而不是写成 U+FFFD ------------------
@@ -2053,7 +2143,50 @@ def _memory_phase(parent: str) -> None:
        "memory: 软目标小于硬上限（否则那句提醒没有意义）")
     ok(JOURNAL.memory_root(mem) == os.path.abspath(mem), "memory: --memory 覆盖整条路径")
     ok(JOURNAL.memory_root().endswith(JOURNAL.MEMORY_DIR_NAME),
-       "memory: 不给 --memory 时落在 <DSH_HOME>/memory", JOURNAL.memory_root())
+       "memory: 不给 --memory 时落在默认根（用户主目录下的 MEMORY_DIR_NAME）", JOURNAL.memory_root())
+    ok(JOURNAL.MEMORY_DIR_NAME == "dsh-lore-memory",
+       "memory: 默认根目录名是 dsh-lore-memory（2026-10-14 起不再挂在 $DSH_HOME 下）",
+       JOURNAL.MEMORY_DIR_NAME)
+
+    # --- 宿主设置里的 memoryDir 那一档（2026-10-14 加）------------------------
+    # 为什么必须测：卡片把记忆根改到别处之后，CLI 若不认这个字段，写入会落在旧根、
+    # 而插件从新根读 —— 写进去的东西读不出来，且**不报错**。这是最坏的一类失效。
+    fake_home = os.path.join(base, "fake-dsh-home")
+    os.makedirs(os.path.join(fake_home, "worklog"), exist_ok=True)
+    settings = os.path.join(fake_home, "worklog", "settings.json")
+    saved_dsh_home = os.environ.get("DSH_HOME")
+    os.environ["DSH_HOME"] = fake_home
+    try:
+        ok(JOURNAL.memory_root().endswith(JOURNAL.MEMORY_DIR_NAME),
+           "memory: 没有设置文件时仍落默认根", JOURNAL.memory_root())
+        with open(settings, "w", encoding="utf-8") as fh:
+            fh.write('{"memoryDir": "C:/tmp/lore-from-settings"}')
+        ok(JOURNAL.memory_root() == os.path.abspath("C:/tmp/lore-from-settings"),
+           "memory: 设置里的 memoryDir（绝对路径）说了算", JOURNAL.memory_root())
+        with open(settings, "w", encoding="utf-8") as fh:
+            fh.write('{"memoryDir": "lore-relative"}')
+        ok(JOURNAL.memory_root() == os.path.join(os.path.expanduser("~"), "lore-relative"),
+           "memory: 相对路径按**用户主目录**解析（与技能目录的包根口径不同）",
+           JOURNAL.memory_root())
+        with open(settings, "w", encoding="utf-8") as fh:
+            fh.write('{not json at all')
+        ok(JOURNAL.memory_root().endswith(JOURNAL.MEMORY_DIR_NAME),
+           "memory: 设置文件坏了就退回默认根，不抛异常", JOURNAL.memory_root())
+        with open(settings, "w", encoding="utf-8") as fh:
+            fh.write('{"memoryDir": "from-settings"}')
+        os.environ["DSH_WORKLOG_MEMORY"] = mem
+        try:
+            ok(JOURNAL.memory_root() == os.path.join(os.path.expanduser("~"), "from-settings"),
+               "memory: 设置里的 memoryDir 压过 $DSH_WORKLOG_MEMORY（卡片 > 环境变量）",
+               JOURNAL.memory_root())
+        finally:
+            os.environ.pop("DSH_WORKLOG_MEMORY", None)
+    finally:
+        if saved_dsh_home is None:
+            os.environ.pop("DSH_HOME", None)
+        else:
+            os.environ["DSH_HOME"] = saved_dsh_home
+
     saved_env = os.environ.get("DSH_WORKLOG_MEMORY")
     os.environ["DSH_WORKLOG_MEMORY"] = mem
     try:
@@ -3023,6 +3156,9 @@ def main() -> int:
 
         # A/B/C/D 整理能力（独立夹具，避免干扰上面的用例）---------------------------
         cleanup_phase(tmp)
+
+        # 多级归档与 index compact --depth（2026-10-14）
+        nested_stage_phase(tmp)
 
         # 跨语言解析：英文标签（P1）-----------------------------------------
         english_phase(tmp)

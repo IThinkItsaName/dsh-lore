@@ -294,6 +294,22 @@ async function call(method, body) {
     return { creates, errors, logs }
   }
 
+  /**
+   * 谁**真的在服务技能**：把每个 provider 叫一次 `list()`。
+   *
+   * 2026-10-14 起 provider **全部常驻注册**（开关与路径现读，为的是"改完即时生效"），
+   * 所以"几个 provider"不再是"服务几个技能"的等价物 —— 断言要问的是后者。
+   */
+  async function served(run) {
+    const names = []
+    for (const create of run.creates) {
+      const provider = create({ signal: new AbortController().signal, invalidate: () => {} })
+      const obs = await provider.list()
+      for (const candidate of obs.candidates ?? []) names.push(candidate.name)
+    }
+    return names
+  }
+
   const row = {
     skillDir: 'skills/project-work-log',
     guidelinesEnabled: true,
@@ -306,22 +322,22 @@ async function call(method, body) {
   // these keys outright.
   writeFileSync(settingsPath, JSON.stringify({ guidelinesEnabled: false }), 'utf8')
   const fileOff = runApply(row)
-  ok(fileOff.creates.length === 1 + extraBundledSkills().length,
-    'the settings file beats the row config (file false with row true → one skill)',
-    `${fileOff.creates.length} provider(s)`)
+  ok((await served(fileOff)).join(',') === 'project-work-log,client-require-whitelist',
+    'the settings file beats the row config (file false with row true → guidelines not served)',
+    `${(await served(fileOff)).join(',')}（providers=${fileOff.creates.length}）`)
   ok(fileOff.errors.length === 0, 'apply() logged no error', JSON.stringify(fileOff.logs))
 
   writeFileSync(settingsPath, JSON.stringify({ guidelinesEnabled: true }), 'utf8')
   const fileOn = runApply({ ...row, guidelinesEnabled: false })
-  ok(fileOn.creates.length === 2 + extraBundledSkills().length,
+  ok((await served(fileOn)).length === 2 + extraBundledSkills().length,
     'the settings file beats the row config (file true with row false → two skills)',
-    `${fileOn.creates.length} provider(s)`)
+    `${(await served(fileOn)).join(',')}`)
 
   writeFileSync(settingsPath, JSON.stringify({ guidelinesLanguage: 'en' }), 'utf8')
   const rowOnly = runApply({ ...row, guidelinesEnabled: false })
-  ok(rowOnly.creates.length === 1 + extraBundledSkills().length,
-    'a key the file does not state still comes from the row config (row false → one skill)',
-    `${rowOnly.creates.length} provider(s)`)
+  ok((await served(rowOnly)).join(',') === 'project-work-log,client-require-whitelist',
+    'a key the file does not state still comes from the row config (row false → guidelines not served)',
+    `${(await served(rowOnly)).join(',')}（providers=${rowOnly.creates.length}）`)
 
   // And the file's language actually selects the English bundle.
   const both = runApply(row)

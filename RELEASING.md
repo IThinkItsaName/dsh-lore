@@ -49,6 +49,29 @@ npm run test:skill-only
 python ../../logs/tests/reverse-verify.py --root ../../logs/fixtures
 ```
 
+**判读只有一条**：结尾那行
+`87 条变异：N 条如期变红 / M 条没变红 / C 条相跑崩 / K 条替换源对不上或打偏`，
+要 **M = 0、C = 0、K = 0**。每个计数含义不同，"不红"有三种，别混：
+
+| 样子 | 含义 | 怎么办 |
+|---|---|---|
+| `PASS … [N 条断言变红]` | 变异被抓住了 | 正常 |
+| `MISS … [替换源不唯一：0 次]` | 那条变异**在空转**：目标代码早被改写过，`replace` 找不到 —— 不是"测试没抓到 bug"，而是"这条检查什么都没测" | 更新它的 old/new 到现文本 |
+| `MISTARGET …` | **变异打偏**：`replace()` 命中了同形代码的**另一处**，你要改的函数一点没动。`count(old)==1` **拦不住这种**（它只证明"这段文本唯一"，不证明"它在你以为的那个函数里"） | 把 old 加长到**唯一能命中目标**的上下文（含上一行或注释） |
+| `CRASH … [没有任何断言被检验]` | 相跑崩了 —— 可能是变异把代码改坏，也可能是**夹具/基线自己崩**。**两种都不构成证据** | 先 `--keep` 读变异体代码；再确认不是基线问题 |
+| `MISS … [期望「…」没变红；红了 0 条]` | 剩下的可能：测试真有缺口，或 new 与 old 效果等价（行为其实没变） | 看 `--only` 单跑，再读自测里是否真有那条断言 |
+
+> **2026-10-14 升级**：`MISTARGET` 与 `CRASH` 这两类是这一轮新加的，因为此前的驱动
+> **会把"打偏"报成"没变红"**（实测：`inbox 用文本模式直接写` 的替换命中了 JSON 状态写入器
+> 里的同形代码，inbox 的原子写没动，却显示"没变红"，看着像自测缺口）。
+> 判据是"施加替换后，old 左右各 6 行的窗口**必须逐行与原来不同**" —— 只看局部，不看整份文件：
+> old 在原文出现多次时整份文件必然变，那种判据没有用。详见作者侧 `work_log/0081`。
+
+> **已知的一条不构成证据的变异（2026-10-14 记）**：`collect 改写工作区的清单` 现在归 `CRASH` ——
+> 崩点是 `fx/memory/mem/feedback/wsA.md`（`FileNotFoundError`），且**把它改成"干跑不执行"之后
+> 依然照崩**，说明崩溃**不是这条变异造成的**，而是夹具/基线自己的问题。
+> 修它之前这条变异**既不算通过、也不算失败**。
+
 **三份只读语料**（跨工作区，不许改）：
 
 ```bash
@@ -120,7 +143,7 @@ git push origin v0.5.0
 - [ ] 在 `work_log/` 写一条记录：这一版发了什么、验证到什么程度、有没有未覆盖的
 - [ ] **破坏性改动（改名 / 行名变更）必须在发布说明里写清迁移步骤**：profile 的
       `dependencies` 与 `dsh.profile.bundles` **两处**换成新名 → `pnpm install` → **重启 DSH**。
-      不改就**根本加载不上**（比"卡片消失"更彻底）。0.7.0 的改名是第一个例子（`work_log/07-rename-070/0063`）
+      不改就**根本加载不上**（比"卡片消失"更彻底）。0.7.0 的改名是第一个例子（`work_log/worklog/07-rename-070/0063`）
 
 ## 常见坑（都真发生过）
 
@@ -130,10 +153,10 @@ git push origin v0.5.0
 | `_package.py --check` 只报 `__pycache__` | 刚在**副本**目录里跑过自测（`npm test` 或 `skills/.../\_selftest.py`）。它是派生文件、不该随包发（实测过一次：包里躺着一个 398 KB 的陈旧 `.pyc`），同步一下即可清掉 |
 | 门禁在开发者机器上变红 | harness 读了真实设置文件或真实记忆根；夹具必须写到系统临时目录 |
 | 页面改了没效果 | 客户端半边由 `__ModuleLoader__` 按页会话缓存，**要重载页面**：浏览器 `Ctrl+Shift+R`；**DSH 桌面版没有刷新快捷键/菜单项**（打包版只挂了 F12）——用 F12 → Console `location.reload()`，或重启应用。细则见 `SETTINGS.md`「装/改之后要重载页面」 |
-| 配置卡片整页不出现 | 客户端按字段集认领 namespace，两种原因：① `FORM_FIELDS` 与 `lib/index.js` 的 `Config` **漂移**（`tests/audit-client-runtime.mjs` 会对账这两边）；② **改了 `Config` 但宿主没重启** —— 运行中的宿主还发着旧 schema，于是认领失败。两种都会让卡片**消失**。从 2026-09-30 起不再静默：那一行确实是我们的时，浏览器控制台会点名缺哪个字段（`work_log/07-rename-070/0062`）。修法：重启 DSH + 硬刷新 |
+| 配置卡片整页不出现 | 客户端按字段集认领 namespace，两种原因：① `FORM_FIELDS` 与 `lib/index.js` 的 `Config` **漂移**（`tests/audit-client-runtime.mjs` 会对账这两边）；② **改了 `Config` 但宿主没重启** —— 运行中的宿主还发着旧 schema，于是认领失败。两种都会让卡片**消失**。从 2026-09-30 起不再静默：那一行确实是我们的时，浏览器控制台会点名缺哪个字段（`work_log/worklog/07-rename-070/0062`）。修法：重启 DSH + 硬刷新 |
 | 在卡片上改完没写进 profile | 那个宿主没有 `configEditor`（headless）—— 配置退回插件自己的 `settings.json`，而**没有程序写它**，那时应手工编辑；卡片底部的「设置位置」一行会说明当前是哪一种 |
 | 卡片改了没反应 | 那个键是**装载期**读的（见 `SETTINGS.md` 的「改完需重启」）；只有 `memoryInjectIndex` / `memoryPersonalSearchable` 是即时生效的 |
 | 版本审计失败 | `package.json` 的 `version` 与 tag / CHANGELOG 不一致；三处要同时改 |
 | 改了包名却忘了 profile | 新名**加载不上**；`dependencies` 与 `dsh.profile.bundles` **两处**都要改，
-再 `pnpm install`、重启 DSH。`npm run audit` 会直接点名缺哪个链接（`work_log/07-rename-070/0063`） |
+再 `pnpm install`、重启 DSH。`npm run audit` 会直接点名缺哪个链接（`work_log/worklog/07-rename-070/0063`） |
 | 新加的随包技能当场查不到 | 插件自带技能在**插件挂载时**注册；新文件要**重启宿主**才登记（放进 `<DSH_HOME>/skills/` 的则会被文件系统 provider 活查发现） |

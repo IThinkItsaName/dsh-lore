@@ -202,7 +202,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 宿主给每个带 `.volatile()` 字段的插件投影一份"设置命名空间"，id 是
 `entry.options.id` —— 那是**部署相关**的：本机是 `include:dsh-lore`，换个挂法就变。
 所以卡片不写死 id，而是**按字段集认领**：看这一行投影出来的 **`value`**（那份生效配置）
-是否同时带齐我们那 12 个名字（`lib/client.js` 的 `FORM_FIELDS`）。
+是否同时带齐我们那 13 个名字（`lib/client.js` 的 `FORM_FIELDS`）。
 
 > **为什么是 `value` 而不是 `schema`（2026-09-29 在真实宿主上量出来的）**：宿主发的 `schema`
 > 是 schemastery 的**重水合信封** `{uid, refs}`，字段名躺在 `refs[<uid>].dict` 里 ——

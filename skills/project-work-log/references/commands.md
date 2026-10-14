@@ -246,8 +246,8 @@ snapshotEntries = 12               ← .config.json
 
 | 命令 | 作用 | 典型用法 |
 |---|---|---|
-| `index compact` | **索引瘦身**：把「整节都已归档」的小节折叠成一行区间（`\| [02-research/](02-research/) \| 0027–0045（19 篇，已归档） \|`）。只动索引；混合小节、含死链的小节、`lessons/` 这类非记录行、**已折叠过的目录行**都自动跳过（所以可重复跑） | `index compact --dry-run` / `index compact --stage A` |
-| `archive` | **归档**：把篇号区间移进 `<容器>/<stage>/`（不再是 `archive/<stage>/`），自动重写全仓链接（索引 / lessons / **被移动记录自己的出站链接**）、补 `ARCHIVE.md` 一行，并做**死链自检** | `archive --stage 02-research --from 27 --to 45` / `--no-index` 跳过索引行更新 |
+| `index compact` | **索引瘦身**：把「整节都已归档」的小节折叠成一行区间（`\| [02-research/](02-research/) \| 0027–0045（19 篇，已归档） \|`）。只动索引；混合小节、含死链的小节、`lessons/` 这类非记录行、**已折叠过的区间行**都自动跳过（所以可重复跑）。`--depth N` 只处理 `###` 标题**恰好 N 层**的小节（标题里 `/` 数 = 层数 − 1；多级归档先 `--depth 2` 折阶段、再默认的 `--depth 1` 折主题） | `index compact --dry-run` / `index compact --stage A` / `index compact --depth 2` |
+| `archive` | **归档**：把篇号区间移进 `<容器>/<stage>/`（不再是 `archive/<stage>/`）。`--stage` 可以带**主题层**（`<主题>/<阶段>`，逐段套用同一条名字规则，另拒 `.`/`..` 与绝对路径），自动重写全仓链接（索引 / lessons / **被移动记录自己的出站链接**）、补 `ARCHIVE.md` 一行（**同一目录再归档时就地更新并并入篇号区间**），并做**死链自检** | `archive --stage 02-research --from 27 --to 45` / `archive --stage 研究/01-采样 --from 46 --to 52` / `--no-index` 跳过索引行更新 |
 | `split` | **按年分卷**：把活跃记录移进 `<容器>/<YYYY>/`（取自入口行的 `日期：`），重写链接。适合上千篇的超长期项目 | `split --by-year --dry-run` |
 | `prune` | **冷存**：列出「已归档 + 未被 lessons 引用 + 超期」的候选；`--zip` 打包（自动建输出目录）；`--apply` 才把原件移出并写 `COLD-STORE.md` 清单。**默认只报告** | `prune` → `prune --zip cold.zip` → `... --apply`；`--stage` 限定阶段、`--cold-store` 指定冷存目录 |
 
@@ -435,8 +435,9 @@ Summary: 7 error / 0 warn / 130 info  (--strict)
 > **机制、条目格式、来源分档、生命周期与校验表见 [memory.md](memory.md)。**
 > 这一节只讲**命令怎么用**。
 >
-> 记忆落在 `<DSH_HOME>/memory/`（**不在工作区里**）。落点三级覆盖：
-> `--memory <P>` > `$DSH_WORKLOG_MEMORY` > `$DSH_HOME/memory`。
+> 记忆落在**可配置的记忆根**（**不在工作区里**），默认 `<用户主目录>/dsh-lore-memory/`。
+> 优先级：`--memory <P>` > 设置里的 `memoryDir` > `$DSH_WORKLOG_MEMORY` > 默认
+> （相对路径按**用户主目录**解析）。
 > 环境变量那一档是给 harness 用的 —— 跑测试时**一定**带上其中一个，
 > 否则会动到用户真实的记忆库。
 

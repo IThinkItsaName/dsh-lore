@@ -33,7 +33,7 @@
 # 1. 源与副本一致（0 漂移），并且两个镜像都对
 python ../../.pi/skills/project-work-log/scripts/_package.py --check
 
-# 2. 插件门禁：15 个 harness
+# 2. 插件门禁：16 个 harness
 npm run test:plugin
 
 # 3. 端到端审计：清单、导出、注册表契约、加载路径

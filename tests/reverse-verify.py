@@ -82,8 +82,8 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      '    env = ""\n    if env:',
      "memory: $DSH_WORKLOG_MEMORY 覆盖整条路径"),
     ("memory", "inbox 头部不带那句不可信提示",
-     '    header = (f"---\\nfrom: {sender}\\nat: {stamp}\\nnote: {INBOX_NOTE}\\n---\\n\\n")',
-     '    header = (f"---\\nfrom: {sender}\\nat: {stamp}\\n---\\n\\n")',
+     '    return f"---\\nfrom: {sender}\\nat: {stamp}\\nnote: {INBOX_NOTE}\\n---\\n\\n"',
+     '    return f"---\\nfrom: {sender}\\nat: {stamp}\\n---\\n\\n"',
      "inbox: 落盘时写下 from / at /「不可信输入」那句（头部由工具渲染）"),
     ("memory", "登记过的来源工作区没了也当错",
      '    if state == "gone":\n'
@@ -300,8 +300,8 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "    if False:",
      "inbox: 条数到顶后写满拒绝"),
     ("memory", "inbox 不再忽略半截的 .tmp",
-     '        if name.endswith(".tmp") or not os.path.isfile(path):',
-     "        if not os.path.isfile(path):",
+     '        if name.endswith(".tmp") or os.path.islink(path) or not os.path.isfile(path):',
+     "        if os.path.islink(path) or not os.path.isfile(path):",
      "inbox: 读到 .tmp 半截文件时当它不存在"),
     ("memory", "inbox 用文本模式直接写（不先临时名再 rename）",
          '    tmp = os.path.join(d, f".{name}.{os.getpid()}.tmp")\n'
@@ -316,16 +316,14 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      '    print(f"已删除 {item[\'name\']}")',
      "inbox: 转移之后原件被删掉"),
     ("memory", "inbox take 不搬原文",
-         '        if span:\n'
-         '            insert_at_end_of_section(lines, span[1], span[2], payload)\n'
-         '            body = "".join(lines)\n'
-         '        else:\n'
-         '            body = (body.rstrip("\\n") + nl + nl + "## 来源（信箱）" + nl + nl\n'
+         '            if span:\n'
+         '                insert_at_end_of_section(lines, span[1], span[2], payload)\n'
+         '                return "".join(lines)\n'
+         '            return (body.rstrip("\\n") + nl + nl + "## 来源（信箱）" + nl + nl\n'
          '                    + "".join(payload[1:]))',
-         '        if span:\n'
-         '            body = "".join(lines)\n'
-         '        else:\n'
-         '            body = body.rstrip("\\n") + nl',
+         '            if span:\n'
+         '                return "".join(lines)\n'
+         '            return body.rstrip("\\n") + nl',
          "inbox: 信箱原文被搬进记录（原样，不重新表述）"),
     ("memory", "sweep 不 --apply 也删",
      "    if not args.apply:\n"

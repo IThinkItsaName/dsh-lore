@@ -11,6 +11,8 @@
 //   4. 磁盘上的每道门禁都接在某个 npm 脚本上，脚本点名的每个文件也都存在。没人跑的新审计
 //      等于一盏什么都不表示的绿灯；脚本里写错文件名则是"跑了一半就断"。
 //   5. CI 仍然跑两道 node 门禁与 python 自测（F3：`lib/**` 与 15 支 harness 曾经无人守）。
+//   6. 文档里写的 harness 支数（CI 注释、`RELEASING.md` 的发版清单）必须等于链上真跑的数。
+//      "15 支"在 16 支时留着过一次：发版清单也是断言漏掉的地方。
 //
 //   运行：node tests/audit-harness-hygiene.mjs
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
@@ -95,4 +97,11 @@ ok(claimed !== null && Number(claimed[1]) === wiredGates.length,
   'CI 注释里的 harness 支数与链上真跑的一致',
   claimed ? `注释说 ${claimed[1]} 支，链上 ${wiredGates.length} 支` : '注释里没写支数')
 
-report(`harness hygiene OK — ${wiredGates.length} gates wired, all importing the shim, and the CI prose matches reality`)
+/* ---- 6. 发版清单里写的支数也得是真的（`RELEASING.md` 同时是"最后一道文档门禁"）---- */
+const releasing = read(join(PKG, 'RELEASING.md'))
+const releasingClaim = /(\d+)\s*个 harness/.exec(releasing)
+ok(releasingClaim !== null && Number(releasingClaim[1]) === wiredGates.length,
+  '`RELEASING.md` 发版清单里的 harness 支数与链上真跑的一致',
+  releasingClaim ? `清单说 ${releasingClaim[1]} 个，链上 ${wiredGates.length} 支` : '清单里没写支数')
+
+report(`harness hygiene OK — ${wiredGates.length} gates wired, all importing the shim, and the CI + RELEASING prose matches reality`)

@@ -626,16 +626,63 @@ def main() -> int:
         def _quiet(cond, label, detail="", _mod=mod):
             _mod.results.append((bool(cond), label))
         mod.ok = _quiet
+
+        # ---- 断言求值也要包住（2026-10-14 加的，第二条踩过的坑）-----------------
+        #
+        # `ok(cond, label)` 的两个参数在**调用前**求值。自测里有些断言写成
+        # `ok("…" in read(p), "…", read(p))` —— 一旦前置条件不成立，`read(p)` 会抛，
+        # 异常在"记下这条断言"之前就冒出来，**整条相被掀掉**，后面几十条断言不再执行。
+        #
+        # 真实案例：`collect 改写工作区的清单` 那条变异确实让 6 条断言该红，但自测先崩在
+        # `read(fb_dst)` 上，驱动只看到"相崩了"，于是把一条**本来抓得住**的变异报成
+        # "不构成证据"。上面那次"基线对照"证明了崩溃来自变异（干净副本 208 条全过）。
+        #
+        # 修法：把"求值 + 记录"整段包进一层 `ok`，抛异常就当成**一条失败的断言**记下来
+        # （文案里带上异常），相继续往下跑。这样"因为崩溃而漏掉的断言"不会再吞掉结论。
+        raw_ok = mod.ok
+
+        def _guarded(cond_factory, label, detail_factory=None, _mod=mod, _raw=raw_ok):
+            # `cond` 多数是"已经算好的 bool"，但也可能是"算出来才知道"的表达式（这里两者都接）。
+            try:
+                cond = cond_factory() if callable(cond_factory) else cond_factory
+                detail = detail_factory() if callable(detail_factory) else detail_factory
+                _raw(cond, label, detail)
+            except Exception as exc:                 # noqa: BLE001 - 就是要兜住一切
+                _mod.results.append((False, f"{label}（断言求值就抛了：{type(exc).__name__}: {exc}）"))
+
+        mod.ok = _guarded
+
+        # `ok(cond, label, detail)` 的实参在**调用点**求值，所以 `ok` 再早也拦不住
+        # `read(缺文件)` 抛出来的异常（2026-10-14 实测：guard 确实被调到了，异常仍从调用点
+        # 冒出来 —— 参数求值发生在进入函数体之前）。真正的收口在"读文件"这个出入口：
+        # 文件不在就返回一个哨兵文本，让断言自然变红，而不是把整条相掀掉。
+        # 哨兵命中次数单独记账，只作为 PASS 行后面的**说明**（红的原因），不参与判定。
+        raw_read = mod.read
+
+        def _safe_read(path, *a, **kw):
+            try:
+                return raw_read(path, *a, **kw)
+            except FileNotFoundError:
+                sentinel_hits.append(str(path))
+                return f"<缺文件：{path}>"
+
+        mod.read = _safe_read
         start = len(mod.results)
+        sentinel_hits: list[str] = []
         crash = ""
         try:
             getattr(mod, PHASES[phase])(fx)
-        except Exception as exc:                     # 变异本身可能直接把相跑崩
+        except Exception as exc:                     # 相级崩溃（不再是断言级）
             crash = f"{type(exc).__name__}: {exc}"
         fails = [label for good, label in mod.results[start:] if not good]
-        if any(expect in label for label in fails):
+        # 判定顺序：**期望的那条断言红了**才是唯一算数的事（`expect` 是程序化匹配，
+        # 不是我的判断）。相级崩溃另算 —— 崩了就没跑完，任何结论都不作数。
+        # `sentinel_hits` 只作为**说明**附在 PASS 后面：它表示"红了，而且红的原因正是
+        # 变异让某个本该存在的文件没被写出来"。这正是检测生效的形态，不该反而降级。
+        if any(expect in label for label in fails) and not crash:
             hits += 1
-            print(f"PASS  {name}   [{len(fails)} 条断言变红]")
+            extra = f"，其中含读不到的文件（{sentinel_hits[0]}）" if sentinel_hits else ""
+            print(f"PASS  {name}   [{len(fails)} 条断言变红{extra}]")
         elif crash:
             # 相跑崩 ≠ "没变红"。崩了就没有任何断言被检验过，这条变异**不构成证据**：
             # 可能是变异把代码改坏了（值得修变异），也可能是夹具缺目录（值得补夹具）。

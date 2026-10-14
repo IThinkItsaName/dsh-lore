@@ -289,6 +289,48 @@ def ok(cond: bool, label: str, detail: str = "") -> None:
     print(("PASS  " if cond else "FAIL  ") + label + (f"   [{detail[:200]}]" if detail and not cond else ""))
 
 
+# --- 让"坏消息"还能被记成一条失败断言（2026-10-14 加）---------------------------------
+#
+# 为什么需要这两个小东西：`ok(cond, label, detail)` 的三个实参在**调用点**求值。
+# 自测里有些表达式只有在"上一句断言成立"的前提下才安全，比如
+#     ok(json.loads(read(cfg_path)) == {...}, "config --write records …")
+#     read_block = [b for b in orig_vol.split("\n\n") if "id: read-ok" in b][0]
+# 一旦被测代码坏了（配置文件没写出来、分册里没有那一条），这两行会先抛
+# `JSONDecodeError` / `IndexError`，异常发生在"记下这条断言"**之前** —— 整相被掀掉，
+# 后面的断言一条都不跑。后果不是"多报一条红"，而是**这条变异反而变成了不构成证据的 CRASH**：
+# 变异明明抓得住，报告里却看不出抓没抓住（2026-10-14 的变异整跑就报过 3 条这样的 CRASH）。
+#
+# `safe()` 把"可能抛"的表达式变成"要么值、要么一句坏消息"，于是断言照常变红、相继续跑。
+# 判据不放松：坏消息与期望值不相等，该红的仍然红。
+def safe(fn, default=""):
+    """求值 `fn()`；抛异常就返回一句说明性文本（于是下游断言自然变红，而不是把相掀掉）。"""
+    try:
+        return fn()
+    except Exception as exc:                      # noqa: BLE001 - 就是要兜住一切，见上
+        return f"<求值就抛了：{type(exc).__name__}: {exc}>"
+
+
+def block_with(text: str, needle: str) -> str:
+    """取含 `needle` 的那个"以空行分隔的块"；没有就返回空串（调用方会据此变红）。"""
+    for block in str(text).split("\n\n"):
+        if needle in block:
+            return block
+    return ""
+
+
+def under(root: str, *parts: str, empty=""):
+    """`os.path.join(root, *parts)`，但**目录不存在**时返回 `empty` 而不是抛异常。
+
+    同一个坑的第三张脸：变异让某个目录没被建出来之后，`subprocess.run(cwd=那儿)` 抛
+    `NotADirectoryError`、`os.listdir(那儿)` 抛 `FileNotFoundError` —— 又一次在"记下断言"
+    之前把整相带走。这里只兜"路径根本不在"，其它 OS 错误照抛。
+    """
+    path = os.path.join(root, *parts)
+    if not os.path.exists(path):
+        return empty
+    return path
+
+
 EN_INDEX = """# English journal
 
 ## Index
@@ -497,6 +539,8 @@ def nested_stage_phase(parent: str) -> None:
 
     # C) 非法 --stage 一律挡下（含"容器外"这一类）
     for stage, label in (("2026/01-x", "a year segment"), ("theme/../escape", "a .. segment"),
+                         # `C:/elsewhere` 在 Windows 上测的是"绝对路径"，在 Linux 上它落在
+                         # "非法目录名"那一档 —— 两边都该拒，所以这条不用按平台分叉。
                          ("theme/logs", "a non-record dir"), ("C:/elsewhere", "an absolute path"),
                          ("/tmp/x", "a leading slash")):
         r = run(tmp, "archive", "--stage", stage, "--from", "9", "--to", "9")
@@ -1724,15 +1768,20 @@ def config_phase(parent: str) -> None:
     r = run(proj, "config", "--write")
     ok(r.returncode == 0 and os.path.isfile(cfg_path),
        "config --write creates <container>/.config.json", r.stdout + r.stderr)
-    ok(json.loads(read(cfg_path)) == {"mode": "full", "container": CONTAINER,
-                                      "lessons": "lessons", "legacy": [], "snapshotEntries": 12},
-       "config --write records the current effective values", read(cfg_path))
+    ok(safe(lambda: json.loads(read(cfg_path))) == {"mode": "full", "container": CONTAINER,
+                                                    "lessons": "lessons", "legacy": [],
+                                                    "snapshotEntries": 12},
+       "config --write records the current effective values",
+       safe(lambda: read(cfg_path)))
     before_bytes = read_bytes(cfg_path)
     r = run(proj, "config", "--write")
     ok(r.returncode != 0 and "已存在" in r.stdout,
        "config --write refuses to clobber an existing file", r.stdout)
-    ok(read_bytes(cfg_path) == before_bytes,
-       "config --write (refused) leaves the file byte-identical")
+    # 先取一次再比：`read_bytes` 现在"文件不在 → 空字节"，两次调用都安全；但取一次更省，
+    # 而且失败时 detail 就是真读到的内容。
+    after_refused = read_bytes(cfg_path)
+    ok(after_refused == before_bytes,
+       "config --write (refused) leaves the file byte-identical", repr(after_refused[:60]))
     r = run(proj, "config", "--write", "--force")
     ok(r.returncode == 0, "config --write --force overwrites", r.stdout + r.stderr)
 
@@ -1799,18 +1848,24 @@ def config_phase(parent: str) -> None:
        "config --set preserves CRLF")
     changed = [i for i, (a, b) in enumerate(zip(before_bytes.split(b"\r\n"),
                                                after_bytes.split(b"\r\n"))) if a != b]
-    ok(len(changed) == 1 and b'"digest"' in after_bytes.split(b"\r\n")[changed[0]],
-       "config --set changes only the target line", f"changed lines={changed}")
-    data = json.loads(read(cfg_path))
-    ok(data["mode"] == "digest" and data["legacy"] == ["0003-*"] and data["snapshotEntries"] == 2
-       and data["lessons"] == "lessons",
+    # 只在"真的改了一行"时才去看那一行：`changed[0]` 在 changed 为空时是空的，直接取下标会在
+    # 调用点抛 IndexError、把整相带走（同族的坑见 `safe` / `block_with` 上面那段注释）。
+    if changed:
+        ok(len(changed) == 1 and b'"digest"' in after_bytes.split(b"\r\n")[changed[0]],
+           "config --set changes only the target line", f"changed lines={changed}")
+    else:
+        ok(False, "config --set changes only the target line", "一行都没变")
+    data = safe(lambda: json.loads(read(cfg_path)), {})
+    ok(isinstance(data, dict) and data.get("mode") == "digest" and data.get("legacy") == ["0003-*"]
+       and data.get("snapshotEntries") == 2 and data.get("lessons") == "lessons",
        "config --set keeps every other field (and normalises 摘要 to digest)", str(data))
     ok("mode=digest" in r.stdout, "config --set reports what it wrote", r.stdout)
 
     # 一次改两个字段也认
     r = run(proj, "config", "--set", "snapshotEntries=5", "--set", "legacy=0001-*,0002-*")
-    data = json.loads(read(cfg_path))
-    ok(r.returncode == 0 and data["snapshotEntries"] == 5 and data["legacy"] == ["0001-*", "0002-*"],
+    data = safe(lambda: json.loads(read(cfg_path)), {})
+    ok(r.returncode == 0 and isinstance(data, dict) and data.get("snapshotEntries") == 5
+       and data.get("legacy") == ["0001-*", "0002-*"],
        "config --set accepts several fields at once", read(cfg_path))
 
     # 7) 校验：未知值 / 未知字段 / 非正整数 各自非零退出，且不改文件 --------------
@@ -2159,9 +2214,13 @@ def _memory_phase(parent: str) -> None:
     try:
         ok(JOURNAL.memory_root().endswith(JOURNAL.MEMORY_DIR_NAME),
            "memory: 没有设置文件时仍落默认根", JOURNAL.memory_root())
+        # 绝对路径这一档必须**按平台现算**：写死 `C:/tmp/...` 在 Windows 上是绝对路径，
+        # 在 Linux 上却会被 `os.path.isabs` 判成相对路径，于是拼到 `~` 下变成
+        # `/home/runner/C:/tmp/lore-from-settings` —— CI（ubuntu）上就是这条断言红过。
+        abs_dir = os.path.abspath(os.path.join(os.sep, "tmp", "lore-from-settings"))
         with open(settings, "w", encoding="utf-8") as fh:
-            fh.write('{"memoryDir": "C:/tmp/lore-from-settings"}')
-        ok(JOURNAL.memory_root() == os.path.abspath("C:/tmp/lore-from-settings"),
+            fh.write(json.dumps({"memoryDir": abs_dir}))
+        ok(JOURNAL.memory_root() == abs_dir,
            "memory: 设置里的 memoryDir（绝对路径）说了算", JOURNAL.memory_root())
         with open(settings, "w", encoding="utf-8") as fh:
             fh.write('{"memoryDir": "lore-relative"}')
@@ -2361,7 +2420,8 @@ def _memory_phase(parent: str) -> None:
     ok("host-style-claiming" in idx and "tested-ok" in idx and "read-ok" in idx,
        "memory: 记录档 / tested / read 都进索引", idx)
     ok(idx.startswith("# 全局记忆索引"),
-       "memory: 索引第一行自证是生成物（手写就会分叉）", idx.splitlines()[0])
+       "memory: 索引第一行自证是生成物（手写就会分叉）",
+       (idx.splitlines() or [""])[0])
     r = m(wsA, "memory", "index", "--check")
     ok(r.returncode == 0 and "一致" in r.stdout, "memory: index --check 一致时通过", r.stdout)
     r = m(wsA, "memory", "lint", wsA, "--strict")
@@ -2394,7 +2454,7 @@ def _memory_phase(parent: str) -> None:
     write(vol, orig_vol.replace("applies-to: python-stdlib-tooling", "applies-to: Bad Tag"))
     r = m(wsA, "memory", "lint", wsA, "--strict")
     ok("applies-to 标签" in r.stdout, "memory: 非法 applies-to 是 ERROR", r.stdout)
-    read_block = [b for b in orig_vol.split("\n\n") if "id: read-ok" in b][0]
+    read_block = block_with(orig_vol, "id: read-ok")
     write(vol, orig_vol + "\n\n" + read_block + "\n")
     r = m(wsA, "memory", "lint", wsA, "--strict")
     ok("id `read-ok` 重复" in r.stdout, "memory: 重复 id 是 ERROR", r.stdout)
@@ -2637,8 +2697,11 @@ def _memory_phase(parent: str) -> None:
     r = run(base, "memory", "index", "--memory", cap)
     ok(r.returncode != 0 and "硬上限" in r.stdout,
        "memory: 索引超硬上限报错（超限报错，绝不静默截断）", r.stdout)
-    ok(os.path.getsize(os.path.join(cap, JOURNAL.MEMORY_INDEX_NAME)) > 0,
-       "memory: 而且索引照写完整 —— 报错不等于截断")
+    # `getsize` 在文件不在时会抛（变异正是让索引没写出来）—— 包一层，让它变成一条红断言。
+    # 注意 default 必须是数字：`safe` 兜底返回的是**字符串**说明，拿它去 `>` 又会抛 TypeError。
+    idx_size = safe(lambda: os.path.getsize(os.path.join(cap, JOURNAL.MEMORY_INDEX_NAME)), -1)
+    ok(isinstance(idx_size, int) and idx_size > 0,
+       "memory: 而且索引照写完整 —— 报错不等于截断", str(idx_size))
     r = run(base, "memory", "lint", base, "--memory", cap)
     ok("硬上限" in r.stdout and r.returncode != 0, "memory: 硬上限在 lint 里是 ERROR", r.stdout)
     ok(JOURNAL.memory_index_size(cap) > JOURNAL.MEMORY_INDEX_HARD_CHARS,
@@ -2712,8 +2775,13 @@ def _memory_phase(parent: str) -> None:
     JOURNAL.note_usage(mem_days, "proc-demo", hit=True)
     days_now = JOURNAL.usage_hit_days(JOURNAL.load_state(mem_days)["usage"]["proc-demo"])
     ok(len(days_now) == 1, "memory: 同一天命中两次只记一个日子", str(days_now))
+    # 用 `... if days_now else ""` 而不是直接取 `[0]`：变异把"记下日子"打掉之后 days_now 是空的，
+    # 直接取下标会在**调用点**抛 IndexError，整相就此结束（2026-10-14 的变异整跑里，这条正是
+    # 三条 CRASH 之一 —— 变异本来抓得住，却因为相崩了而报成"不构成证据"）。上面的断言已经
+    # 报了红，这里只需要别把相带走。
+    healthy_day = days_now[0] if days_now else ""
     state = JOURNAL.load_state(mem_days)
-    state["usage"]["proc-demo"]["days"] = ["2026-09-01", days_now[0]]
+    state["usage"]["proc-demo"]["days"] = ["2026-09-01", healthy_day]
     JOURNAL.save_state(mem_days, state)
     ok(len(JOURNAL.usage_hit_days(state["usage"]["proc-demo"])) == 2,
        "memory: usage_hit_days 能读出跨天")
@@ -2754,8 +2822,11 @@ def _memory_phase(parent: str) -> None:
        "memory: scaffold 拒绝覆盖非空目录", r.stdout + r.stderr)
 
     # **生成即红**：缺命令 / 缺夹具时自测必须红，并说清缺什么
-    r = subprocess.run([sys.executable, os.path.join(scaffold_out, "selftest.py")],
-                       capture_output=True, cwd=scaffold_out)
+    # `under`：变异若让骨架没生成出来，`scaffold_out` 就不是目录，`subprocess.run(cwd=…)`
+    # 会抛 NotADirectoryError、把整相带走（这条变异因此报成 CRASH）。路径不在就传空串，
+    # subprocess 会自己报"没有这个可执行文件"，断言照红。
+    r = subprocess.run([sys.executable, under(scaffold_out, "selftest.py")],
+                       capture_output=True, cwd=under(scaffold_out, empty=None))
     red_out = (r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace")
     ok(r.returncode != 0 and "verify-command.txt" in red_out,
        "memory: 骨架生成出来就是红的，并指出缺哪样", red_out)
@@ -2840,13 +2911,23 @@ def _memory_phase(parent: str) -> None:
     msg = "另一条会话留下的消息：样式表要加前缀。\n第二行。"
     r = m(base, "inbox", "put", msg)
     ok(r.returncode == 0 and "已投入信箱" in r.stdout, "inbox: put 投入一条", r.stdout)
-    items = sorted(os.listdir(inbox))
-    ok(len(items) == 1 and items[0].endswith(".md"), "inbox: 落成一个 .md 条目", str(items))
+    # 这条相会专门制造"inbox 目录不存在"的局面（变异让 inbox 写到别处去了），
+    # 直接 `os.listdir(inbox)` 会抛 FileNotFoundError、把相带走（同族的坑见 `safe` / `under`）。
+    # 目录不在就当"一个条目都没有"：下面的断言自然变红，而相继续跑。
+    items = sorted(os.listdir(inbox)) if os.path.isdir(inbox) else []
+    first_item = items[0] if items else ""      # 空列表时不再取下标（否则相会崩在调用点）
+    ok(bool(items) and len(items) == 1 and first_item.endswith(".md"),
+       "inbox: 落成一个 .md 条目", str(items))
     ok(not any(n.endswith(".tmp") for n in items),
        "inbox: 原子写之后不留临时文件（先写临时名再 rename）", str(items))
-    ok(not items[0].startswith("."), "inbox: 也没有留下隐藏的临时名", items[0])
-    with open(os.path.join(inbox, items[0]), "rb") as fh:
-        raw = fh.read()
+    ok(bool(first_item) and not first_item.startswith("."),
+       "inbox: 也没有留下隐藏的临时名", first_item)
+    # 条目名可能是空的（目录不在 / 没落成条目）—— 那就别去开文件，当成空内容：
+    # 下面的断言照样会红，而相不会因为 `open(目录)` 抛异常而结束。
+    raw = b""
+    if first_item:
+        with open(os.path.join(inbox, first_item), "rb") as fh:
+            raw = fh.read()
     meta, body = JOURNAL.inbox_split(raw.decode("utf-8"))
     ok(meta.get("from") and meta.get("at") and "不可信输入" in meta.get("note", ""),
        "inbox: 落盘时写下 from / at /「不可信输入」那句（头部由工具渲染）", str(meta))
@@ -2859,7 +2940,7 @@ def _memory_phase(parent: str) -> None:
        "inbox: list 显示发件方与原消息首行", r.stdout)
     r = m(base, "inbox", "list", "--json")
     ok('"from"' in r.stdout, "inbox: list --json 里也有 from", r.stdout)
-    r = m(base, "inbox", "take", items[0], "--keep")
+    r = m(base, "inbox", "take", first_item, "--keep")
     ok("不可信输入" in r.stdout and f"from: {meta.get('from')}" in r.stdout,
        "inbox: take 把发件方与那句「不可信输入」渲染出来（不靠作者自觉）", r.stdout)
     r = m(base, "inbox", "count")
@@ -2893,8 +2974,8 @@ def _memory_phase(parent: str) -> None:
     r = run(base, "inbox", "count", "--memory", full)
     ok(r.stdout.strip() == str(JOURNAL.MEMORY_INBOX_MAX_ITEMS),
        "inbox: 到顶时一条都没多写", r.stdout)
-    # 转移为记录
-    name = items[0]
+    # 转移为记录（`first_item`：目录不在时它是空串，于是下面的断言红，而相不崩）
+    name = first_item
     r = m(wsA, "inbox", "take", name, "--into-record", "信箱转来的样式问题", wsA)
     ok(r.returncode == 0 and "created" in r.stdout, "inbox: take --into-record 建一篇记录", r.stdout)
     rec2 = os.path.join(wsA, "work_log", "0003-信箱转来的样式问题.md")
@@ -2912,9 +2993,10 @@ def _memory_phase(parent: str) -> None:
        rtxt[:80])
     ok(all(i["name"] != name for i in JOURNAL._inbox_items(mem)),
        "inbox: 转移之后原件被删掉（阅后即删 / 转移）", str(JOURNAL._inbox_items(mem)))
-    # take --keep 不删
+    # take --keep 不删（同样不取空列表的下标：信箱可能一条都没落成）
     m(base, "inbox", "put", "留着看的一条。")
-    keepname = [i["name"] for i in JOURNAL._inbox_items(mem)][0]
+    _kept = [i["name"] for i in JOURNAL._inbox_items(mem)]
+    keepname = _kept[0] if _kept else ""
     r = m(base, "inbox", "take", keepname, "--keep")
     ok(r.returncode == 0 and any(i["name"] == keepname for i in JOURNAL._inbox_items(mem)),
        "inbox: take --keep 只打印不删", r.stdout)
@@ -3241,16 +3323,41 @@ def main() -> int:
 
 
 def read(path: str) -> str:
-    with open(path, encoding="utf-8", newline="") as fh:
-        return fh.read()
+    """读文本；**文件不在**时返回空串（与 `read_bytes` 同一个理由，见那里）。
+
+    这样"文件没写出来"会走成"内容对不上"→ 断言变红，而不是在**调用点**抛异常把整相带走
+    （变异驱动把这种情况记成"相跑崩"，于是那条变异反而不构成证据）。除"不在"之外的
+    OS 错误照旧抛 —— 不把权限之类的真问题静音掉。
+    """
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            return fh.read()
+    except (FileNotFoundError, IsADirectoryError):
+        return ""
 
 
 def read_bytes(path: str) -> bytes:
-    with open(path, "rb") as fh:
-        return fh.read()
+    """读字节；文件不在时返回空字节。
+
+    为什么不能直接抛：`before_bytes = read_bytes(cfg_path)` 这种写法在
+    "配置文件本该被创建、变异让它没被创建"时会抛 FileNotFoundError，异常发生在
+    记下断言之前 → 整相结束。判据不放松：空字节与真实内容不相等，断言该红还是红。
+    """
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except (FileNotFoundError, IsADirectoryError):
+        return b""
 
 
 def write(path: str, text: str) -> None:
+    # 父目录不在就先建：自测里的 write 基本都发生在**被测命令本该建好目录**之后，
+    # 变异让目录没建出来时，`open(..., "w")` 会抛 FileNotFoundError 并把整相带走
+    # （2026-10-14：`promote scaffold --out` 那条路就是这样崩的）。
+    # 建目录不改变判定：文件写下去了，后面的断言照样能看出"被测命令没建目录"。
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
 

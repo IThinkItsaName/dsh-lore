@@ -20,13 +20,9 @@
 //
 //   node tests/audit-client.mjs
 import { readFileSync, existsSync } from 'node:fs'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG } from './_pkg.mjs'
 
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 
 /**
  * The frozen module table, verbatim from packages/client/web/src/seed.ts.
@@ -186,7 +182,4 @@ if (zhKeys !== null) {
   console.log(`      t() keys used: ${used.size}`)
 }
 
-console.log(problems.length === 0
-  ? `\nclient half OK — ${clientRel} loads under id ${pkg.name} with ${[...new Set(specifiers)].length} resolvable require(s)`
-  : `\n${problems.length} FAILED`)
-process.exit(problems.length === 0 ? 0 : 1)
+report(`client half OK — ${clientRel} loads under id ${pkg.name} with ${[...new Set(specifiers)].length} resolvable require(s)`) 

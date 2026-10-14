@@ -31,13 +31,9 @@
 //
 //   node tests/audit-client-runtime.mjs
 import { readFileSync } from 'node:fs'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG } from './_pkg.mjs'
 
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 const settle = async (rounds = 8) => {
   for (let i = 0; i < rounds; i += 1) await Promise.resolve()
 }
@@ -1133,7 +1129,4 @@ const openDisclosure = async (index = 0) => {
     `Config: ${declared.join(',')} | client: ${claimed.join(',')}`)
 }
 
-console.log(problems.length === 0
-  ? '\nclient runtime OK — the card claims its namespace, mounts, edits and reports'
-  : `\n${problems.length} FAILED`)
-process.exit(problems.length === 0 ? 0 : 1)
+report('client runtime OK — the card claims its namespace, mounts, edits and reports') 

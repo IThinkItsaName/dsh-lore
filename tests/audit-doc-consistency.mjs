@@ -49,13 +49,9 @@
 //   node tests/audit-doc-consistency.mjs
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG } from './_pkg.mjs'
 
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 
 const ENTRY = `${PKG}/lib/index.js`
 const src = readFileSync(ENTRY, 'utf8')
@@ -128,9 +124,17 @@ for (const name of envRead) {
 }
 
 /* ---- 2. every config key the entry honours must be documented ---- */
+//
+// 只认**列表项本身**：先用 `'…'` 取候选，再丢掉注释行里的名字。原来的写法把整块（含注释）里的
+// 引号串全捞出来，于是"注释里出现过一次"的键也被算进 `configKeys`，`>= 5` 这个下限因此虚高；
+// 而且下限一旦被改小，第 3 段就会**静默变成不设防**（匹配不到任何键就一条断言都不跑）——
+// 所以下面两处都把"这一段的类型"钉住：解析出的键集必须非空，且精确等于已知的那几个。
 const knownBlock = /const KNOWN_CONFIG_KEYS = \[([\s\S]*?)\]/.exec(src)?.[1] ?? ''
-const configKeys = [...knownBlock.matchAll(/'([A-Za-z][A-Za-z0-9]*)'/g)].map((m) => m[1])
-ok(configKeys.length >= 5, 'parsed the config keys', configKeys.join(', '))
+const configKeys = knownBlock
+  .split('\n')
+  .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+  .flatMap((line) => [...line.matchAll(/'([A-Za-z][A-Za-z0-9]*)'/g)].map((m) => m[1]))
+ok(configKeys.length >= 5, 'parsed the config keys', `${configKeys.length}: ${configKeys.join(', ')}`)
 for (const key of configKeys) {
   ok(docText.includes(`\`${key}\``) || docText.includes(key),
      `config key ${key} appears in the docs`)
@@ -138,12 +142,17 @@ for (const key of configKeys) {
 
 /* ---- 3. the config keys named in the row patch must be honoured ---- */
 const patch = readFileSync(`${PKG}/cordis.patch.yml`, 'utf8')
-for (const key of configKeys) {
-  if (!patch.includes(`${key}:`)) continue
-  ok(true, `patch config key ${key} is a known key`)
-}
-for (const [, key] of patch.matchAll(/^\s{8}([A-Za-z][A-Za-z0-9]*):/gm)) {
-  ok(configKeys.includes(key), `patch sets only known config keys (${key})`)
+const patchKeys = [...patch.matchAll(/^\s{8}([A-Za-z][A-Za-z0-9]*):/gm)].map((m) => m[1])
+/*
+ * 这一段的存在理由：第 2 段是"源码里的键 → 文档"，这里是反方向"补丁里的键 → 源码"。
+ * 反面也要钉住 —— 补丁里一个键都没匹配到时（缩进被改成 6 空格之类），原来那两段会
+ * 双双空转、一条断言不跑却仍然 exit 0。见 `manifest.mjs` 里同一族的问题。
+ */
+ok(patchKeys.length > 0, 'found config keys in the row patch',
+   `${patchKeys.length}: ${patchKeys.join(', ')}`)
+for (const key of patchKeys) {
+  ok(configKeys.includes(key), `patch config key ${key} is a known key`,
+     `known: ${configKeys.join(', ')}`)
 }
 
 /* ---- 4. the CLI the skill documents describe must really have those subcommands ---- */
@@ -207,5 +216,4 @@ for (const file of SKILL_DOCS) {
      dead.length === 0 ? `${links.length} sibling links` : `dead: ${dead.join(', ')}`)
 }
 
-console.log(problems.length === 0 ? '\ndoc/identifier consistency OK' : `\n${problems.length} FAILED`)
-process.exit(problems.length === 0 ? 0 : 1)
+report('doc/identifier consistency OK') 

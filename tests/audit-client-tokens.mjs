@@ -15,13 +15,9 @@
 //   node tests/audit-client-tokens.mjs
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG } from './_pkg.mjs'
 
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 
 /* ---- every --dsw-* name the client half asks for ---- */
 const clientPath = join(PKG, 'lib', 'client.js')
@@ -37,16 +33,31 @@ ok(used.every((t) => /^--dsw-[a-z0-9-]+$/.test(t)),
    used.filter((t) => !/^--dsw-[a-z0-9-]+$/.test(t)).join(', '))
 
 /* ---- compare against the host's own list ---- */
-const listPath = join(PKG, '..', '..', 'logs', 'dsh-src', 'dsw-tokens.txt')
-if (!existsSync(listPath)) {
-  // Skipped rather than failed: the list is generated from a DSH checkout, so a fresh
-  // clone legitimately lacks it, and a false red would train people to ignore this.
-  ok(true, 'host token list ABSENT — comparison SKIPPED (run tests/tools/refresh-tokens.mjs)')
+//
+// 清单有**两个落点**，先找包内那份：
+//
+//   - `tests/tools/host-tokens.txt` —— 随包提交的夹具。206 个名字、5.7 KB，一年也变不了几次，
+//     而它是这条断言唯一的权威，所以它必须**跟着仓库走**：CI 只 checkout 这个包，
+//     工作区里那份够不着。
+//   - `<工作区>/logs/dsh-src/dsw-tokens.txt` —— `refresh-tokens.mjs` 原来的落点，继续认，
+//     本机重生成时不会因为两份不同步而误报。
+//
+// 这一条曾经只认第二个：本机有那棵树，所以一直是绿的；CI 上它会**静默 SKIP**
+// （报告 F3 的同族问题：门禁看着接上了，其实从没验过）。
+const CANDIDATES = [
+  join(PKG, 'tests', 'tools', 'host-tokens.txt'),
+  join(PKG, '..', '..', 'logs', 'dsh-src', 'dsw-tokens.txt'),
+]
+const listPath = CANDIDATES.find((p) => existsSync(p)) ?? ''
+if (listPath === '') {
+  // 两份都没有才跳过 —— 那时确实无从比对，所以这是"该验却没验"，不是"验过了"。
+  skip('host token list ABSENT at both locations — comparison SKIPPED '
+       + `(${CANDIDATES.join(' , ')}; run tests/tools/refresh-tokens.mjs)`)
 } else {
   const known = new Set(
     readFileSync(listPath, 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith('--dsw-')),
   )
-  ok(known.size > 100, 'the host token list looks real', `${known.size} tokens`)
+  ok(known.size > 100, 'the host token list looks real', `${known.size} tokens from ${listPath}`)
   const bogus = used.filter((t) => !known.has(t))
   ok(bogus.length === 0,
      'every token the client half uses exists in the host',
@@ -61,5 +72,4 @@ ok(withFallback.length === 0,
    'no --dsw-* token carries a hard-coded colour fallback',
    withFallback.join(' | '))
 
-console.log(problems.length === 0 ? '\nclient design tokens OK' : `\n${problems.length} FAILED`)
-process.exit(problems.length === 0 ? 0 : 1)
+report('client design tokens OK') 

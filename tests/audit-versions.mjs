@@ -16,13 +16,9 @@
 //
 //   node tests/audit-versions.mjs
 import { readFileSync } from 'node:fs'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG } from './_pkg.mjs'
 
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 
 const read = (rel) => {
   try { return readFileSync(`${PKG}/${rel}`, 'utf8') } catch { return '' }
@@ -116,11 +112,10 @@ if (mentions.size > 1) {
 
 const expected = process.env.DSH_WORKLOG_SLUG ?? ''
 if (expected === '') {
-  ok(true, 'expected-slug check SKIPPED (set DSH_WORKLOG_SLUG to pin it)')
+  skip('expected-slug check SKIPPED (set DSH_WORKLOG_SLUG to pin it)')
 } else {
   ok(mentions.has(expected), `the docs name the expected repository (${expected})`,
      `docs name: ${[...mentions.keys()].join(', ')}`)
 }
 
-console.log(problems.length === 0 ? '\nversion consistency OK' : `\n${problems.length} FAILED`)
-process.exit(problems.length === 0 ? 0 : 1)
+report('version consistency OK') 

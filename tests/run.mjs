@@ -97,7 +97,9 @@ ok(typeof mod.apply === 'function', 'exports apply()')
  * because the tutorial is explicit that exporting a plain object does NOT work.
  */
 if (mod.Config === undefined) {
-  ok(true, 'Config is absent (allowed — but see the note in the source)')
+  // 这条分支按 `preaudit.mjs` 的断言（`Config` 必须存在）是不可达的。原来写 `ok(true, …)`
+  // 把"没验"记成 PASS；改记 SKIP —— 空转就去掉实义，别假装验过（审查报告 F13）。
+  skip('Config is absent — the validator shape could not be checked (preaudit requires it to exist)')
 } else {
   // The tutorial is explicit that exporting a plain object does NOT work, so the one thing
   // worth pinning here is that whatever appears is not merely a data literal.

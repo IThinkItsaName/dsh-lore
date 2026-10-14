@@ -9,6 +9,7 @@
 //   node tests/registry-contract.mjs
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG, extraBundledSkills } from './_pkg.mjs'
 
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -28,11 +29,6 @@ const ctx = {
 
 mod.apply(ctx, {})
 
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 
 ok(providers.length === 2 + extraBundledSkills().length,
    'apply() registers one provider per skill bundle on disk',
@@ -120,7 +116,4 @@ const guidDef = await checkProvider(providers[1], 'reliability-guidelines')
 ok(guidDef.content.includes('八条准则'), 'guidelines: zh body contains the eight principles')
 ok(guidDef.content.includes('默认强约束'), 'guidelines: body frames itself as a strong default')
 
-console.log(problems.length === 0
-  ? '\nevery provider output satisfies the rules the registry applies'
-  : `\n${problems.length} FAILED`)
-process.exit(problems.length === 0 ? 0 : 1)
+report('every provider output satisfies the rules the registry applies') 

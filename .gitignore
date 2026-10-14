@@ -4,3 +4,7 @@ __pycache__/
 Thumbs.db
 # Local trace marker for the plugin's opt-in diagnostic (see README "排查").
 lib/.trace
+
+# 宿主包（peerDependencies 的 devDependencies 钉子）——测试用，不进包。
+# 这些包由 DSH 装载器在运行时提供给插件，仓库里只钉"CI 拿什么版本跑门禁"。
+node_modules/

@@ -24,13 +24,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG } from './_pkg.mjs'
 
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 
 /*
  * Fixtures live OUTSIDE the repo, under the system temp directory.
@@ -322,9 +318,4 @@ writeIndex(SAMPLE)
 resetMemory()
 rmSync(SANDBOX, { recursive: true, force: true })
 
-console.log('')
-if (problems.length > 0) {
-  console.log(`${problems.length} FAILED`)
-  process.exit(1)
-}
-console.log('memory injection OK — nothing means nothing, and both switches are real')
+report('memory injection OK — nothing means nothing, and both switches are real') 

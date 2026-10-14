@@ -13,13 +13,9 @@
 //
 //   node tests/audit-ranks.mjs
 import { readFileSync } from 'node:fs'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG } from './_pkg.mjs'
 
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 
 const src = readFileSync(`${PKG}/lib/index.js`, 'utf8')
 
@@ -42,7 +38,7 @@ for (const candidate of [
 }
 
 if (runtimeRank === undefined) {
-  ok(true, 'registry RUNTIME_RANK cross-check SKIPPED (set DSH_SKILL_SRC to enable it)')
+  skip('registry RUNTIME_RANK cross-check SKIPPED (set DSH_SKILL_SRC to enable it)')
 } else {
   console.log(`      registry: ${registryPath}`)
   ok(rank > runtimeRank,
@@ -72,5 +68,4 @@ ok(rank > FS_RANKS.customDirs,
 /* A stable default is itself worth pinning: changing it changes shadowing. */
 ok(rank === 350, 'PROVIDER_RANK is the reviewed default (350)', String(rank))
 
-console.log(problems.length === 0 ? '\ncatalog rank relations OK' : `\n${problems.length} FAILED`)
-process.exit(problems.length === 0 ? 0 : 1)
+report('catalog rank relations OK') 

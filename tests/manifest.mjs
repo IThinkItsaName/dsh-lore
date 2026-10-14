@@ -9,12 +9,8 @@
 //      and holds a SKILL.md with a parseable frontmatter name.
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG } from './_pkg.mjs'
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 
 const pkg = JSON.parse(readFileSync(`${PKG}/package.json`, 'utf8'))
 
@@ -35,7 +31,7 @@ ok(statSync(patchPath).size > 0, 'the patch file is non-empty')
 const DSH_SRC_DIR = process.env.DSH_SRC_DIR ?? ''
 const baseIds = new Set()
 if (DSH_SRC_DIR === '') {
-  ok(true, 'dsh-base id cross-check SKIPPED (set DSH_SRC_DIR to enable it)')
+  skip('dsh-base id cross-check SKIPPED (set DSH_SRC_DIR to enable it)')
 } else {
   const basePatch = readFileSync(`${DSH_SRC_DIR}/dsh-base.patch.yml`, 'utf8')
   for (const m of basePatch.matchAll(/^[ \t]*-[ \t]*id:[ \t]*['"]?([A-Za-z0-9_.:-]+)['"]?[ \t]*$/gm)) {
@@ -63,7 +59,7 @@ for (const block of entries) {
     inserts += 1
     ok(idMatches.length > 0, 'an insert block carries at least one row id')
     if (baseIds.size === 0) {
-      ok(true, 'inserted id cross-check SKIPPED (needs DSH_SRC_DIR)')
+      skip('inserted id cross-check SKIPPED (needs DSH_SRC_DIR)')
     } else {
       for (const [, id] of idMatches) {
         ok(!baseIds.has(id), `inserted row "${id}" is NOT already declared in dsh-base`,
@@ -77,7 +73,7 @@ for (const block of entries) {
     overrides += 1
     ok(idMatches.length === 1, 'an override entry carries exactly one id', JSON.stringify(idMatches))
     if (baseIds.size === 0) {
-      ok(true, 'override target cross-check SKIPPED (needs DSH_SRC_DIR)')
+      skip('override target cross-check SKIPPED (needs DSH_SRC_DIR)')
     } else {
       for (const [, id] of idMatches) {
         ok(baseIds.has(id), `override target "${id}" is declared in dsh-base`,
@@ -87,7 +83,17 @@ for (const block of entries) {
     ok(nameMatches.length >= 1, 'an override entry asserts the module name', block.slice(0, 60))
   }
 }
-ok(overrides >= 0, 'override entries are optional', `${overrides} overrides`)
+/*
+ * 每条顶层 entry 必须落进两类之一 —— 这就是 `overrides` / `inserts` 这两个计数器的存在意义。
+ *
+ * 原来这里是 `ok(overrides >= 0, 'override entries are optional')`：计数器初值 0、只在上面自增，
+ * 所以它**恒真**，等于没断言（审查报告 F13）。真判据是"两个计数之和 = 顶层条目数"——
+ * 一旦某段 entry 既不是 override 也不是 insert（补丁格式改坏了），这条会立刻变红，
+ * 而恒真那条永远绿。
+ */
+ok(overrides + inserts === entries.length,
+   'every top-level patch entry is classified as an override or an insert',
+   `${overrides} overrides + ${inserts} inserts vs ${entries.length} entries`)
 ok(inserts >= 1, 'the patch inserts this package row', `${inserts} inserts`)
 
 /* 3. every bundle the patch declares actually exists */
@@ -129,5 +135,4 @@ ok(gParsed.name === 'reliability-guidelines', 'the plugin parses the guidelines 
 const gEn = mod.parseSkillFrontmatter(readFileSync(`${gDir}/en/SKILL.md`, 'utf8'))
 ok(gEn.name === 'reliability-guidelines', 'the English copy declares the same skill name', gEn.name)
 
-console.log(problems.length === 0 ? '\nall bundle manifest checks passed' : `\n${problems.length} FAILED`)
-process.exit(problems.length === 0 ? 0 : 1)
+report('all bundle manifest checks passed') 

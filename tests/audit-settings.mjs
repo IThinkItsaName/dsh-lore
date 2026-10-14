@@ -29,13 +29,9 @@ import { readFileSync, existsSync, mkdtempSync, mkdirSync, renameSync, rmSync, w
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG, extraBundledSkills } from './_pkg.mjs'
 
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 
 /* ---- a settings file and a memory root inside a temp home, so nothing real is
  * touched. The memory root matters as much as the settings path: without the
@@ -223,8 +219,11 @@ async function call(method, body) {
   const withoutServer = mod.mountStatusRoute({ get: () => null }, () => {})
   ok(typeof withoutServer === 'function',
     'a missing webServer yields a disposer rather than throwing (headless hosts activate)')
-  withoutServer()
-  ok(true, 'cleaning up before the route was ever registered is safe')
+  // 真断言而不是 `ok(true, …)`：以前这里靠"调用它如果抛就把整支 harness 掀掉"来当证据，
+  // 于是失败长得像崩溃、也不进 `problems`（审查报告 F13）。
+  let cleanupError = ''
+  try { withoutServer() } catch (error) { cleanupError = `threw: ${error}` }
+  ok(cleanupError === '', 'cleaning up before the route was ever registered is safe', cleanupError)
 }
 
 /* ---- 6. effectiveSettings / projectDefaults on their own ---- */
@@ -546,7 +545,4 @@ function fakeEditor(override = {}, entryConfig = BUNDLE_LAYER) {
 }
 
 rmSync(sandbox, { recursive: true, force: true })
-console.log(problems.length === 0
-  ? '\nstatus route and settings stores OK'
-  : `\n${problems.length} FAILED`)
-process.exit(problems.length === 0 ? 0 : 1)
+report('status route and settings stores OK') 

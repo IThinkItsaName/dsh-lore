@@ -33,7 +33,7 @@
 # 1. 源与副本一致（0 漂移），并且两个镜像都对
 python ../../.pi/skills/project-work-log/scripts/_package.py --check
 
-# 2. 插件门禁：13 个 harness
+# 2. 插件门禁：15 个 harness
 npm run test:plugin
 
 # 3. 端到端审计：清单、导出、注册表契约、加载路径
@@ -172,7 +172,7 @@ git push origin v0.5.0
 | 页面改了没效果 | 客户端半边由 `__ModuleLoader__` 按页会话缓存，**要重载页面**：浏览器 `Ctrl+Shift+R`；**DSH 桌面版没有刷新快捷键/菜单项**（打包版只挂了 F12）——用 F12 → Console `location.reload()`，或重启应用。细则见 `SETTINGS.md`「装/改之后要重载页面」 |
 | 配置卡片整页不出现 | 客户端按字段集认领 namespace，两种原因：① `FORM_FIELDS` 与 `lib/index.js` 的 `Config` **漂移**（`tests/audit-client-runtime.mjs` 会对账这两边）；② **改了 `Config` 但宿主没重启** —— 运行中的宿主还发着旧 schema，于是认领失败。两种都会让卡片**消失**。从 2026-09-30 起不再静默：那一行确实是我们的时，浏览器控制台会点名缺哪个字段（`work_log/worklog/07-rename-070/0062`）。修法：重启 DSH + 硬刷新 |
 | 在卡片上改完没写进 profile | 那个宿主没有 `configEditor`（headless）—— 配置退回插件自己的 `settings.json`，而**没有程序写它**，那时应手工编辑；卡片底部的「设置位置」一行会说明当前是哪一种 |
-| 卡片改了没反应 | 那个键是**装载期**读的（见 `SETTINGS.md` 的「改完需重启」）；只有 `memoryInjectIndex` / `memoryPersonalSearchable` 是即时生效的 |
+| 卡片改了没反应 | 2026-10-14 起只剩**两个键**是装载期读的：`memoryEnabled`、`verbose`（见 `SETTINGS.md` 的「改完需重启到底是不是硬限制」）—— 改的是这两个就重启 DSH；其余 11 个（含 `memoryDir`）都是现读，**"没反应"不是它们的正常症状**。0.8.1 之前的 `memoryDir` 是第三种情况：桌面 profile 上它写进了 patch、插件却读不到，宿主日志里会有一条 `ignoring unsupported config keys: memoryDir` |
 | 版本审计失败 | `package.json` 的 `version` 与 tag / CHANGELOG 不一致；三处要同时改 |
 | 改了包名却忘了 profile | 新名**加载不上**；`dependencies` 与 `dsh.profile.bundles` **两处**都要改，
 再 `pnpm install`、重启 DSH。`npm run audit` 会直接点名缺哪个链接（`work_log/worklog/07-rename-070/0063`） |

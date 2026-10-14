@@ -276,6 +276,7 @@ MODE_ROLL_ENTRY = """# 0002 · More work
 """
 
 results: list[tuple[bool, str]] = []
+skipped: list[str] = []
 
 
 def run(root: str, *argv: str) -> subprocess.CompletedProcess:
@@ -284,9 +285,41 @@ def run(root: str, *argv: str) -> subprocess.CompletedProcess:
                           cwd=root, capture_output=True, text=True, encoding="utf-8")
 
 
+def harness_fixture(name: str) -> str:
+    """找 JS harness 的夹具文件（`tests/fixtures/<name>`），找不到返回空串。
+
+    **为什么要找而不是写死一个相对路径**：这份 `_selftest.py` 同时活在两种布局里 ——
+    工作区源码树（`.pi/skills/project-work-log/scripts/`，harness 在 `<工作区>/logs/tests/`）
+    与发布包（`<包>/skills/project-work-log/scripts/`，harness 在 `<包>/tests/`）。
+    另外从 npm 装出来的副本可能**根本没有** `tests/`（它不属于插件运行时）。
+    所以这里按候选顺序找，找不到就由调用方记一条 `SKIP` —— 不假装验过。
+    """
+    for cand in (
+        os.path.join(HERE, "..", "..", "..", "tests", "fixtures", name),        # 发布包布局
+        os.path.join(HERE, "..", "..", "..", "..", "logs", "tests", "fixtures", name),  # 工作区源码树
+        os.path.join(HERE, "..", "..", "..", "..", "..", "logs", "tests", "fixtures", name),
+    ):
+        path = os.path.normpath(cand)
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
 def ok(cond: bool, label: str, detail: str = "") -> None:
     results.append((bool(cond), label))
     print(("PASS  " if cond else "FAIL  ") + label + (f"   [{detail[:200]}]" if detail and not cond else ""))
+
+
+def note(label: str, why: str = "") -> None:
+    """一条**该验却没验**的断言：打印 `SKIP`，单独计数，既不算 PASS 也不算 FAIL。
+
+    存在理由与 JS 半边 `tests/_report.mjs` 的 `skip()` 完全相同（审查报告 F13）：
+    以前这种局面靠 `ok(True, "… SKIPPED")` 表达，于是在输出里与真跑过的断言**长得一模一样** ——
+    "590/590 通过"这句话分不清哪几条其实什么都没验。**只在环境里根本没有可比对的东西时用**；
+    能写的断言必须写。
+    """
+    skipped.append(label)
+    print("SKIP  " + label + (f"   [{why}]" if why else ""))
 
 
 # --- 让"坏消息"还能被记成一条失败断言（2026-10-14 加）---------------------------------
@@ -680,6 +713,37 @@ def safety_phase(tmp: str) -> None:
     ok(r.returncode == 0, "lesson add exits 0", r.stderr)
     vol = read(os.path.join(lsn, CONTAINER, "lessons", "01-topic.md"))
     ok("wl/0001" in vol, "lesson add keeps the --source citation", vol)
+
+    # 6) 手写的**不存在的日期**不许把命令掀掉，也不许被说成"文件不是 UTF-8" ----
+    #    `ISO_DATE_RE` 只验数字形状（四个数字-两个-两个），`2026-02-30` 能过；真解析要到
+    #    `date.fromisoformat` 才失败，而它抛的 `ValueError` 原先被 `main` 一律翻译成
+    #    "记录文件必须是 UTF-8" —— 用户照着去转编码，永远修不好（审查报告 F9）。
+    badd = os.path.join(tmp, "baddate")
+    os.makedirs(os.path.join(badd, CONTAINER, "stage-old"))
+    write(os.path.join(badd, CONTAINER, "README.md"),
+          "# B\n\n## 文件索引\n\n### A. 归档\n\n| 文件 | 方面 |\n|---|---|\n"
+          "| [stage-old/0001-bad.md](stage-old/0001-bad.md) | x |\n"
+          "| [stage-old/0002-good.md](stage-old/0002-good.md) | x |\n\n"
+          "## 待办（滚动清单）\n\n- [ ] x\n\n## 当前状态（2026-09-13）\n\n- 阶段 / 版本：v1\n")
+    write(os.path.join(badd, CONTAINER, "stage-old", "0001-bad.md"),
+          entry("0001", "bad", "2026-02-30", "1"))
+    write(os.path.join(badd, CONTAINER, "stage-old", "0002-good.md"),
+          entry("0002", "good", "2020-01-01", "1"))
+    r = run(badd, "prune", "--older-than", "30")
+    ok(r.returncode == 0, "prune survives a record whose 日期 does not exist", r.stdout + r.stderr)
+    # 同目录里那篇日期合法的老记录必须在候选里 —— 这证明循环真的走到了日期解析那一行，
+    # 所以"没崩"不是因为它提前被过滤掉了（否则这条断言是空的）。
+    ok("#0002" in r.stdout and "#0001" not in r.stdout,
+       "the neighbour with a valid old date is still a cold-storage candidate", r.stdout)
+    ok("UTF-8" not in r.stdout,
+       "the impossible date is NOT reported as an encoding problem (F9's wrong diagnosis)", r.stdout)
+    ok("Traceback" not in r.stderr, "the impossible date does not traceback", r.stderr[:200])
+    ok(JOURNAL.parse_iso_date("2026-02-30") is None
+       and JOURNAL.parse_iso_date("2026-02-28") is not None
+       and JOURNAL.parse_iso_date("") is None,
+       "parse_iso_date: 形状对但日期不存在 → None；真日期照常解出；空串 → None")
+    ok(issubclass(JOURNAL.WriteRefused, ValueError),
+       "WriteRefused 继承 ValueError（既有调用方的 `except ValueError` 语义不变）")
 
 
 def legacy_phase(parent: str) -> None:
@@ -1499,6 +1563,18 @@ def format_phase(parent: str) -> None:
        "stats counts every record on the same day, not one per day", r.stdout)
     ok("entries     : 3" in r.stdout and "3 dated" in r.stdout,
        "stats counts 3 entries on one day", r.stdout)
+    # `topics` 也必须**按路径**做键。它曾经按 `rid` 统计，而日期式记录的 `rid` 就是
+    # `f[:10]`（那一天）：同一天的 3 篇被折成"1 篇"，而且只显示最后一份。同一个文件里
+    # `cmd_stats` 早把这条规则写死在注释里了，`cmd_topics` 漏了（审查报告 F10）。
+    for f in files:
+        write(os.path.join(sameday, CONTAINER, f),
+              read(os.path.join(sameday, CONTAINER, f)) + "- marker: samedaycluster\n")
+    r = run(sameday, "topics")
+    topic_row = next((ln for ln in r.stdout.splitlines() if ln.startswith("samedaycluster")), "")
+    ok(re.search(r"^samedaycluster\s+3 篇", r.stdout, re.M) is not None,
+       "topics counts all 3 records of one day (keyed by path, not by rid)", r.stdout)
+    ok("alpha" in topic_row and "beta" in topic_row and "gamma" in topic_row,
+       "topics lists every record of that day, not just the last one", topic_row)
     # 纯编号容器：第一列保持 4 字符（老输出与老脚本按这个对齐）。
     numbered = os.path.join(parent, "fmtnumbered")
     os.makedirs(os.path.join(numbered, CONTAINER))
@@ -2151,14 +2227,15 @@ def mem_snapshot(root: str) -> dict[str, bytes]:
 def memory_phase(parent: str) -> None:
     """隔离包装：整相把 `DSH_HOME` 指进夹具，再跑 `_memory_phase`。
 
-    **为什么只靠 `--memory` 与 `$DSH_WORKLOG_MEMORY` 不够**：记忆根是三级解析
-    （`--memory` > `$DSH_WORKLOG_MEMORY` > `$DSH_HOME/memory`），而这一相里前两档
+    **为什么只靠 `--memory` 与 `$DSH_WORKLOG_MEMORY` 不够**：记忆根是四级解析
+    （`--memory` > 设置文件里的 `memoryDir` > `$DSH_WORKLOG_MEMORY` > 默认 `<用户主目录>/dsh-lore-memory`，
+    0.8.0 起默认不再是 `$DSH_HOME/memory`），而这一相里前两档
     **都被专门测过** —— 变异驱动正是拿它们开刀：`reverse-verify.py` 的 memory 相里
     「`--memory` 不再覆盖路径」与「环境变量那一档失效」两条，就是把前两档打断。
-    两条一断，兜底就落到**用户真实的** `~/.dsh/memory`。2026-09-28 真发生过：
-    真实记忆库里留下 8 条 `wsA` 夹具条目，并且被注入了每个请求（清理记录见 `work_log/06-release-060/0051`）。
-    `DSH_HOME` 在那两条变异之外，所以拿它兜底 —— 变异要红的那两条断言都是**进程内**比对，
-    不受这里影响。
+    两条一断，兜底就落到**用户真实的**那个默认根（0.8.0 之前是 `~/.dsh/memory`）。
+    2026-09-28 真发生过：真实记忆库里留下 8 条 `wsA` 夹具条目，并且被注入了每个请求
+    （清理记录见 `work_log/06-release-060/0051`）。`DSH_HOME` 在那两条变异之外，所以拿它兜底 ——
+    变异要红的那两条断言都是**进程内**比对，不受这里影响。
     """
     saved_home = os.environ.get("DSH_HOME")
     os.environ["DSH_HOME"] = os.path.join(parent, "home")
@@ -2935,6 +3012,42 @@ def _memory_phase(parent: str) -> None:
        "inbox: from 取的是**命令运行所在目录**的名字（不提供能随便填的字段）", str(meta))
     ok(body == msg + "\n",
        "inbox: 正文与投进去的一模一样（二进制写，不翻译换行；头部之外不多不少）", repr(body))
+    # --- 黄金夹具逐字节对账（审查报告 F14）------------------------------------
+    # `tests/fixtures/inbox-item-from-cli.md` 是**另一份实现**（`lib/index.js` 的 `inboxSplit`）
+    # 用来对账的样本，可是 python 侧从来不重放它：`inbox put` 的头部措辞改了，JS 那边照样绿
+    # （它读的是那份**没变**的夹具），CLI 这边也没有任何断言碰过头部格式。这里补上两件事：
+    #   1) 夹具能被 `inbox_header` + 解析出的正文**逐字节重放**（钉住渲染函数的形状）；
+    #   2) 真跑一次 `inbox put`，归一 `at:` 那一行之后与夹具**逐字节相同**（钉住整条落盘路径，
+    #      于是"夹具过期"从此会红，而不是继续假装两边一致）。
+    fixture = harness_fixture("inbox-item-from-cli.md")
+    if not fixture:
+        note("inbox 黄金夹具逐字节对账", "树上没有 tests/fixtures（只装了 skills/ 的副本）")
+    else:
+        golden = read_bytes(fixture)
+        gmeta, gbody = JOURNAL.inbox_split(golden.decode("utf-8"))
+        replay = (JOURNAL.inbox_header(gmeta.get("from", ""), gmeta.get("at", ""))
+                  + gbody).encode("utf-8")
+        ok(replay == golden,
+           "inbox: 夹具能被 inbox_header 逐字节重放（头部措辞/那句 note 不许悄悄改）",
+           f"replay={replay[:120]!r} golden={golden[:120]!r}")
+        # `from:` 取命令运行所在目录的名字，所以在一个**就叫这个名**的目录里跑；
+        # `at:` 是当下时钟，唯一允许归一的一行（归一它不削弱判据：其余每个字节都要对上）。
+        # **另开一个记忆根**：投进这一相共用的 `mem` 会让后面的
+        # `inbox count 的第一行就是一个整数` 从 1 变成 2 —— 夹具的副产品不许污染被测契约。
+        golden_mem = os.path.join(base, "golden-mem")
+        golden_inbox = JOURNAL.memory_inbox_dir(golden_mem)
+        golden_dir = os.path.join(base, gmeta.get("from") or "wsA-cli-golden")
+        os.makedirs(golden_dir, exist_ok=True)
+        r = run(golden_dir, "inbox", "put", gbody.rstrip("\n"), "--memory", golden_mem)
+        ok(r.returncode == 0, "inbox: 黄金样本能被 CLI 重新投出", r.stdout + r.stderr)
+        fresh = sorted(os.listdir(golden_inbox)) if os.path.isdir(golden_inbox) else []
+        produced = read_bytes(os.path.join(golden_inbox, fresh[0])) if len(fresh) == 1 else b""
+        produced = re.sub(rb"^at: .*$",
+                          b"at: " + (gmeta.get("at") or "").encode("utf-8"),
+                          produced, count=1, flags=re.M)
+        ok(produced == golden,
+           "inbox: 真跑一次 inbox put，除 at: 外与黄金夹具逐字节相同（夹具不会悄悄过期）",
+           f"produced={produced[:160]!r} golden={golden[:160]!r}")
     r = m(base, "inbox", "list")
     ok(f"from={meta.get('from')}" in r.stdout and "样式表要加前缀" in r.stdout,
        "inbox: list 显示发件方与原消息首行", r.stdout)
@@ -2954,6 +3067,26 @@ def _memory_phase(parent: str) -> None:
     ok(JOURNAL._inbox_items(mem) and len(JOURNAL._inbox_items(mem)) == 1,
        "inbox: 读到 .tmp 半截文件时当它不存在（清单不把它算一条）")
     os.remove(tmpfile)
+    # 符号链接同样要被挡掉：`os.path.isfile` **会跟随链接**，于是信箱目录里一个
+    # `note.md -> 别处某个文件` 就能让 `inbox list` / 取件 / `--into-record` 读到链接目标
+    # （审查报告：安全面唯一一处偏软，低危，修法一行 `os.path.islink`）。
+    # 建链接需要权限（Windows 上要开发者模式），建不出来就记 SKIP —— 不假装验过。
+    link = os.path.join(inbox, "linked-note.md")
+    outside = os.path.join(base, "outside-the-inbox.md")
+    write(outside, "信箱外的内容，不该被读出来\n")
+    try:
+        os.symlink(outside, link)
+    except (OSError, NotImplementedError, AttributeError) as exc:
+        note("inbox 不跟随符号链接", f"这台机器建不了符号链接（{type(exc).__name__}）")
+    else:
+        try:
+            listed = [i["name"] for i in JOURNAL._inbox_items(mem)]
+            ok("linked-note.md" not in listed,
+               "inbox: 符号链接不算条目（`isfile` 会跟随链接，必须单独挡）", str(listed))
+            r = m(base, "inbox", "list")
+            ok("信箱外的内容" not in r.stdout, "inbox: list 读不到链接目标的内容", r.stdout)
+        finally:
+            os.remove(link)
     r = m(base, "inbox", "list")
     ok(r.returncode == 0 and "样式表要加前缀" in r.stdout, "inbox: list 列出条目", r.stdout)
     r = m(base, "inbox", "list", "--json")
@@ -3094,6 +3227,54 @@ def main() -> int:
         r = run(tmp, "outline")
         ok(r.stdout.count("\n") == 1 and "2026-01-01" not in r.stdout,
            "a logs/ file shaped like a record is not read as one", r.stdout)
+
+        # ---- 写盘的原子性（审查报告 F6/F7）-------------------------------- #
+        #
+        # 这两条护的是容器最核心的那句承诺："文件永不删、只会丢"。`write_raw()` 原来是
+        # `open(path, "w")`——先截断再写，中途失败就留下一份**残缺的记录**；`cmd_new`
+        # 原来是"先问再写"，两个进程同时建记录会**静默覆盖**。两条各用一个便宜的手法钉住：
+        # 前者看"临时文件收不收得干净 + 内容换不换得掉"，后者看"同时起 6 个进程会不会少一份"。
+        fx = os.path.join(tmp, "_f67")
+        os.makedirs(fx)
+        target = os.path.join(fx, "note.md")
+        write(target, "old\n")
+        JOURNAL.write_raw(target, "new\n")
+        leftovers = [f for f in os.listdir(fx) if f != "note.md"]
+        ok(read(target) == "new\n" and leftovers == [],
+           "write_raw: 换掉内容且不留临时文件", f"leftovers={leftovers}")
+
+        # 真正的判据是"占名与写入之间没有窗口"，而窗口只在并发下才看得见：
+        # 6 个进程同时 `new`（`--title` 各不相同，便于分辨谁是谁）。
+        con = os.path.join(fx, "con")
+        os.makedirs(os.path.join(con, CONTAINER))
+        write(os.path.join(con, CONTAINER, "README.md"), INDEX)
+        procs = [subprocess.Popen(
+            [sys.executable, TOOL, "new", "--root", con, "--title", f"race {i}"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", cwd=HERE)
+            for i in range(6)]
+        outs = []
+        for p in procs:
+            try:
+                o, e = p.communicate(timeout=120)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                o, e = p.communicate()
+            outs.append((p.returncode, o, e))
+        made = sorted(f for f in os.listdir(os.path.join(con, CONTAINER))
+                      if f != "README.md")
+        ok(all(rc == 0 for rc, _, _ in outs) and len(made) == 6,
+           "6 个进程同时 new：一人一份，没有静默覆盖",
+           f"rc={[rc for rc, _, _ in outs]} files={made}")
+        bodies = [read(os.path.join(con, CONTAINER, f)) for f in made]
+        ok(all(f"race {i}" in "\n".join(bodies) for i in range(6)),
+           "6 个进程同时 new：每份正文都在，没有谁被谁吃掉",
+           f"{[b.splitlines()[3] if len(b.splitlines()) > 3 else '?' for b in bodies]}")
+
+        # 兜底名字也得是**合法记录名**，否则连撞一千次之后会造出一个 `brief` 看不见的文件。
+        fb = JOURNAL.new_record_fallback_name(42, "some-slug")
+        ok(JOURNAL.NUM_FILE_RE.match(fb) is not None and fb.startswith("0042-"),
+           "兜底记录名仍然是记录（NUM_FILE_RE 认它）", fb)
 
         # new --insert -----------------------------------------------------
         r = run(tmp, "new", "--title", "Add login rate limit", "--iter", "12",
@@ -3318,7 +3499,11 @@ def main() -> int:
                f"says {claimed}, ran {total_ran}")
 
     failed = [label for good, label in results if not good]
-    print(f"\n{len(results) - len(failed)}/{len(results)} passed")
+    # 跳过单独报：`N/N passed` 这句话必须自带"其中几条其实没验"的注解（审查报告 F13）。
+    tail = f"（{len(skipped)} 条跳过，未计入）" if skipped else ""
+    print(f"\n{len(results) - len(failed)}/{len(results)} passed{tail}")
+    for label in skipped:
+        print(f"      SKIPPED: {label}")
     return 1 if failed else 0
 
 

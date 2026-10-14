@@ -19,7 +19,7 @@
 
 ## 配置存在哪：profile patch 是**正式位置**（2026-09-29 起）
 
-插件导出 `Config`（**12 个**字段，全部 `.volatile()`），所以设置归**宿主**管：
+插件导出 `Config`（**13 个**字段，全部 `.volatile()`），所以设置归**宿主**管：
 
 | 宿主 | 存哪 | 谁写 |
 |---|---|---|
@@ -117,7 +117,9 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 - 文件是**可选**的：不存在就是"全用 row config 与内置默认值"。
 - 文件坏掉（JSON 不合法、不是对象）**永不致命**：报出来（状态接口的 `error`、宿主日志一条 warn），
   退回 row config 与内置默认，技能照常挂载。
-- 手写进去的、插件不认识的键会被忽略但**不会被删** —— 插件现在不写这个文件了。
+- 手写进去的、插件不认识的键会被忽略但**不会被删**。**插件只写一个键**：`memoryDir`
+  （0.8.1 起，为的是让 `journal.py` 那个进程读到同一个记忆根；没有 `configEditor` 的宿主里
+  这份文件本来就是真源，插件一个字都不写）。除它以外的内容原样保留。
 
 ### 优先级
 
@@ -138,33 +140,35 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 
 | 变量 | 作用 |
 |---|---|
-| `DSH_HOME` | DSH 用户目录；未设时为 `~/.dsh`。决定设置文件与全局记忆的默认位置。 |
+| `DSH_HOME` | DSH 用户目录；未设时为 `~/.dsh`。决定**设置文件**在哪，以及一次性迁移的**旧记忆根** `<DSH_HOME>/memory`。**记忆的默认位置与它无关**（0.8.0 起是 `~/dsh-lore-memory`）。 |
 | `DSH_WORKLOG_SETTINGS` | 直接指定设置文件的**完整路径**，压过 `DSH_HOME`。给便携安装与测试用。 |
 | `DSH_WORKLOG_MEMORY` | 直接指定**全局记忆根目录**的完整路径，压过 `DSH_HOME`。同样给便携安装与测试用 —— 测试必须能指向临时目录，否则跑一次就会动到用户真实的记忆库。 |
 | `DSH_WORKLOG_TRACE` | 诊断日志的目标文件。见 `lib/index.js` 顶部注释。 |
 
 ## 已知配置键
 
-`Config` 声明了 **12 个**字段，全部 `.volatile()`。卡片上有控件的是其中 **11 个**：
+`Config` 声明了 **13 个**字段，全部 `.volatile()`。卡片上有控件的是其中 **12 个**：
 `skillFile` 只能由行配置给（卡片没有它的控件，所以任何界面都不会把它改掉或删掉）。
 
 | 键 | 类型 | 默认 | 卡片上 | 说明 | 改完生效 |
 |---|---|---|---|---|---|
-| `skillDir` | string | `skills/project-work-log` | 「技能 › 路径」 | 工作记录技能目录。相对路径从**包根**算起，绝对路径原样使用。 | 重启 |
-| `skillFile` | string | `SKILL.md` | **无控件** | 技能目录里的指令文件名。仅行配置。 | 重启 |
-| `skillEnabled` | boolean | `true` | 「技能」 | 是否登记 `project-work-log` 技能。**关掉它不影响记忆那一半**（索引注入与 `worklog_memory` 照旧）。 | 重启 |
-| `modelInvocable` | boolean | `true` | 「高级」 | 是否允许模型自动调用这两个技能。 | 重启 |
-| `userInvocable` | boolean | `true` | 「高级」 | 是否允许用户手动调用。 | 重启 |
-| `verbose` | boolean | `false` | 「高级」 | **诊断开关**：装载与技能查询时打诊断行。落点由 `DSH_WORKLOG_TRACE`（或 `<包>/lib/.trace`）决定，没设就进宿主日志 —— 一个开关决定开不开，环境变量决定落哪儿。 | 重启 |
-| `guidelinesEnabled` | boolean | `true` | 「技能」 | 是否登记 `reliability-guidelines` 技能。 | 重启 |
-| `guidelinesDir` | string | `skills/reliability-guidelines` | 「技能 › 路径」 | 准则技能目录，解析规则同 `skillDir`。 | 重启 |
-| `guidelinesLanguage` | `'zh'` / `'en'` | `'zh'` | 「技能」 | 只影响准则那一份技能；`project-work-log` 本身固定是中文。 | 重启 |
-| `memoryEnabled` | boolean | `true` | 「记忆」 | 全局记忆总开关：关闭后索引不注入、`worklog_memory` 工具也不注册。 | **重启** |
-| `memoryInjectIndex` | boolean | `true` | 「记忆」 | 是否把索引段注入提示词。**每次装配现读**（2026-09-30 之前它在挂载期读，界面却写着"即时生效"）。 | **即时** |
-| `memoryPersonalSearchable` | boolean | `false` | 「记忆」 | 个人目录是否可被检索（用时现读）。 | **即时** |
+| `skillDir` | string | `skills/project-work-log` | 「技能 › 路径」 | 工作记录技能目录。相对路径从**包根**算起，绝对路径原样使用。 | 即时 |
+| `skillFile` | string | `SKILL.md` | **无控件** | 技能目录里的指令文件名。仅行配置。 | 即时 |
+| `skillEnabled` | boolean | `true` | 「技能」 | 是否登记 `project-work-log` 技能。**关掉它不影响记忆那一半**（索引注入与 `worklog_memory` 照旧）。 | 即时 |
+| `modelInvocable` | boolean | `true` | 「高级」 | 是否允许模型自动调用这两个技能。 | 即时 |
+| `userInvocable` | boolean | `true` | 「高级」 | 是否允许用户手动调用。 | 即时 |
+| `verbose` | boolean | `false` | 「高级」 | **诊断开关**：装载与技能查询时打诊断行。落点由 `DSH_WORKLOG_TRACE`（或 `<包>/lib/.trace`）决定，没设就进宿主日志 —— 一个开关决定开不开，环境变量决定落哪儿。 | **重启** |
+| `guidelinesEnabled` | boolean | `true` | 「技能」 | 是否登记 `reliability-guidelines` 技能。 | 即时 |
+| `guidelinesDir` | string | `skills/reliability-guidelines` | 「技能 › 路径」 | 准则技能目录，解析规则同 `skillDir`。 | 即时 |
+| `guidelinesLanguage` | `'zh'` / `'en'` | `'zh'` | 「技能」 | 只影响准则那一份技能；`project-work-log` 本身固定是中文。 | 即时 |
+| `memoryEnabled` | boolean | `true` | 「记忆」 | 全局记忆总开关。**关掉后工具照样注册**（调用它会明确回答"已关闭"，见 `lib/index.js` 的 `memoryAnswer()`），不再注册的是**两段提示词注入**（索引段与收件箱提示）。 | **重启** |
+| `memoryInjectIndex` | boolean | `true` | 「记忆」 | 是否把索引段注入提示词。**每次装配现读**（2026-09-30 之前它在挂载期读，界面却写着"即时生效"）。 | 即时 |
+| `memoryPersonalSearchable` | boolean | `false` | 「记忆」 | 个人目录是否可被检索（用时现读）。 | 即时 |
+| `memoryDir` | string | 空 | 「记忆」（最后一栏） | 全局记忆根。空 = `<用户主目录>/dsh-lore-memory`；**相对路径按用户主目录解析**（上面两条路径按包根算，不一样）。非空时压过 `$DSH_WORKLOG_MEMORY`。装载时**与每次配置变更时**都记进设置文件，`journal.py` 才读得到同一个根（见 `lib/index.js` 的 `mirrorMemoryDir`）。 | 即时 |
 
-> **只有"要不要注册"需要重启。** 记忆那三个键里只剩 `memoryEnabled` 属于这一类；另外两个都是现读 ——
-> 它们**不需要重启**，拨完下一次请求就是新行为。
+> **只有"要不要注册"这件事需要重启，而 2026-10-14 起只剩两条**：`memoryEnabled`
+> （两段注入注册不注册是装载期事实）与 `verbose`（诊断在装载时装配）。其余 **11 条都是用到时现读** ——
+> 拨完下一次工具调用 / 下一次装配就是新行为，**不需要重启**。
 
 ## 项目侧默认值：不提供控件
 
@@ -246,7 +250,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 | 页签 | 装什么 |
 |---|---|
 | **技能** | `guidelinesEnabled`（开关）、`guidelinesLanguage`（中文 / English 分段控件），以及收在「路径」折叠区里的 `skillDir` 与 `guidelinesDir` |
-| **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable` 三个开关；再收一个「当前状态」折叠区（只读，见下） |
+| **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable` 三个开关，加最后一栏路径框 `memoryDir`（「记忆存放位置」）；再收一个「当前状态」折叠区（只读，见下） |
 | **高级** | `verbose`、`modelInvocable`、`userInvocable` —— 三个开关 |
 
 「路径」与「当前状态」用 `DisclosureRow`（默认收起）：前者是装载参数（不常改），
@@ -287,18 +291,29 @@ GET /plugins/dsh-lore/status.json   → { source, path, memory, error }
 |---|---|
 | `Config` 被宿主认成 `schema`（字段带 `x-cordis.volatile: true`） | **已验证**（活体 `Config.listConfigs{name:"dsh-lore"}`） |
 | 值能被官方通道写进 profile patch 并读回 | **已验证**（`apply()` 的选项、卡片显示的值同源） |
-| 我们的选项**改完即时生效** | **没有**。这些选项是**装载期**读的（技能挂哪个目录、guidelines 开不开、记忆总开关），所以界面按页标明"需重启" |
+| 只改 `.volatile()` 字段时宿主**不重挂载** | **已验证**：Loader 把新值提交进运行中的引用并发一次 `loader/volatile-update`（`cordis/README.md` §Volatile configuration；官方 cookbook 的口径是"在操作开始时读 `.get()`"） |
+| 我们的选项**改完即时生效** | **11 条是，2 条不是**（见下表） |
 
-**两条读法要分清**：
+**两条读法要分清**（2026-10-14 收敛后的口径）：
 
-| 类 | 例 | 改完 |
+| 类 | 键 | 改完 |
 |---|---|---|
-| 装载期读的（`apply()` 里读一次就交给注册表） | `skillDir`、`guidelinesEnabled`、`verbose`、`modelInvocable`、`userInvocable`、`memoryEnabled` | 需重启 DSH |
-| 用时现读的（每次工具调用现读） | `memoryInjectIndex`、`memoryPersonalSearchable` | 即时生效 |
+| 装载期事实（"注册不注册"） | `memoryEnabled`、`verbose` | **需重启 DSH** |
+| 用时现读 | 其余 **11 条**：技能那 8 项 + `memoryInjectIndex`、`memoryPersonalSearchable`、`memoryDir` | 即时生效 |
 
-**未兑现的待办**：要真正做到"全部即时"，需要监听 `loader/volatile-update` 并重建
-provider（当前 `mount()` 丢掉了 `registerProvider` 的 disposer，重建前必须先收集，
-否则同层重名会让注册表抛错）。台账里记着这件事，**在那之前本文不声称任何一项即时生效**。
+技能那 8 项的落地方式：provider **常驻注册**，开关 / 目录 / 语言在每次 `list()`/`get()` 里现读
+（`lib/index.js` 的 `live()` 与 `livePaths()`），关掉的技能报**空目录**；调用许可在投影候选时现读。
+代价写在代码注释里：关掉一个技能**不再让它的 provider 消失** —— 注册与否是装载期事实，
+摘掉再挂上会撞注册表对重名 provider 的拒绝。
+
+`memoryEnabled` 仍是装载期：`mountMemoryInjection()` 在挂载时决定**要不要注册**那两段注入。
+同一段里的 `memoryInjectIndex` 不同 —— 它在 `text()` 里按装配现读。于是在运行中把总开关关掉：
+
+- **记忆工具立刻不再应答**（`memoryAnswer()` 按调用现读，回一句"已关闭"），
+- 提示词里那两段**要等重启才消失**（打开同理）。
+
+卡片文案已经按这个口径写（`lib/client.js` 的「这是两个还需要重启的开关之一」）。
+**本节从前那句"不声称任何一项即时生效"已作废** —— 它描述的是 2026-10-14 之前的状态。
 
 ## 界面样式走宿主的设计令牌
 

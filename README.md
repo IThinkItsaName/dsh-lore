@@ -15,6 +15,14 @@
 > **三层可以只用一层**：只装技能层，就是一套完整可校验的记录体系（`skill-only/` 那条线更极端 ——
 > 连脚本都不要）；装上插件，才多出记忆与注入。
 
+### 0.8.1 修的东西（2026-10-15 发布）
+
+| 改动 | 是什么 |
+|---|---|
+| **记忆根设置现在真的生效** | 0.8.0 的「记忆存放位置」在**桌面 profile 上是死的**：卡片把值写进 profile patch，而插件只看得见 `<DSH_HOME>/worklog/settings.json`（桌面**故意**不读它），于是记忆永远落在默认根，还会附送一条 `ignoring unsupported config keys: memoryDir` 的警告。现在记忆侧显式接收本次装载的设置，`memoryDir` 也进了"本插件拥有的键"清单 |
+| **两个进程读同一个根** | 插件是一个进程，`journal.py` 是**另一个**；卡片的值现在会在装载时落进 `settings.json`（CLI 已经会读的那个文件），所以模型侧与命令行侧不会再各写一个库 |
+| **门禁补课** | 新增 `tests/audit-memory-settings.mjs`（20 条断言，覆盖上面两条）；`tests/_pkg.mjs` 补钉 `DSH_HOME` —— 不钉的话在有真实记忆的机器上跑 harness 会把私人记忆复制进临时目录（`<DSH_HOME>/memory` 是迁移的来源） |
+
 ### 0.8.0 的新东西（2026-10-14 发布）
 
 | 改动 | 是什么 |
@@ -128,7 +136,7 @@
 dsh plugin --profile <profile> add dsh-lore
 
 # 2) 固定到某个版本
-dsh plugin --profile <profile> add dsh-lore@0.8.0
+dsh plugin --profile <profile> add dsh-lore@0.8.1
 
 # 3) 从本地 checkout 装 —— 记住上面那条：这是链接安装
 dsh plugin --profile <profile> add /绝对/路径/<你的 checkout>
@@ -182,7 +190,7 @@ echo /tmp/worklog-trace.log > <包>/lib/.trace
 pi install git:github.com/IThinkItsaName/dsh-lore
 
 # 固定到 tag（推荐，避免上游变动）
-pi install git:github.com/IThinkItsaName/dsh-lore@v0.8.0
+pi install git:github.com/IThinkItsaName/dsh-lore@v0.8.1
 
 # 只装到当前项目（写入 .pi/settings.json，可随仓库共享给团队）
 pi install -l git:github.com/IThinkItsaName/dsh-lore
@@ -376,7 +384,8 @@ python <skill>/scripts/journal.py memory search "样式"
 # 技能：临时工程跑通全部命令 + 断言
 python skills/project-work-log/scripts/_selftest.py
 
-# 插件门禁：13 支 harness（注册表契约、补丁清单、版本/文档/路径/本地化一致性、客户端运行期、设置、记忆注入）
+# 插件门禁：15 支 harness（注册表契约、补丁清单、版本/文档/路径/本地化一致性、客户端运行期、
+# 设置、记忆注入、记忆根设置、记忆迁移）
 npm run test:plugin
 
 # 端到端审计：宿主将会 import 什么、sha256 是否为当前工作树

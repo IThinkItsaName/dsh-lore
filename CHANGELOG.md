@@ -8,6 +8,99 @@
 
 ## [未发布]
 
+## [0.8.1] - 2026-10-15
+
+> **升级须知**：这是一次**修缺陷**的发版。0.8.0 的「记忆存放位置」在**桌面 profile 上不生效**
+> —— 卡片里改路径看不出任何效果，还会收到一条说这个键不支持的警告。现在它生效了，而且插件与
+> `journal.py` 读**同一个根**。已经在 0.8.0 里把卡片路径填回旧位置的人：这一版**不需要再改一次**，
+> 那个值当时被写进了 profile patch，本版装载时会把它同步进 `settings.json`。
+> 其余行为不变（技能、命令、记忆条目格式都没动）。
+
+### 修复：记忆根设置（`memoryDir`）在桌面 profile 上是死的
+
+- **症状**（用户可见）：在设置卡片「记忆存放位置」里填一个新路径、保存，**记忆仍然写在旧的
+  默认根**；同时日志里出现 `worklog: ignoring unsupported config keys: memoryDir`。
+- **原因有两处**，都在记忆侧没跟上 0.8.0 的"现读"改造：
+  1. `memoryDirectory()` 调的是**不带 row** 的 `liveMemorySettings()`，只看得见
+     `<DSH_HOME>/worklog/settings.json`；而桌面 profile 的存储层是 profile patch（有
+     `configEditor` 时插件**故意不读**那个文件）。于是卡片的值根本没有进入解析链。
+  2. `memoryDir` 不在"本插件拥有的键"那三张清单里，于是它既是误报的来源（unknown key 警告），
+     又会在 `migrateLegacySettings()` 归档老设置文件时**被丢掉**。
+- **修法**：记忆侧改为**显式接收本次装载合并好的设置**（`memoryAnswer` → `memoryDirectory()` /
+  `readMemoryEntries()` / `readMemorySummary()` / `readMemoryIndexText()`），`memoryDir` 进
+  `STORED_ONLY_KEYS`（与另外三个现读键同档）。
+- **跨进程对齐（这一版的重点）**：插件是一个进程，`journal.py` 是**另一个**进程，两边各自解析
+  记忆根。桌面 profile 上二者会解析出**不同的库**（插件不看那个文件），而 CLI 又不看 profile
+  patch。所以有 `configEditor` 的宿主在装载时会把卡片的值**写进** `<DSH_HOME>/worklog/settings.json`
+  （`syncMemoryDirToSettingsFile()`）—— 那是 CLI 已经会读的文件，于是两个进程永久同根。
+  规则：只在有编辑器的宿主上写、只在值变化时写、只碰 `memoryDir` 一个键、**绝不在这里做迁移**
+  （那会把文件改名成 `.migrated`，记忆根必须留在这份两个进程都读得到的文件里）。
+  而卡片保存**不会重挂载**（`Config` 13 个字段全是 `.volatile()`，Loader 只把新值提交进引用），
+  所以 `loader/volatile-update` 那一刻要补**同一次**镜像：只在装载时写的话，"保存后到重启前"
+  这段窗口里插件已经用新根、CLI 还在读旧根 —— 正是这一版要消掉的那种劈叉
+  （这一跳在第二轮复看时补上，E 组 5 条断言钉住它）。
+- **门禁补课（为什么 586 + 13 道门禁全绿却漏了它）**：`tests/_pkg.mjs` 无条件把
+  `DSH_WORKLOG_MEMORY` 设成隔离路径，于是 `memoryDirectory()` 每次都从环境变量那一档返回 ——
+  桌面真正走的那条路没有任何一条断言碰过。现在：
+  - 新增 `tests/audit-memory-settings.mjs`（25 条断言）：解析优先级四档、相对路径按用户主目录、
+    绝不误报 unknown key（但真不认识的键照样报）、卡片→文件的同步三条、状态行/条目/索引/信箱
+    用同一个根、以及保存之后的 volatile 提交要**立刻**落到那个文件（E 组）。
+  - `tests/_pkg.mjs` 补钉 `DSH_HOME`：`<DSH_HOME>/memory` 是迁移的**来源**，不钉的话在有真实
+    记忆的机器上跑一遍 harness 就会把私人记忆**复制**进共享临时目录（源不删，但数据外泄且测试
+    变有状态）。python 半边一直钉着，JS 半边这次补上。
+- **CLI 文案**：`journal.py --memory --help` 之前写着"默认 `$DSH_WORKLOG_MEMORY`，再默认
+  `$DSH_HOME/memory`"——既漏了设置文件那一档，默认值也早就是 `<用户主目录>/dsh-lore-memory`。
+- 自测 586 → **601/601**（另有 1 条跳过，见下）；`test:plugin` 13 → **15 支 harness**
+  （`audit-memory-settings.mjs` 与 `audit-memory-migration.mjs` 是本版新增的两道防线）。
+
+### 顺带修掉三处（同一轮审查报告里复核成立的）
+
+- **一个退化文件名能让所有走记录的命令崩掉**：容器里手滑留一个 `12-.md`，`find_records()` 就会在
+  `f"{num:05d}"` 上抛 `TypeError: unsupported format string passed to NoneType.__format__` ——
+  `brief` / `show` / `search` / `stats` / `topics` / `export` / `archive` / `split` / `index sync`
+  **全线崩**。判据是 `NUM_FILE_RE` 允许破折号后为空（`12-.md` 算记录名），而 `name_number()`
+  取不出篇号。修法与 `by_number()` 的同名守卫一致：取不出篇号就不是记录，跳过。
+- **`meta.title` 还是旧名**（`worklog`，`locale/*.json` 三份同）：插件管理页显示的是它，而包名、
+  仓库、文档早已是 `dsh-lore`。改成 `dsh-lore · worklog` / `dsh-lore · 项目工作记录`。
+  环境变量（`DSH_WORKLOG_*`）与工具名（`worklog_memory`）**故意不动** —— 换掉是破坏性改动，
+  而且它们是历史包袱里唯一还在被文档引用的一层。
+- **`journal.py` 里一行自赋值死代码**（`for r in out: r["path"] = r["path"]`）删掉。
+
+### 第二轮审查（0.8.1 发版前的复看）：文档口径、三处 CLI 缺陷与门禁账目
+
+- **文档和代码终于同一口径**（三份文件都还停在 0.8.0 之前）：`SETTINGS.md`、`RELEASING.md`、
+  `docs/settings-spec.md` 写着"技能那 8 项改完要重启"，而它们从 0.8.0 起就是**用时现读**；
+  `memoryDir` 一行在三份文件里全缺；`SETTINGS.md` 还写着"12 个键"。现在统一为：13 个键、
+  **11 项即时生效**、只有 `memoryEnabled`（"注册不注册"）与 `verbose`（挂载期定的诊断开关）
+  要重启，并各配一张按"装载期事实 / 用时现读"分类的表。同轮修掉的还有：英文那份
+  `memoryEnabled.hint` 仍写着"唯一需要重启的开关"（中文早已改成"两个之一"）、
+  `references/conventions.md` 的小节标题与 `docs/plugin-spec.md` 的四层图还写着旧记忆根
+  `$DSH_HOME/memory`、`settings-spec.md` 里两个列表项都编号「2.」。
+- **任何 `ValueError` 都被说成"记录文件不是 UTF-8"**：`write_raw()` 改抛专用
+  `WriteRefused(ValueError)`，`main()` 只捕它才给编码建议；其余 `ValueError` 报"这条数据没通过
+  校验"并带上类型名。新增 `parse_iso_date()` 守住日期解析——手写的 `日期：2026-02-30` 从
+  "把 `prune` 整个掀掉"变成"当作不老、跳过"（冷存是移动文件的操作，拿不准就不动）。
+- **`cmd_topics` 按 `rid` 做键**：日期式容器的 `rid` 就是那一天，于是同一天 18 篇被折成 1 篇。
+  改用 `rec["path"]`（与同文件 `cmd_stats` 早已写死的规则一致），并在自测里拿三篇同日文章钉住。
+- **信箱不跟随符号链接**（审查里唯一一条安全面）：`_inbox_items()` 除 `os.path.isfile` 外补
+  `os.path.islink` —— `note.md -> 别处文件` 不再能让 `inbox list` / 取件 / `--into-record`
+  读到链接目标。
+- **`inbox put` 的头部变成函数**（`inbox_header(sender, stamp)`）并配一份**黄金夹具**
+  （`tests/fixtures/inbox-item-from-cli.md`）：自测逐字节重放它，格式漂移从此会红。原先
+  `lib/index.js` 里那条注释指向的 `tests/audit-memory-inbox.mjs` **从来没存在过**，已改指向
+  `tests/audit-memory-injection.mjs`。
+- **新增 `tests/audit-memory-migration.mjs`（24 条断言）**：0.8.0 那次一次性迁移的六个分支——
+  复制＋留痕＋`.git` 跟着走＋`.tmp` 不搬＋**旧根一字不动**、留痕后不重复搬、新根非空不覆盖、
+  旧根空/不存在返回 null、新旧同路径返回 null、复制失败回 "nothing was moved"（报告里那条
+  "体积不符→incomplete" 无法可移植地触发，文件头写明不假装验过）。
+- **SKIP 成为一类**（原来靠 `ok(true, '… SKIPPED')` 充数，读起来全绿）：`tests/_report.mjs`
+  新增 `skip()`（收尾行自带 `(N skipped)`），`_selftest.py` 新增 `note()` 与
+  `（N 条跳过，未计入）`；两个恒真断言换成真判据（清单分类总数、配置键在文档里存在）。
+  本机 1 条跳过是"信箱不跟随符号链接"——Windows 建不了符号链接，那一相在 Linux CI 上跑。
+- **主技能包的文件表逐个钉死**：`audit-paths.mjs` 原判据是 `> 5 个文件`，少一个
+  `references/*.md` 没有任何门禁会红（`skill-only/README.md` 那句"8 个"就是这么过期的，已改 9 个）。
+- 另外：本版记下的入口哈希标注为"当时"（`audit` 的判据是"与上一版不同"，不是字面值）。
+
 ## [0.8.0] - 2026-10-14
 
 > **升级须知**：本版**改了记忆的默认落点** —— 从 `<DSH_HOME>/memory` 移到
@@ -112,7 +205,10 @@
   技能文档里的**示例路径**（`references/commands.md` 的样例 check 输出、`skill-only/` 的 `work_log/0042-*.md`）
   也没动 —— 后者原文已写「已归档则在 `<stage>/` 下」，本来就对。
 - **入口 sha256 变了**：上一条「实跑」里写的「**仍是 `bc5894af8473e5a3`**」只对那一轮成立；
-  本轮为了上面那处注释动了 `lib/index.js`，`npm run audit` 现在报 **`547a71a8b07a77e9`**。
+  本轮为了上面那处注释动了 `lib/index.js`，`npm run audit` 现在报 **`547a71a8b07a77e9`**（当时）。
+  > 这类数字**只在写下它的那一版成立**：任何一次碰 `lib/index.js` 都会让它过期，而 `audit` 的
+  > 判据是"与上一版不同"、不是"等于某个字面值"（见 `docs/README.md`：不写会过期的具体数字）。
+  > 0.8.1 期间实测入口是 `21f11b1424a11996`；再往后请以当轮 `npm run audit` 的输出为准（审查报告 F17）。
   再跑一次 `_selftest.py` **553/553**、`test:plugin` **13 支全绿**、`test:skill-only` 无漂移、
   `_package.py --check` **0 漂移**。
 - **新增：工作区使用评价（`发布.md` 的 `feedback:` → `<记忆根>/feedback/`）** —— 这套记录体系还没到"完成"，
@@ -1239,7 +1335,8 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.0...HEAD
+[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.5.1...v0.6.0

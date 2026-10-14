@@ -15,6 +15,7 @@
 //   node tests/audit-paths.mjs
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG } from './_pkg.mjs'
 
 const SKILL = `${PKG}/skills/project-work-log`
@@ -25,11 +26,6 @@ const ONLY_DIST = `${PKG}/dist/skill-only/project-work-log`
 /** Normalise line endings before any byte-level comparison. */
 const lf = (text) => text.replace(/\r\n?/g, '\n')
 
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -42,6 +38,35 @@ function walk(dir, out = []) {
 
 const files = walk(SKILL).filter((f) => /\.(md|py)$/.test(f))
 ok(files.length > 5, 'found the skill files to audit', `${files.length} files`)
+
+/*
+ * …and pin **which** files. `> 5` was the whole safety net here, so a missing `references/*.md`
+ * slipped through every gate: `skill-only/README.md` claimed the package holds "8 files
+ * (including 3 Python scripts)" while the mirror had already grown to 9 (SKILL.md + 5
+ * references + 3 scripts) — the count in the prose was the only thing that disagreed, and
+ * nothing read it (审查报告 F15).
+ *
+ * The list is the **mirror** (this harness reads `PKG`), i.e. what `_package.py` copies out:
+ * `SKILL.md` + every `references/*.md` + the three runtime scripts. `_package.py` itself is a
+ * build tool and must NOT be shipped — that is the second assertion below.
+ */
+const SKILL_FILES = [
+  'SKILL.md',
+  'references/analysis.md',
+  'references/commands.md',
+  'references/conventions.md',
+  'references/memory.md',
+  'references/templates.md',
+  'scripts/_measure.py',
+  'scripts/_selftest.py',
+  'scripts/journal.py',
+]
+const found = files.map((f) => relative(SKILL, f).split(sep).join('/')).sort()
+ok(found.join('|') === [...SKILL_FILES].sort().join('|'),
+   'the skill package holds exactly the expected files',
+   `found: ${found.join(', ')}`)
+ok(!found.includes('scripts/_package.py'),
+   'the packaging script is not shipped inside the skill (it is a build tool)')
 
 /*
  * Old-layout paths may legitimately appear, but only as history: in a section that
@@ -230,5 +255,4 @@ if (existsSync(ONLY_DIST)) {
   }
 }
 
-console.log(problems.length === 0 ? '\npath consistency OK' : `\n${problems.length} FAILED`)
-process.exit(problems.length === 0 ? 0 : 1)
+report('path consistency OK') 

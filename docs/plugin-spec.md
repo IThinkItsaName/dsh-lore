@@ -17,7 +17,7 @@
 ```
 ① 技能层    skills/                    无 DSH 依赖 —— 能在没有 DSH 的环境里单独跑
                  ↓ 引擎是 journal.py（stdlib only）
-② 记忆层    $DSH_HOME/memory/          跨工作区事实 —— 在**所有**工作区之外
+② 记忆层    ~/dsh-lore-memory/        跨工作区事实 —— 在**所有**工作区之外（`memoryDir` 可改）
                  ↓ 写：CLI ／ 读：插件工具
 ③ 运行时层  lib/index.js（宿主半边）     provider ／ 工具 ／ 注入 ／ 只读状态端点
             lib/client.js（浏览器半边）  本 bundle 那一页上的配置卡片

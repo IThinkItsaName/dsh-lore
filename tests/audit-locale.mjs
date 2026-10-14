@@ -23,13 +23,9 @@
 //   node tests/audit-locale.mjs
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG } from './_pkg.mjs'
 
-const problems = []
-const ok = (condition, label, detail = '') => {
-  console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition || !detail ? '' : ` -- ${detail}`}`)
-  if (!condition) problems.push(label)
-}
 
 const pkg = JSON.parse(readFileSync(`${PKG}/package.json`, 'utf8'))
 const localeDir = `${PKG}/locale`
@@ -134,5 +130,4 @@ ok(typeof description === 'object' && Object.keys(description).length > 1,
 console.log(`      title       -> ${JSON.stringify(title)}`)
 console.log(`      description -> ${Object.keys(description).join(', ')}`)
 
-console.log(problems.length === 0 ? '\nplugin locale metadata OK' : `\n${problems.length} FAILED`)
-process.exit(problems.length === 0 ? 0 : 1)
+report('plugin locale metadata OK') 

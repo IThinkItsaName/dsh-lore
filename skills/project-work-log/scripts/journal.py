@@ -89,6 +89,7 @@ import json
 import os
 import re
 import sys
+import time
 import unicodedata
 import zipfile
 from urllib.parse import unquote
@@ -526,6 +527,23 @@ def read_raw(path: str) -> str:
         return ""
 
 
+def parse_iso_date(text: str | None) -> _dt.date | None:
+    """把记录里的日期字段解成 `date`，解不出就返回 `None`（**不抛异常**）。
+
+    存在的理由：`ISO_DATE_RE` 只验"四个数字-两个数字-两个数字"这个**形状**，
+    `2026-02-30`、`2026-13-01` 都能过；真解析要到 `date.fromisoformat` 才失败。
+    手写的记录里出现这种日期完全可能（人写的 `日期：` 行不受任何写入校验），
+    而调用方（`prune`、`inbox`）面对的是"这一篇的日期不能用"，不是"整个命令该炸"。
+    审查报告 F9：以前 `prune` 会因此抛 `ValueError`，被 `main` 说成"文件不是 UTF-8"。
+    """
+    if not text or not ISO_DATE_RE.fullmatch(text):
+        return None
+    try:
+        return _dt.date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
 def utf8_problem(path: str) -> str | None:
     """目标文件不是合法 UTF-8 时返回原因，否则 None（文件不存在也算 None）。
 
@@ -548,13 +566,99 @@ def utf8_problem(path: str) -> str | None:
     return None
 
 
+class WriteRefused(ValueError):
+    """写入被**主动**拒绝，理由必须原样讲给用户听（目前只有"目标不是 UTF-8"）。
+
+    为什么单开一个类型：`main` 原来捕的是 `ValueError`，于是任何 `ValueError` 都被贴上
+    "记录文件必须是 UTF-8" 这句**错误**诊断——实测 `prune` 遇到手写的 `日期：2026-02-30`
+    （`ISO_DATE_RE` 只验数字形状，真解析在 `date.fromisoformat` 才炸）会告诉用户去转编码，
+    照着做当然没用（审查报告 F9）。继承 `ValueError` 是为了不破坏既有调用方与测试的
+    `except ValueError`（语义上它确实是一种 ValueError）。
+    """
+
+
 def write_raw(path: str, text: str) -> None:
-    """外科式写回。非 UTF-8 目标会抛 `ValueError`，绝不把坏字节写成 `U+FFFD`。"""
+    """外科式写回。非 UTF-8 目标会抛 `WriteRefused`，绝不把坏字节写成 `U+FFFD`。
+
+    **先写同目录临时文件再 `os.replace`**：`os.replace` 在同一个卷上是原子的，所以任何时刻
+    读到 `path` 的人要么看到旧内容、要么看到新内容，不会看到被截断的半截文件。原来是
+    `open(path, "w")` 直接写——它先把目标截成 0 字节再写，中途断电/被 kill 就留下一份**残缺
+    的记录**，而"文件永不删、只会丢"正是这个容器的核心承诺（审查报告 F6）。
+    同文件里 `_memory_json_write()` 与状态写入器早就是这个写法，这里只是补齐第三处。
+    """
     problem = utf8_problem(path)
     if problem is not None:
-        raise ValueError(problem)
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        fh.write(text)
+        raise WriteRefused(problem)
+    # 临时文件放同一个目录：换卷的 `os.replace` 不是原子的（会退化成复制+删除）。
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    finally:
+        # 写失败（磁盘满、目标只读、被 kill 之前的那一瞬）也要把临时文件收走，
+        # 否则容器里会慢慢攒下一堆 `<记录>.md.<pid>.tmp`。
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+# 建记录时的占名重试上限。撞名意味着"有人在我算完篇号之后、占名之前抢走了这个名字"，
+# 每撞一次就换下一个篇号；连撞 1000 次说明这个容器不对劲，报错比继续空转好。
+NEW_RECORD_TRIES = 1000
+# 备用随机名的时间戳位数：6 位十六进制 = 24 位，够区分同一毫秒内的并发。
+_TS_HEX_DIGITS = 6
+
+
+def reserve_new_record(journal: str, num: int, slug: str, body: str) -> str | None:
+    """**原子地**占下一个记录文件名，成功返回路径、名字已被占则返回 None。
+
+    原来是 `if os.path.exists(path): 报错` 然后 `write_raw(path, body)`——"先问再写"是
+    test-then-write：两个进程（两个窗口、或脚本与命令同时跑）拿到同一个篇号时，
+    后写的那个**静默覆盖**前一个刚建好的记录。这个容器承诺"文件永不删、只会丢"，
+    覆盖正是最怕的那一种丢（审查报告 F7）。
+
+    改用 `O_CREAT | O_EXCL`：查重与建名是**同一个系统调用**，所以"名字是我的"这件事
+    在拿到 fd 的那一刻就已经成立，不存在中间窗口。内容随后写进同一个 fd——
+    别的进程这时看到的是一个存在但长度为 0 的文件，而 `utf8_problem()` 把空文件判为合法，
+    所以最坏也只是"读到一个空记录"，不会读到半截正文。
+
+    `O_EXCL` 在 POSIX 上把符号链接也挡掉（目标已存在就失败），在 Windows 上同样。
+    """
+    path = os.path.join(journal, f"{num:04d}-{slug}.md" if slug else f"{num:04d}.md")
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return None
+    except OSError:
+        # 目录不可写之类：占名都做不到，那就没有第二个候选可言，交给上层的兜底写法。
+        return None
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(body)
+    except OSError:
+        # 占名成功但正文没写全：**别删**。留着名字（哪怕内容是空的）比让下一个进程
+        # 偷偷用这个篇号要好——用户看得见一个空文件，看不见一次静默覆盖。
+        raise
+    return path
+
+
+def new_record_fallback_name(num: int, slug: str) -> str:
+    """最后一个候选名字：带进程号与时间戳，撞名的概率可以忽略。
+
+    只在"连 `NEW_RECORD_TRIES` 次都没占到名"时用。名字仍然以篇号开头、仍然匹配
+    `NUM_FILE_RE`，所以 `brief` / `index sync` 照旧认它是记录。
+    """
+    stamp = f"{int(time.time() * 1000) % (16 ** _TS_HEX_DIGITS):0{_TS_HEX_DIGITS}x}"
+    tail = f"{slug}-{os.getpid()}-{stamp}" if slug else f"{os.getpid()}-{stamp}"
+    return f"{num:04d}-{tail}.md"
+
+
+def _record_name(journal: str, num: int, slug: str) -> str:
+    """篇号 + slug 的记录文件名（纯计算，**不碰磁盘**；占名是 `reserve_new_record` 的事）。"""
+    return os.path.join(journal, f"{num:04d}-{slug}.md" if slug else f"{num:04d}.md")
 
 
 def rel(root: str, path: str) -> str:
@@ -891,6 +995,10 @@ def memory_root(explicit: str | None = None) -> str:
 
     第 2 条替代了原先的 `<DSH_HOME>/memory`：记忆是**与 agent 无关**的东西，不该跟着
     `$DSH_HOME` 走（见 `docs/memory-spec.md` §零）。旧位置只作为**一次性迁移的来源**。
+
+    **这份文件是两个进程共用的那一份**（2026-10-15 起）：插件在桌面 profile 上不读它
+    （那边真源是 profile patch），但装载时会把卡片的值**写进**它，所以插件与 CLI 解析出
+    同一个根。别把它改成"只有 headless 才用"的东西，否则两边会各写一个库且都不报错。
     """
     if explicit:
         return os.path.abspath(explicit)
@@ -1190,13 +1298,19 @@ def find_records(container: str, skip_dirs: tuple[str, ...] = ()) -> list[dict]:
                 rid, num, date = f[:10], None, f[:10]
             else:
                 num = name_number(f)
+                # `12-.md` 这类**退化名**：`NUM_FILE_RE` 认它是记录名（`is_record_name` 的
+                # 唯一判据），但破折号后面没有正文，`name_number()` 取不出篇号。
+                # 不挡掉就会在下一行 `f"{num:05d}"` 抛 `TypeError: unsupported format
+                # string passed to NoneType.__format__`，于是 `brief` / `show` / `search` /
+                # `stats` / `topics` / `export` / `archive` / `split` / `index sync` **全线崩**。
+                # 判据与 `by_number()` 的同名守卫一致：取不出篇号就不是记录，跳过。
+                if num is None:
+                    continue
                 rid, date = f"{num:05d}", ""
             out.append({"rid": rid, "kind": "num" if style == "num" else "date",
                         "num": num, "date": date, "style": style, "name": f,
                         "path": path, "prefix": ""})
     out.sort(key=lambda r: (r["rid"], r["name"]))
-    for r in out:
-        r["path"] = r["path"]
     return out
 
 
@@ -2543,22 +2657,47 @@ def cmd_new(args: argparse.Namespace) -> int:
         print("ERROR: 找不到记录容器（work_log/；旧名 journal/、work-log/ 也认），先按 templates.md 初始化")
         return 1
     entries = find_entries(journal, lessons_skip(lessons))
-    num = (max(entries) + 1) if entries else 1
+    first_free = (max(entries) + 1) if entries else 1
+    num = first_free
     date = args.date or today()
     slug = args.slug or slugify(args.title)
-    fname = f"{num:04d}-{slug}.md" if slug else f"{num:04d}.md"
-    path = os.path.join(journal, fname)
-    body = ENTRY_TEMPLATE.format(num=num, title=args.title, date=date,
-                                 iter=args.iter if args.iter is not None else "-",
-                                 cmd=args.cmd or "<命令 / 数据 / 引用 / 样本>")
-    if os.path.exists(path):
-        print(f"ERROR: 已存在 {rel(root, path)}")
-        return 1
+
+    def entry_body(n: int) -> str:
+        return ENTRY_TEMPLATE.format(num=n, title=args.title, date=date,
+                                     iter=args.iter if args.iter is not None else "-",
+                                     cmd=args.cmd or "<命令 / 数据 / 引用 / 样本>")
+
     if args.dry_run:
+        # dry-run 不占名，所以这里仍然要"先问"：只问不写不会有覆盖风险。
+        # 但**要问到底**——占着的名字要跳过、一路试到空位，报出来的才是真会用的那个篇号。
+        n = num
+        while os.path.exists(_record_name(journal, n, slug)) and n - num < NEW_RECORD_TRIES:
+            n += 1
+        path = _record_name(journal, n, slug)
         print(f"[dry-run] 将创建 {rel(root, path)}\n")
-        print(body)
+        print(entry_body(n))
         return 0
-    write_raw(path, body)
+
+    # 占名与写内容一步做完（见 `reserve_new_record`）：算出篇号到落盘之间没有窗口，
+    # 所以两个进程同时 `new` 不会互相覆盖。撞名就换下一个篇号重试。
+    path = ""
+    for attempt in range(NEW_RECORD_TRIES):
+        n = num + attempt
+        got = reserve_new_record(journal, n, slug, entry_body(n))
+        if got is not None:
+            path = got
+            num = n
+            break
+    else:
+        # 连一千个篇号都被占着：不再空转，用一个带进程号与时间戳的名字落地。
+        # 仍然是个合法记录名，`brief` / `index sync` 照旧认它。
+        fname = new_record_fallback_name(num, slug)
+        path = os.path.join(journal, fname)
+        write_raw(path, entry_body(num))
+        print(f"WARN: 连续 {NEW_RECORD_TRIES} 个篇号都被占，改用 {fname}")
+    if num != first_free:
+        print(f"注意：篇号 {first_free:04d} 已被别的进程占走，本次用 {num:04d}")
+    fname = os.path.basename(path)
     print(f"created {rel(root, path)}")
     if args.insert:
         _, msg = index_sync(journal, lessons, only=[num], stage=args.stage, dry_run=False)
@@ -3527,7 +3666,11 @@ def cmd_prune(args: argparse.Namespace) -> int:
         if is_active_entry(journal, p) or n in cited:
             continue
         d = meta_of(p)["date"]
-        if not ISO_DATE_RE.fullmatch(d or "") or _dt.date.fromisoformat(d) > cutoff:
+        # 日期解不出来（`2026-02-30` 这类手写值）就**当它不老**，跳过：冷存是移动文件的操作，
+        # 拿不准的时候不动它才是安全的那一边。以前这里直接 `fromisoformat`，一篇坏日期
+        # 就让整个 `prune` 抛 `ValueError`（审查报告 F9）。
+        day = parse_iso_date(d)
+        if day is None or day > cutoff:
             continue
         if args.stage and args.stage not in rel(journal, p):
             continue
@@ -3719,15 +3862,18 @@ def cmd_topics(args: argparse.Namespace) -> int:
             t = tok.lower()
             if t in STOPWORDS or len(t) < 4:
                 continue
-            df.setdefault(t, set()).add(rec["rid"])
+            # **按路径**计数，不能按 `rid`：日期式容器里 `rid` 就是 `f[:10]`（那一天），
+            # 于是同一天写的多篇记录会被折成一"篇"——实测一天 18 篇只算 1、而且只显示最后一份。
+            # 同一个文件里的 `cmd_stats` 早把这条规则写死在注释里了，只有这里漏了（审查报告 F10）。
+            df.setdefault(t, set()).add(rec["path"])
     cand = [(t, ns) for t, ns in df.items() if 2 <= len(ns) <= args.max_df]
     cand.sort(key=lambda kv: (-len(kv[1]), kv[0]))
-    by_rid = {r["rid"]: r for r in recs}
+    by_path = {r["path"]: r for r in recs}
     print(f"同主题簇建议（出现 2–{args.max_df} 篇的标识符；用 `--keywords` 可查中文词）\n")
     for t, ns in cand[: args.limit]:
         shown = sorted(ns)
         print(f"{t:28s} {len(shown):2d} 篇  "
-              + ", ".join(entry_label(by_rid[r]) for r in shown[:10])
+              + ", ".join(entry_label(by_path[r]) for r in shown[:10])
               + (" …" if len(shown) > 10 else ""))
     return 0
 
@@ -5319,7 +5465,10 @@ def _inbox_items(memory: str) -> list[dict]:
     out = []
     for name in sorted(os.listdir(d)):
         path = os.path.join(d, name)
-        if name.endswith(".tmp") or not os.path.isfile(path):
+        # `os.path.islink` 要**单独**挡：`isfile()` 会跟随符号链接，于是信箱目录里一个
+        # `note.md -> C:\Users\...\某敏感文件` 就能让 `inbox list` / 取件 / `--into-record`
+        # 读到链接目标并把它写进记录（审查报告：安全面唯一一处偏软，低危但修法就一行）。
+        if name.endswith(".tmp") or os.path.islink(path) or not os.path.isfile(path):
             continue
         out.append({"name": name, "path": path, "size": _file_size(path),
                     "mtime": os.path.getmtime(path)})
@@ -5359,6 +5508,18 @@ def inbox_read(path: str) -> tuple[dict, str]:
     return inbox_split(read(path))
 
 
+def inbox_header(sender: str, stamp: str) -> str:
+    """一条信箱条目的头部（`---` 块 + 一个空行）。
+
+    单独成函数是为了**可被夹具逐字节复现**：`tests/fixtures/inbox-item-from-cli.md` 是
+    另一份实现（`lib/index.js` 的 `inboxSplit`）用来对账的黄金样本，而这份头部原来只在
+    `cmd_inbox_put` 里就地拼出，python 侧没有任何东西能重放它 —— 于是头部措辞改了，
+    两边仍然全绿（审查报告 F14）。`_selftest.py` 现在拿这个函数 + 夹具里的
+    `from` / `at` 重放整份文件并逐字节比较。
+    """
+    return f"---\nfrom: {sender}\nat: {stamp}\nnote: {INBOX_NOTE}\n---\n\n"
+
+
 def cmd_inbox_put(args: argparse.Namespace) -> int:
     memory = memory_root(args.memory)
     if args.file:
@@ -5381,7 +5542,7 @@ def cmd_inbox_put(args: argparse.Namespace) -> int:
     # 谁都能改文件；如实标出"从哪儿发出的"比给一个能随便填的字段有用）。
     sender = memory_workspace_name(os.getcwd())
     stamp = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
-    header = (f"---\nfrom: {sender}\nat: {stamp}\nnote: {INBOX_NOTE}\n---\n\n")
+    header = inbox_header(sender, stamp)
     data = (header + body).encode("utf-8")
     items = _inbox_items(memory)
     total = sum(i["size"] for i in items)
@@ -5841,7 +6002,9 @@ def _add_root(p: argparse.ArgumentParser) -> None:
 
 def _add_memory(p: argparse.ArgumentParser) -> None:
     p.add_argument("--memory", default=None, metavar="P",
-                   help="全局记忆根目录；默认 $DSH_WORKLOG_MEMORY，再默认 $DSH_HOME/memory")
+                   help="全局记忆根目录；优先级 --memory > 设置里的 memoryDir"
+                        "（$DSH_HOME/worklog/settings.json，可由 $DSH_WORKLOG_SETTINGS 改路径）"
+                        " > $DSH_WORKLOG_MEMORY > 默认 <用户主目录>/dsh-lore-memory")
 
 
 def _root_and_num(paths: list[str]) -> tuple[str, str]:
@@ -6304,10 +6467,18 @@ def main(argv: list[str] | None = None) -> int:
         args.date = today()
     try:
         result = args.func(args)
-    except ValueError as exc:
+    except WriteRefused as exc:
         # write_raw 对非 UTF-8 目标主动抛错，避免把坏字节写成 U+FFFD。
         print(f"ERROR: 拒绝写入：{exc}")
         print("       记录文件必须是 UTF-8；请先用编辑器把该文件转成 UTF-8 再重试。")
+        return 2
+    except ValueError as exc:
+        # 其余 `ValueError` 是**数据本身**不合法（例如手写的 `日期：2026-02-30`：`ISO_DATE_RE`
+        # 只验数字形状，真解析要到 `date.fromisoformat` 才失败），跟编码无关。以前这里一律
+        # 说成"文件不是 UTF-8"，用户去转编码永远修不好（审查报告 F9）。分开报，并带上类型名，
+        # 免得"安静地变成一句通用错误"。
+        print(f"ERROR: 这条数据没通过校验：{exc}")
+        print(f"       （{type(exc).__name__}；多半是记录里的日期/编号/字段写错了，与编码无关）")
         return 2
     return result if isinstance(result, int) else 0
 

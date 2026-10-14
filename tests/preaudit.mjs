@@ -3,6 +3,7 @@
 import { readFileSync, realpathSync, existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
+import { ok, skip, report, problems } from './_report.mjs'
 import { PKG, extraBundledSkills } from './_pkg.mjs'
 
 /*
@@ -13,11 +14,6 @@ import { PKG, extraBundledSkills } from './_pkg.mjs'
  */
 const PROFILE = process.env.DSH_PROFILE_DIR ?? ''
 
-const problems = []
-const ok = (c, label, detail = '') => {
-  console.log(`${c ? 'PASS' : 'FAIL'}  ${label}${c || !detail ? '' : ` -- ${detail}`}`)
-  if (!c) problems.push(label)
-}
 
 /** Resolve the package the profile actually installs, or '' when unknowable. */
 function installedTarget() {
@@ -36,12 +32,12 @@ const isInstalled = installed !== '' && installed === PKG.replaceAll('\\', '/').
 
 /* 1. the profile link resolves to the package we edited */
 if (PROFILE === '') {
-  ok(true, 'profile link check SKIPPED (set DSH_PROFILE_DIR to enable it)')
+  skip('profile link check SKIPPED (set DSH_PROFILE_DIR to enable it)')
 } else if (installed === '') {
   ok(false, 'the profile has the dsh-lore link', `${PROFILE}/node_modules/dsh-lore`)
 } else if (!isInstalled) {
   console.log(`      (this package is not the installed one; installed: ${installed})`)
-  ok(true, 'profile link check SKIPPED (running from a copy, not the installed package)')
+  skip('profile link check SKIPPED (running from a copy, not the installed package)')
 } else {
   ok(true, 'the profile link resolves to this package', installed)
 }
@@ -138,13 +134,10 @@ ok(def.content === bodyFromFile, 'the served body equals the current file body (
 
 /* 6. no stale second copy of the package that the host might import instead */
 if (!isInstalled) {
-  ok(true, 'pnpm store check SKIPPED (this package is not the installed one)')
+  skip('pnpm store check SKIPPED (this package is not the installed one)')
 } else {
   const stale = `${PROFILE}/node_modules/.pnpm`
   ok(existsSync(stale), 'the pnpm store exists (link install)')
 }
 
-console.log(problems.length === 0
-  ? `\nAUDIT CLEAN — the host will import sha256:${hash} and it satisfies the registry`
-  : `\n${problems.length} PROBLEM(S)`)
-process.exit(problems.length === 0 ? 0 : 1)
+report(`AUDIT CLEAN — the host will import sha256:${hash} and it satisfies the registry`) 

@@ -14,6 +14,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      # node 门禁（tests/*.mjs）要从 npm 拿宿主包才 import 得动 `lib/index.js`：
+      # 插件的两个 peerDependencies 在 `devDependencies` 里钉了版本，`npm ci` 就是
+      # "CI 用什么版本跑门禁"的唯一答案。本机靠 `dsh-ref/source` 那棵参考树，
+      # CI 没有它，走的就是这条 `node_modules` 路（`tests/_pkg.mjs` 的候选顺序）。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install test-only host packages
+        run: npm ci
+
       - name: Validate package.json
         run: python -m json.tool package.json > /dev/null
 
@@ -39,3 +50,17 @@ jobs:
       # 要看条数就读这一步的输出最后一行。
       - name: Skill self-test
         run: python skills/project-work-log/scripts/_selftest.py
+
+      # `dist/skill-only/` 是 `tools/build-skill-only.mjs` 的产物，不在 git 里；
+      # `tests/audit-paths.mjs` 会核对它与源逐字节一致，所以要先把检查过的产物建出来。
+      - name: Build the skill-only copy
+        run: npm run test:skill-only
+
+      # 15 支 harness。它们各自的收尾都用 tests/_report.mjs 的 `report()`，
+      # 有 FAIL 就 exit 1；有 SKIP 会在末行注明 `(N skipped)`，别把"没验"读成"验过"。
+      - name: Plugin harnesses
+        run: npm run test:plugin
+
+      # 入口哈希 + 宿主注册表契约。
+      - name: Registry pre-audit
+        run: npm run audit

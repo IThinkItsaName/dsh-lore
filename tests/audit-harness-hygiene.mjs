@@ -151,4 +151,20 @@ ok(/^def top_level_ranges\(/m.test(driver) && /字样只出现在相之外/.test
 ok(/--no-preflight/.test(driver),
   '起飞前检查能显式跳过（`--no-preflight`），而不是悄悄失效')
 
+/* 两条"标题"正则各管各的（2026-10-15 性能复核补的守卫）：`HEADING_RE` 管**首行篇号**
+   （`renumber_body` 在用），`_SECTION_HEADING_RE` 管**小节标题**（`heading_level()` 用）。
+   性能补丁的第一版把新常量也命名成 `HEADING_RE` —— 后定义的那个**静默覆盖**前一个，
+   症状是 `check` 直接 `ERROR: … invalid literal for int() with base 10: '#'`、退出 2
+   （靠 A/B 比对 exit code 才发现）。名字不许再撞，两条也不许变成同一条正则。 */
+const journalPy = read(join(PKG, 'skills', 'project-work-log', 'scripts', 'journal.py'))
+const numHeading = /^HEADING_RE = (.+)$/m.exec(journalPy)
+const sectionHeading = /^_SECTION_HEADING_RE = (.+)$/m.exec(journalPy)
+const numHeadingDefs = (journalPy.match(/^HEADING_RE = /gm) || []).length
+const sectionHeadingDefs = (journalPy.match(/^_SECTION_HEADING_RE = /gm) || []).length
+ok(numHeading !== null && sectionHeading !== null
+  && numHeadingDefs === 1 && sectionHeadingDefs === 1
+  && numHeading[1].trim() !== sectionHeading[1].trim(),
+  '两个标题正则各定义一次、且不是同一条（重名会静默覆盖 `HEADING_RE`，`check` 当场退出 2）',
+  `HEADING_RE 定义 ${numHeadingDefs} 次、_SECTION_HEADING_RE 定义 ${sectionHeadingDefs} 次`)
+
 report(`harness hygiene OK — ${wiredGates.length} gates wired, all importing the shim, the CI + RELEASING prose matches reality (${rows} mutations), and the driver keeps its preflight (${registered.size} phases registered)`)

@@ -1644,13 +1644,17 @@ def strip_title_prefix(title: str, style: str, fname_date: str = "") -> str:
     return s
 
 
-def meta_of(path: str) -> dict:
+def meta_of(path: str, text: str | None = None) -> dict:
     """解析一篇记录的元数据（不全量保留正文）。
 
     两种命名都认：形制从**文件名**判定，`date` 优先取入口的 `日期：` 行，
     日期式记录没有那一行时退回文件名里的日期（实测 71 篇里 68 篇靠文件名）。
+
+    `text` 只给"已经读过这一篇、还想省掉第二次 open"的调用方（`stats` 每篇要两样东西：
+    元数据与最新日期）—— 传进来就照它解析，不传就自己读。
     """
-    text = read(path)
+    if text is None:
+        text = read(path)
     name = os.path.basename(path)
     style = name_style(name) or "num"
     fdate = name_date(name)
@@ -1800,8 +1804,23 @@ def all_metas(entries: dict[int, list[str]]) -> dict[int, dict]:
 # --------------------------------------------------------------------------- #
 # 行级小节工具（保留换行与其余内容）
 # --------------------------------------------------------------------------- #
+# 小节标题的形制（`## 验证`）。**不能叫 `HEADING_RE`** —— `:155` 那条同名正则管的是
+# "首行篇号"（`renumber_body` 在用），重名会静默把它覆盖掉，症状是 `check` 直接
+# `ERROR: … invalid literal for int() with base 10: '#'`、退出 2（2026-10-15 性能复核
+# 的第一版补丁就这么撞了一次）。名字拉开距离，并由自测与卫生门禁各守一次。
+_SECTION_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*\r?\n?$")
+
+
 def heading_level(line: str):
-    m = re.match(r"^(#{1,6})[ \t]+(.*?)[ \t]*\r?\n?$", line)
+    """这一行是不是小节标题；是则返回 `(层级, 标题文字)`，否则 None。
+
+    `check` 要对着**每一行**问这个问题（一篇记录约 6 259 次），所以先做一次
+    `startswith("#")` 短路：正文行占绝大多数，在这里就返回，不必进正则。
+    `_SECTION_HEADING_RE.match(line)` 与原来的 `re.match(同一个串, line)` 结果逐字相同。
+    """
+    if not line.startswith("#"):
+        return None
+    m = _SECTION_HEADING_RE.match(line)
     return (len(m.group(1)), m.group(2)) if m else None
 
 
@@ -4003,10 +4022,17 @@ def cmd_stats(args: argparse.Namespace) -> int:
         return 0
     # **按路径**做键，不能按 rid：日期式容器里同一天有多篇（实测一天 18 篇），
     # 按身份做键会让它们互相覆盖，合规率因此算少一大截。
-    metas = {r["path"]: meta_of(r["path"]) for r in recs}
+    # 一遍读完：元数据与"最新日期"要的是同一份文本，分两趟等于每篇 open/read 两次
+    # （1600 篇实测 3200 次 `_io.open`，占 `stats` 七成时间）。
+    metas: dict[str, dict] = {}
+    dates = []
+    for r in recs:
+        text = read(r["path"])
+        metas[r["path"]] = meta_of(r["path"], text=text)
+        d = max_date_in(text)
+        if d:
+            dates.append(d)
     active = [r for r in recs if is_active_entry(journal, r["path"])]
-    dates = [max_date_in(read(r["path"])) for r in recs]
-    dates = [d for d in dates if d]
     total_bytes = sum(m["bytes"] for m in metas.values())
     total_lines = sum(m["lines"] for m in metas.values())
     biggest = max(recs, key=lambda r: metas[r["path"]]["bytes"])
@@ -5677,16 +5703,52 @@ def _inbox_items(memory: str) -> list[dict]:
         # 读到链接目标并把它写进记录（审查报告：安全面唯一一处偏软，低危但修法就一行）。
         if name.endswith(".tmp") or os.path.islink(path) or not os.path.isfile(path):
             continue
-        out.append({"name": name, "path": path, "size": _file_size(path),
-                    "mtime": os.path.getmtime(path)})
+        try:
+            out.append({"name": name, "path": path, "size": _file_size(path),
+                        "mtime": os.path.getmtime(path)})
+        except FileNotFoundError:
+            # "列目录"与"读属性"之间没有原子性：另一个进程（并发的 `inbox take`）正好在
+            # 这个窗口里把它取走了。它本来就要从列表里消失，跳过即可 —— 2026-10-15 的并发
+            # 复现里，这一条 `[WinError 2]` 会把 `inbox list` / `inbox count` / 取件整条
+            # 命令带走（`size` 那边一直有 `_file_size` 兜着"读不出来算 0"，`mtime` 没有）。
+            continue
     return out
 
 
-def _inbox_first_line(path: str) -> str:
-    for line in inbox_body(read(path)).splitlines():
+def _first_line_of(text: str) -> str:
+    """条目正文的第一行非空内容（`inbox list` / `sweep` 摘要那一列）。"""
+    for line in inbox_body(text).splitlines():
         if line.strip():
             return line.strip()[:80]
     return "(空)"
+
+
+def _inbox_read_or_none(path: str) -> tuple[dict, str] | None:
+    """读一条信箱条目；**已经被别的进程取走**时返回 `None`。
+
+    `inbox list` / `take` / `sweep` 都是"先列目录、再逐条读或删"，两件事之间没有原子性：
+    并发的 `inbox take` 正好能在这个窗口里把条目删掉（2026-10-15 并发下复现到）。
+
+    为什么不是"接住 `FileNotFoundError`"就够：`read()` 对**缺失的文件**本来就宽容
+    （返回空串，见 `journal.py:518`），文件没了根本不会抛 —— 不先看一眼存在性的话，
+    `take` 会拿一条空消息去建一篇**空记录**，那比报错更坏。看完到读之间那个更窄的窗口
+    再由 `except` 兜住；真读不出来（权限、编码）照旧往上抛。
+    """
+    if not os.path.isfile(path):
+        return None
+    try:
+        return inbox_read(path)
+    except FileNotFoundError:
+        return None
+
+
+def _remove_inbox_item(path: str) -> bool:
+    """删掉一条信箱条目；**已经被别的进程取走**时返回 `False`（那不是错误）。"""
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def inbox_split(text: str) -> tuple[dict, str]:
@@ -5764,7 +5826,8 @@ def cmd_inbox_put(args: argparse.Namespace) -> int:
     d = memory_inbox_dir(memory)
     os.makedirs(d, exist_ok=True)
     # 文件名里的 slug 取**正文首行**。从前这里把 `--file` 的路径与位置参数的文本一起丢给
-    # `_inbox_first_line()`（它收的是**路径**），于是"用位置参数投的"永远得到 `msg` 这个名字。
+    # 取摘要的那个函数（它收的是**路径**、只服务于列表），于是"用位置参数投的"永远得到
+    # `msg` 这个名字。
     first = next((line.strip() for line in body.splitlines() if line.strip()), "")
     stem = slugify(first[:80]) or "msg"
     name = f"{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{stem[:24]}.md"
@@ -5780,24 +5843,31 @@ def cmd_inbox_put(args: argparse.Namespace) -> int:
 
 def cmd_inbox_list(args: argparse.Namespace) -> int:
     memory = memory_root(args.memory)
-    items = _inbox_items(memory)
+    # 每条**只读一次**（`from` 与摘要用的是同一份正文）：从前一个条目读两遍，两遍之间
+    # 都可能被并发的取件删掉 —— 少读一遍就少一个窗口，也少一次 IO。
+    rows: list[tuple[dict, dict, str]] = []
+    for i in _inbox_items(memory):
+        got = _inbox_read_or_none(i["path"])
+        if got is None:
+            continue                     # 列目录之后被别的进程取走：它本来就不该在列表里
+        rows.append((i, got[0], got[1]))
     if args.json:
         print(json.dumps([{"name": i["name"], "size": i["size"],
-                           "from": inbox_read(i["path"])[0].get("from", ""),
+                           "from": meta.get("from", ""),
                            "age_seconds": int(_dt.datetime.now().timestamp() - i["mtime"])}
-                          for i in items], ensure_ascii=False, indent=2))
+                          for i, meta, _msg in rows], ensure_ascii=False, indent=2))
         return 0
-    print(f"INBOX  {memory_inbox_dir(memory)}（{len(items)} 条 / "
-          f"{sum(i['size'] for i in items)} 字节）")
+    print(f"INBOX  {memory_inbox_dir(memory)}（{len(rows)} 条 / "
+          f"{sum(i['size'] for i, _, _ in rows)} 字节）")
     now = _dt.datetime.now().timestamp()
-    for i in items[: args.limit]:
+    for i, meta, msg in rows[: args.limit]:
         age = int((now - i["mtime"]) // 86400)
         # `from` 是落盘时写下的发件方；手写塞进去的条目没有它，显示 `—` 而不是猜。
-        sender = inbox_read(i["path"])[0].get("from", "—")
+        sender = meta.get("from", "—")
         print(f"  {i['name']}  {i['size']:>6d}B  {age:>3d}天  from={sender}  "
-              f"{_inbox_first_line(i['path'])}")
-    if len(items) > args.limit:
-        print(f"  …（还有 {len(items) - args.limit} 条）")
+              f"{_first_line_of(msg)}")
+    if len(rows) > args.limit:
+        print(f"  …（还有 {len(rows) - args.limit} 条）")
     return 0
 
 
@@ -5814,7 +5884,13 @@ def cmd_inbox_take(args: argparse.Namespace) -> int:
         print(f"ERROR: `{args.name}` 不唯一：{', '.join(i['name'] for i in match)}")
         return 1
     item = match[0]
-    meta, msg = inbox_read(item["path"])
+    got = _inbox_read_or_none(item["path"])
+    if got is None:
+        # 列目录之后、读之前，另一个进程正好把它取走了：说清是哪一种，别让 `[WinError 2]`
+        # 冒充成"写不进去"（2026-10-15 并发复现到的那种收场）。
+        print(f"ERROR: `{item['name']}` 刚被别的进程取走了（`inbox list` 再看一眼）")
+        return 1
+    meta, msg = got
     print(f"--- {item['name']} ---")
     if meta:
         # 头部由工具渲染：收件方**总会**看到发件方与那句"不可信输入"，不依赖作者自觉。
@@ -5908,7 +5984,11 @@ def cmd_inbox_take(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(f"[dry-run] 将删除 {item['name']}")
         return 0
-    os.remove(item["path"])
+    if not _remove_inbox_item(item["path"]):
+        # 我们读完正文、记录也建好之后，那个名字已经不在了：又有一个进程在这中间把它取走
+        # （同一条消息于是进了两条记录 —— 这个容器宁重不丢）。删不成不是失败，说一句就好。
+        print(f"（`{item['name']}` 已经不在信箱里了：别的进程先取走了）")
+        return 0
     print(f"已删除 {item['name']}")
     return 0
 
@@ -5921,15 +6001,21 @@ def cmd_inbox_sweep(args: argparse.Namespace) -> int:
     print(f"INBOX  sweep  {memory_inbox_dir(memory)}")
     print(f"  {len(items)} 条中 {len(old)} 条超过 {args.older_than} 天")
     for i in old:
-        print(f"    {i['name']}  {int((now - i['mtime']) // 86400)}天  {_inbox_first_line(i['path'])}")
+        got = _inbox_read_or_none(i["path"])
+        # 报告这一遍同样可能撞上并发的取件：摘要列里如实写"已不在"，而不是报错。
+        summary = _first_line_of(got[1]) if got else "（已不在信箱里）"
+        print(f"    {i['name']}  {int((now - i['mtime']) // 86400)}天  {summary}")
     if not old:
         return 0
     if not args.apply:
         print("（默认只报告；确认后加 `--apply` 才真删）")
         return 0
+    gone = 0
     for i in old:
-        os.remove(i["path"])
-    print(f"已删除 {len(old)} 条")
+        if not _remove_inbox_item(i["path"]):
+            gone += 1
+            print(f"    （{i['name']} 已被别的进程取走，跳过）")
+    print(f"已删除 {len(old) - gone} 条" + (f"（另有 {gone} 条在删之前就被取走了）" if gone else ""))
     return 0
 
 

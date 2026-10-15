@@ -3381,6 +3381,129 @@ def _memory_phase(parent: str) -> None:
     r = m(base, "inbox", "take", "不存在的东西")
     ok(r.returncode != 0, "inbox: take 找不到条目时报错", r.stdout)
 
+    # --- 11b) 并发窗口：列目录之后、读/删之前，条目被别的进程取走 ------------- #
+    #
+    # `inbox list` / `take` / `sweep` 都是"先列目录、再逐条读或删"，两件事之间没有原子性：
+    # 并发的 `inbox take` 正好能在这个窗口里把条目删掉。2026-10-15 的全量一轮里，上面那组
+    # 六路并发 `take --into-record` 就报过 `rc=[0, 0, 0, 2, 0, 0]` + `缺=[4]`；单独复现
+    # （四路并行、240 轮）抓到 3 次，收场都是
+    # `ERROR: 写不进去：[WinError 2] 系统找不到指定的文件。: '…payload-5.md'`
+    # —— 出错的进程连自己那条都没取到（`os.remove` 失败被 `main` 的 OSError 兜成"写不进去"）。
+    #
+    # 窗口只有几十微秒，靠撞是测不出来的（240 轮里 3 次）。所以这里**故意把窗口拉开**：
+    # 临时替换一个函数，让"另一个进程在这一刻把它取走"确定发生。五条判据跑的都是真代码，
+    # 只是时间点被钉住了。
+    def steal(path: str) -> bool:
+        """把条目从信箱里删掉（模拟并发的取件）；返回它此前在不在。"""
+        try:
+            os.remove(path)
+            return True
+        except FileNotFoundError:
+            return False
+
+    def out_of(argv: list[str]) -> tuple[int, str]:
+        """在**进程内**跑一遍 `main()`、收下它的 stdout（子进程里替换不了函数）。"""
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = JOURNAL.main(argv)
+        return rc, buf.getvalue()
+
+    race = os.path.join(base, "memrace")
+    race_inbox = JOURNAL.memory_inbox_dir(race)
+    ghost = os.path.join(race_inbox, "20260101-000000-1-已经被取走.md")
+    os.makedirs(race_inbox, exist_ok=True)
+
+    def seed(stamp: str, text: str) -> str:
+        """直接写文件布一条信箱条目，返回文件名。
+
+        **不走 CLI**：这几条判据问的是"列目录之后它没了会怎样"，与"记忆根怎么解析"无关 ——
+        用 `--memory` 布夹具的话，别的变异（例如「`--memory` 不再覆盖路径」）会把这一段直接
+        带崩（`os.listdir` 一个不存在的目录），而不是让它红一条。
+        """
+        name = f"{stamp}-seed.md"
+        write(os.path.join(race_inbox, name), text + "\n")
+        return name
+
+    def with_ghost(fn):
+        """在 `_inbox_items()` 的结果后面塞一条**文件已经不在**的条目，再跑 `fn()`。
+
+        那条条目的状态正是"另一个进程在列目录之后把它取走"留在盘上的样子（名字在列表里、
+        文件没了）。这里只是把窗口从几十微秒拉成确定，没有伪造任何"不可能出现的状态"。
+        """
+        real = JOURNAL._inbox_items
+
+        def patched(memory: str) -> list[dict]:
+            return real(memory) + [{"name": os.path.basename(ghost), "path": ghost,
+                                    "size": 12, "mtime": 0.0}]
+        JOURNAL._inbox_items = patched
+        try:
+            return fn()
+        finally:
+            JOURNAL._inbox_items = real
+
+    # ① 列目录与**读属性**之间被取走：`size` 那边一直有 `_file_size` 兜着"读不出来算 0"，
+    #    紧挨着的 `mtime` 没有 —— 这是那次复现里真正抛出来的那一条。
+    victim = seed("20260101-000000-1", "窗口①的那一条。")
+    real_mtime = os.path.getmtime
+
+    def vanish(path, *a, **kw):
+        if os.path.basename(path) == victim:
+            steal(path)
+        return real_mtime(path, *a, **kw)
+
+    os.path.getmtime = vanish
+    try:
+        names, boom = [i["name"] for i in JOURNAL._inbox_items(race)], None
+    except FileNotFoundError as exc:
+        names, boom = [], exc
+    finally:
+        os.path.getmtime = real_mtime
+    ok(boom is None and victim not in names,
+       "inbox: 列目录之后被取走的那条不算出错，只是不在列表里（读属性那个窗口）",
+       f"err={boom!r} names={names}")
+
+    # ② 列表：条目列出来了，读正文那一步它没了 —— 跳过去，别把整条 `list` 带走
+    seed("20260102-000000-1", "窗口②留下来的那一条。")
+    rc, out = with_ghost(lambda: out_of(["inbox", "list", "--memory", race]))
+    ok(rc == 0 and "窗口②留下来的那一条" in out and "已经被取走" not in out,
+       "inbox: list 撞上刚被取走的条目时跳过去，别的照列（不是把 [WinError 2] 抛上去）", out)
+
+    # ③ 取件：名字匹配上了、读之前被取走 —— 说清是"被取走了"，不是"写不进去"
+    seed("20260103-000000-1", "窗口③留下来的那一条。")
+    rc, out = with_ghost(lambda: out_of(
+        ["inbox", "take", os.path.basename(ghost), "--memory", race]))
+    ok(rc == 1 and "刚被别的进程取走了" in out and "写不进去" not in out,
+       "inbox: take 撞上刚被取走的那条时说「被取走了」并以 1 退出（不是 [WinError 2]）", out)
+
+    # ④ 取件的**收尾**：正文读了、记录也建好了，删之前那条没了
+    racews = os.path.join(base, "race-ws")
+    os.makedirs(os.path.join(racews, "work_log"))
+    write(os.path.join(racews, "work_log", "README.md"), INDEX)
+    victim4 = seed("20260104-000000-1", "窗口④要被取走的那一条。")
+    real_gone = JOURNAL._inbox_read_or_none
+
+    def read_then_steal(path: str):
+        got = real_gone(path)                 # 正常读（内容拿得到）
+        if os.path.basename(path) == victim4:
+            steal(path)                       # 读完那一瞬，另一个进程把它取走了
+        return got
+
+    JOURNAL._inbox_read_or_none = read_then_steal
+    try:
+        rc, out = out_of(["inbox", "take", victim4, "--into-record", "窗口④的记录",
+                          "--memory", race, "--root", racews])
+    finally:
+        JOURNAL._inbox_read_or_none = real_gone
+    ok(rc == 0 and "created" in out and "已经不在信箱里了" in out,
+       "inbox: take 的收尾撞上「已经被别人取走」时说一句就完（记录已建，不算失败）", out)
+
+    # ⑤ sweep：报告与删除两步都容得下"已经被取走"
+    seed("20260105-000000-1", "窗口⑤留下来的那一条。")
+    rc, out = with_ghost(lambda: out_of(
+        ["inbox", "sweep", "--older-than", "0", "--apply", "--memory", race]))
+    ok(rc == 0 and "（已不在信箱里）" in out and "已被别的进程取走，跳过" in out,
+       "inbox: sweep 报告与删除两步都容得下「已经被取走」（不是把 [WinError 2] 抛上去）", out)
+
     # --- 12) promote：三条件同时满足才报候选 --------------------------------
     pm = os.path.join(base, "mempromote")
     os.makedirs(pm)
@@ -3559,6 +3682,24 @@ def numbering_phase(parent: str) -> None:
         ok(heads == got,
            f"{cnt} 路同号：正文首行的篇号 == 文件名里的号（改名要连正文一起改）",
            f"heads={heads} nums={got}")
+
+    # ---- 两条"标题"正则各管各的（2026-10-15 性能复核补的守卫）---------------------- #
+    #
+    # `HEADING_RE`（`journal.py:155`，管**首行篇号**，上面刚用过、`renumber_body` 也在用）
+    # 与小节标题的 `_SECTION_HEADING_RE`（`heading_level()` 在用）一旦重名，后定义的那个会
+    # **静默覆盖**前一个：症状是 `check` 直接
+    # `ERROR: … invalid literal for int() with base 10: '#'`、退出 2 —— 性能补丁的第一版
+    # 就这么撞过一次，靠 A/B 比对 exit code 才发现（当时还差点信了一个假的 62×）。
+    # 这里把两条的**行为**各钉一句：覆盖掉任一条，这条断言都会红。
+    num_hit = JOURNAL.HEADING_RE.match("# 0001 · 标题")
+    ok(num_hit is not None and num_hit.group(1) == "0001"
+       and JOURNAL.heading_level("## 验证") == (2, "验证")
+       and JOURNAL.heading_level("## 验证 \t\n") == (2, "验证")
+       and JOURNAL.heading_level("正文一行，不是标题") is None
+       and JOURNAL.heading_level("#") is None,
+       "两条标题正则各管各的：`HEADING_RE` 仍取得到首行篇号，`heading_level` 仍认 `## 验证`",
+       f"HEADING_RE={JOURNAL.HEADING_RE.pattern!r} "
+       f"小节={JOURNAL._SECTION_HEADING_RE.pattern!r}")
 
     # ---- 对账的另一半：先收工的那一份，不许被"名字更小"顶掉（2026-10-15 补）-------- #
     #

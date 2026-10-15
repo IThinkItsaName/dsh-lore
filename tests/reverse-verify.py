@@ -327,8 +327,8 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
          '        fh.write(text)',
          "inbox: 正文与投进去的一模一样（二进制写，不翻译换行；头部之外不多不少）"),
     ("memory", "inbox take 不删原件",
-     '    os.remove(item["path"])\n    print(f"已删除 {item[\'name\']}")',
-     '    print(f"已删除 {item[\'name\']}")',
+     '    try:\n        os.remove(path)\n    except FileNotFoundError:\n        return False\n    return True',
+     '    try:\n        pass\n    except FileNotFoundError:\n        return False\n    return True',
      "inbox: 转移之后原件被删掉"),
     ("memory", "inbox take 不搬原文",
          '            if span:\n'
@@ -392,6 +392,33 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      'description: __DESC__\ndisable-model-invocation: true',
      'description: __DESC__',
      "memory: 骨架默认关着（frontmatter 的 disable-model-invocation），避免半成品进模型目录"),
+    # ── 信箱的并发窗口（2026-10-15：全量一轮里抓到 `[WinError 2] …payload-5.md`）────
+    # `inbox list` / `take` / `sweep` 都是"先列目录、再逐条读或删"，中间没有原子性；
+    # 并发的取件正好能在这个窗口里把条目删掉。窗口只有几十微秒（四路并行 240 轮才撞到
+    # 3 次），所以自测那边是**把窗口拉开**验的（`_selftest.py` 的 11b 段）。下面每条各拆掉
+    # 一处兜底，让对应的那条判据变红。
+    ("memory", "列属性那处的兜底不再认 FileNotFoundError（等于退回没有兜底）",
+     '        except FileNotFoundError:\n            # "列目录"与"读属性"之间没有原子性',
+     '        except ZeroDivisionError:\n            # "列目录"与"读属性"之间没有原子性',
+     "inbox: 列目录之后被取走的那条不算出错"),
+    ("memory", "列目录之后被取走的条目又当成一条真消息（存在性检查没了）",
+     '    if not os.path.isfile(path):\n        return None\n    try:\n        return inbox_read(path)',
+     '    if False:\n        return None\n    try:\n        return inbox_read(path)',
+     "inbox: list 撞上刚被取走的条目时跳过去"),
+    ("memory", "取件撞上被取走的条目时不再算「找不到」（退出码退回 2）",
+     "        print(f\"ERROR: `{item['name']}` 刚被别的进程取走了（`inbox list` 再看一眼）\")\n"
+     "        return 1",
+     "        print(f\"ERROR: `{item['name']}` 刚被别的进程取走了（`inbox list` 再看一眼）\")\n"
+     "        return 2",
+     "inbox: take 撞上刚被取走的那条时说"),
+    ("memory", "删除条目时不再容得下「已经被别人取走」（sweep 那一步会带走整条命令）",
+     '    except FileNotFoundError:\n        return False\n    return True',
+     '    except ZeroDivisionError:\n        return False\n    return True',
+     "inbox: sweep 报告与删除两步都容得下"),
+    ("memory", "取件的收尾不再容得下「已经被别人取走」（又去裸删）",
+     '    if not _remove_inbox_item(item["path"]):\n        # 我们读完正文、记录也建好之后',
+     '    if False:\n        # 我们读完正文、记录也建好之后',
+     "inbox: take 的收尾撞上"),
 
     # ── config：项目配置文件（三层优先级：命令行 > .config.json > 内置默认）──────────
     # 这一相的核心不变量就是那条优先级。下面几条各破坏它的一面。
@@ -517,6 +544,14 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "        while (os.path.exists(_record_name(journal, n, slug))) \\\n"
      "                and n - num < NEW_RECORD_TRIES:",
      "new --dry-run 的篇号 == 真跑的篇号"),
+    # 2026-10-15 性能复核：`heading_level()` 从"每行现编正则"改成"先短路、再用预编译的
+    # `_SECTION_HEADING_RE`"。这一改只有"行尾空白与换行要不要去掉"这一处语义，去掉它
+    # 就是另一条解析结果（`(2, '验证  ')` 而不是 `(2, '验证')`），红的正是新加的那条
+    # "两条标题正则各管各的"。
+    ("numbering", "小节标题不再去掉行尾空白与换行",
+     '_SECTION_HEADING_RE = re.compile(r"^(#{1,6})[ \\t]+(.*?)[ \\t]*\\r?\\n?$")',
+     '_SECTION_HEADING_RE = re.compile(r"^(#{1,6})[ \\t]+(.*?)$")',
+     "两条标题正则各管各的"),
 ]
 
 

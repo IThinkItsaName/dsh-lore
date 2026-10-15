@@ -33,13 +33,19 @@ import shutil
 import subprocess
 import sys
 
+# 本驱动会**执行**技能脚本（直接 import，以及起子进程跑自测），而 Python 默认会在被执行的
+# `.py` 旁边写 `__pycache__` —— 技能脚本住在包内（`skills/project-work-log/scripts/`），
+# 于是「跑过本驱动」会把 `_package.py --check` 弄红（副本里遗留的 `__pycache__` 会随包发
+# 出去）。跑之前先关掉字节码写入：本进程这一句，子进程再加一条环境变量（见 unmutated_labels）。
+sys.dont_write_bytecode = True
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE = os.path.dirname(os.path.dirname(HERE))
 
-# 技能源在哪：这份文件在**两个地方**是同一份字节 —— 工作区的 `publish/worklog/tests/`（作者改这里）
-# 与仓库的 `tests/`（`_package.py` 同步出来的镜像）。`WORKSPACE` 那个表达式只对前者成立，
-# 在镜像下会多算一级（落到仓库的父目录），所以不能只认一条路径：先试作者布局，再试镜像布局。
-# `--skill-dir` 覆盖这两者，给两种布局都对不上的 checkout 用。
+# 技能源在哪：2026-10-15 起测试 harness 只有**一份**（就是本目录所在的 `tests/`，
+# 从前还有一份 `logs/tests/` 镜像，已收并）。所以正常布局下命中第二条 —— 包内的
+# `skills/project-work-log/scripts/`。第一条是历史遗留下来的"作者工作区布局"，留着是为了
+# 兼容别的 checkout（顶层带 `.pi/` 的那种）；`--skill-dir` 覆盖这两者。
 SKILL_CANDIDATES = (
     os.path.join(WORKSPACE, ".pi", "skills", "project-work-log", "scripts"),
     os.path.join(os.path.dirname(HERE), "skills", "project-work-log", "scripts"),
@@ -573,7 +579,9 @@ def unmutated_labels(selftest_path: str, pre_root: str) -> tuple[set[str], list[
     那时标签是**残缺**的，调用方不能把"找不到"直接当成"断言没执行"。
     """
     os.makedirs(pre_root, exist_ok=True)
-    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    # `PYTHONDONTWRITEBYTECODE`：子进程同样不能在被执行的技能脚本旁边留 `__pycache__`
+    # （本进程那句 `sys.dont_write_bytecode` 不会继承给子进程）。
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1")
     try:
         proc = subprocess.run([sys.executable, selftest_path, "--root", pre_root],
                               capture_output=True, text=True, encoding="utf-8",

@@ -20,6 +20,10 @@
 - **`npm test` 现在带 `-B`**（不写 `.pyc`）：自测脚本住在技能包里，Python 默认会把
   `__pycache__` 生成在包内，而 `_package.py --check` 把副本里的 `__pycache__` 判成漂移 ——
   于是"跑过自测"本身会把下一道门禁弄红。README 的自测段与 CI 同步带上 `-B`。
+- **变异驱动也不再留 `__pycache__`**：它同样会**执行**技能脚本（直接 import 相函数，并起子进程
+  跑未变异自测），所以光给 `npm test` 加 `-B` 不够 —— `tests/reverse-verify.py` 里加一句
+  `sys.dont_write_bytecode = True`，并给那个子进程的环境加 `PYTHONDONTWRITEBYTECODE=1`。
+  判据：跑完整跑 96 条之后 `_package.py --check` 仍是 **0 漂移**。
 
 ## [0.8.1] - 2026-10-15
 

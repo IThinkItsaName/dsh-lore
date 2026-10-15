@@ -97,8 +97,15 @@ python skills/project-work-log/scripts/journal.py check --strict --quiet "<每�
 
 基线（**数字变了就是回归**）：`comfy` `0/0/0`；`dsh_from_github` `7/0/130`；
 `embeding try` 下七条分别为 `_shared 1/0/0`、`1_minimind_main 0/0/9`、
-`2_multi_attention 0/0/10`、`3_param_block 0/0/11`、`4_block_math 1/0/0`、
-`5_diffusion 0/0/2`、`6_block_wiring 1/0/3`。
+`2_multi_attention 2/0/10`、`3_param_block 0/0/11`、`4_block_math 1/0/0`、
+`5_diffusion 0/0/3`、`6_block_wiring 1/0/3`。
+
+> **2026-10-15 复跑的两处上调，都是语料自己长了，不是回归**：
+> `2_multi_attention` 的 error `0 → 2` —— `work_log/2026-10-09-过程债清理-评测确定性防覆盖闸与跨线经验.md`
+> 里两条死链写的是 `../_lessons/2026-10-0{7,8}-….md`：`_lessons/` 在**上一层**（`embeding try/_lessons`），
+> 这个容器自己下面没有，少写了一级；`5_diffusion` 的 info `2 → 3` ——
+> `work_log/2026-09-30-阶段复盘-R1到A2b.md` 缺验证类小节。两份记录都写在 09-29 那次记基线之后。
+> 语料是只读的（跨工作区不许改），所以这里跟着上调基线；**此后数字再变才是回归**。
 
 > **三份语料的绝对路径**（2026-09-29 补写：原先没记，`embeding try` 一挪窝就得满盘找）：
 > `D:\Program Files (x86)\comfy`、`D:\Program Files (x86)\dsh_from_github`、

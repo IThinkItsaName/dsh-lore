@@ -4,52 +4,16 @@
 > 旧链接由 GitHub **自动重定向**）。**环境变量仍是 `DSH_WORKLOG_*`** —— 它们指的是"工作记录"
 > 这个概念，不是包名；**技能名 `project-work-log` 与工具名 `worklog_memory` 也都没变。**
 
-> **一条工作记忆链路**，不是一个日志工具。三块能力，依赖**单向向下**：
->
-> | 层 | 干什么 | 依赖 |
-> |---|---|---|
-> | **技能层** | 把一次会话做过的事**留在项目里**：过程记录 + 索引台账 + 经验手册 + 27 个子命令的工具箱 | 只要 Python 标准库，**不需要 DSH** |
-> | **记忆层** | 把跨项目学到的东西**存在所有工作区之外**（**记忆根可配置**，默认 `~/dsh-lore-memory`）：来源分档、索引、收敛、升格、信箱 | 纯文件，不知道插件存在 |
-> | **插件层** | 在 DSH 上把记忆**送到模型眼前**（索引注入）、给模型读写记忆的工具、把技能注册进宿主、一张配置卡片 | DSH（`dsh.bundle`） |
->
-> **三层可以只用一层**：只装技能层，就是一套完整可校验的记录体系（`skill-only/` 那条线更极端 ——
-> 连脚本都不要）；装上插件，才多出记忆与注入。
+**一条工作记忆链路**，不是一个日志工具。三块能力，依赖**单向向下**：
 
-### 0.8.1 修的东西（2026-10-15 发布）
+| 层 | 干什么 | 依赖 |
+|---|---|---|
+| **技能层** | 把一次会话做过的事**留在项目里**：过程记录 + 索引台账 + 经验手册 + 27 个子命令的工具箱 | 只要 Python 标准库，**不需要 DSH** |
+| **记忆层** | 把跨项目学到的东西**存在所有工作区之外**（记忆根可配置，默认 `~/dsh-lore-memory`）：来源分档、索引、收敛、升格、信箱 | 纯文件，不知道插件存在 |
+| **插件层** | 在 DSH 上把记忆**送到模型眼前**（索引注入）、给模型读写记忆的工具、把技能注册进宿主、一张配置卡片 | DSH（`dsh.bundle`） |
 
-| 改动 | 是什么 |
-|---|---|
-| **记忆根设置现在真的生效** | 0.8.0 的「记忆存放位置」在**桌面 profile 上是死的**：卡片把值写进 profile patch，而插件只看得见 `<DSH_HOME>/worklog/settings.json`（桌面**故意**不读它），于是记忆永远落在默认根，还会附送一条 `ignoring unsupported config keys: memoryDir` 的警告。现在记忆侧显式接收本次装载的设置，`memoryDir` 也进了"本插件拥有的键"清单 |
-| **两个进程读同一个根** | 插件是一个进程，`journal.py` 是**另一个**；卡片的值现在会在装载时落进 `settings.json`（CLI 已经会读的那个文件），所以模型侧与命令行侧不会再各写一个库 |
-| **门禁补课** | 新增 `tests/audit-memory-settings.mjs`（25 条断言，覆盖上面两条）；`tests/_pkg.mjs` 补钉 `DSH_HOME` —— 不钉的话在有真实记忆的机器上跑 harness 会把私人记忆复制进临时目录（`<DSH_HOME>/memory` 是迁移的来源） |
-| **§附录五条待确认项全部成立** | 复核结论：`status --set` 只改重复字段的第一行（现在每行都改）、`todo --done ""` 勾的是第一篇（空串被拒）、`index compact` 层级不够时静默跳过（现在记账并给 `--depth` 提示）、`memory add` 重复条目仍回 0（现在报错退 1）；卡片侧则是留空的路径栏显示死文案、写失败原因被吞掉。判据已转成常驻断言（自测 601 → **614/614**，客户端 harness 新增第 6 节） |
-
-### 0.8.0 的新东西（2026-10-14 发布）
-
-| 改动 | 是什么 |
-|---|---|
-| **记忆根可配置，默认移出 `$DSH_HOME`** | 默认 `~/dsh-lore-memory`（可用设置卡片「记忆存放位置」或 `--memory` 改）。优先级 `--memory` > 设置里的 `memoryDir`（相对路径按**用户主目录**解析）> `$DSH_WORKLOG_MEMORY` > 默认。**CLI 与插件认同一个设置文件** —— 不认就会"卡片改了、CLI 还写旧根"的静默劈叉 |
-| **一次性迁移** | 首次解析时，若新根为空且旧根 `<DSH_HOME>/memory` 有内容，整份**复制**过去并留 `.moved-from-dsh-home` 痕迹；**旧根绝不自动删**（确认后可自行删） |
-| **归档支持多级** | `archive --stage <主题>/<阶段>`（逐段套用同一条名字规则，另拒 `.`/`..` 与绝对路径）；同一个目录分几次归档**只占一行**并并入篇号区间；配套 `index compact --depth N` |
-| **设置"改完即时生效"** | 技能那 8 项（开关、目录、语言、调用许可）从装载参数改成**用到时现读**。依据 `cordis` 的 volatile 机制：只变 `.volatile()` 字段时宿主**不重挂载**。**需要重启的设置从 9 项降到 2 项**（`memoryEnabled`、`verbose`） |
-| **卡片多一栏** | 记忆页新增「记忆存放位置」；技能页那句"改完需重启"改成"即时生效" |
-
-> 顺带修掉几处"说了却做不到"：注入前言指向**读不到信箱**的工具（早已修）；本轮又修了两个
-> **只有多级归档才会暴露**的判定缺陷（折目录行时篇号数不出来、指向主题目录的行折不动）。
-
-### 0.7.0 的新东西（2026-09-30 发布）
-
-| 改动 | 是什么 |
-|---|---|
-| **跨工作区消息「取件」** | `worklog_memory` 的 `inbox` 操作把别的工作区发来的消息**整个搬进** `<工作区>/.lore-inbox/`：逐字节、带 `from` / `at` /「不可信输入」标记，**失败不丢件**（先复制校验再删源）。正文**永不进提示词** —— 到你这儿时它是一个文件 |
-| **主技能可以单独关** | 新增 `skillEnabled`（技能页）：关掉 `project-work-log` **不影响记忆那一半**（索引注入与 `worklog_memory` 照旧） |
-| **`memoryInjectIndex` 真即时** | 改成**每次装配**现读（原先在挂载期读，而界面写着"即时生效"）。整个配置面现在只剩一条规则：**只有"要不要注册"需要重启** |
-| **退役条目只判结构** | `state: retired` 的记忆条目不再因"来源工作区消失 / 正文不合格"而永久报错 —— 否则"文件永不删"这条非破坏性出路等于不存在 |
-| **诊断只剩一个开关** | `verbose` 决定开不开，`DSH_WORKLOG_TRACE`（或 `<包>/lib/.trace`）决定落哪儿，没设就进宿主日志 |
-
-> 顺带修掉几处"说了却做不到"：插件页卡片**认领失败原先完全静默**（改了 `Config` 字段、宿主没重启，
-> 卡片就会消失，页面上只是"没有东西"）—— 现在控制台会点名缺哪个字段；信箱提醒原先指着一个
-> **读不到信箱**的工具。
+**三层可以只用一层**：只装技能层，就是一套完整可校验的记录体系（`skill-only/` 那条线更极端 ——
+连脚本都不要）；装上插件，才多出记忆与注入。
 
 **不限编程**：软件、研究、写作、设计、运营、教学……任何跳会话或跨周持续投入的项目都能用。
 术语可换（迭代字段接受 `迭代 / 变更集 / 批次 / 阶段 / 版本 / 里程碑`），验证口径也放宽到"命令 / 数据 / 引用 / 样本"。
@@ -57,6 +21,9 @@
 > **来源与免责声明**：本仓库的约定、文档与脚本整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，
 > 并**完全由 DeepSeek Flash 系列模型整理生成**（未经人工逐条校验）。
 > 使用时请自行甄别，**不保证效果、正确性与适用性**；建议先小范围试用，再按项目的实际情况调整。
+
+**版本变化见 [CHANGELOG.md](CHANGELOG.md)** —— 最近三版：`0.8.1` 记忆根设置在桌面 profile 上真的生效 ·
+`0.8.0` 记忆根可配置、默认移出 `$DSH_HOME` · `0.7.0` 跨工作区消息「取件」。
 
 ---
 
@@ -76,10 +43,8 @@
 归档记录住在 `<容器>/<阶段>/`（长期容器可再加一层主题：`<容器>/<主题>/<阶段>/`），
 容器名与经验目录名都可以用 `journal.py config` 改（旧布局 `journal/` 仍认）。
 
-配套脚本让代理**少读、少写、可校验**：不用整读几十 KB 的索引，改台账是外科式行级编辑（保留 CRLF），
-结构问题（死链、断档、漏索引、来源悬空、目标表引用了不存在的篇号）和内容问题（占位符没清、
-结论没数字、"应该没问题"）都能自动查出来。
-
+配套脚本让代理**少读、少写、可校验**：不用整读几十 KB 的索引，改台账是外科式行级编辑（保留 CRLF）；
+结构问题（死链、断档、漏索引、来源悬空）与内容问题（占位符没清、结论没数字）都能自动查出来。
 **它不知道 DSH 存在**——这是硬边界，也是第二条发行线（`skill-only/`）能活的前提。
 
 ### 记忆层：跨工作区的那一半
@@ -88,9 +53,8 @@
 
 - **写在 CLI**（`journal.py memory …`）：写要经过来源分档、索引重建、`lint` —— 这些是技能层的能力，
   必须在没有 DSH 时也能做；
-- **读在工具**（`worklog_memory`）：结构化、不依赖 shell、也不要求技能在场。
-  （2026-09-30 实测纠正：早先这里写"代理碰不到 `$DSH_HOME`"，在 `workspace-write` 策略下**不成立** ——
-  读是不受限的。工具的价值是**唯一不离开会话、不靠 shell** 的读路，对连读都受限的策略它仍是唯一的路。）
+- **读在工具**（`worklog_memory`）：结构化、不依赖 shell、也不要求技能在场。工具的价值是
+  **唯一不离开会话、不靠 shell** 的读路，对连读都受限的策略它仍是唯一的路。
 
 **这条不对称是有意的**：模型能*读*记忆，但要*写*就得跑 CLI。判定只有一处定义（`journal.py`），
 工具不自己发明一套。
@@ -99,9 +63,8 @@
 
 装了插件才有：**索引注入**（稳定前缀，按字符预算）、**待收条数尾注入**（只在变化时追加，空信箱零成本）、
 **`worklog_memory` 工具**、**技能注册**（一个 bundle 一个 provider）、**插件页上的一张配置卡片**。
-
-注入为什么分两套接口，以及"空的东西不产生任何输出"这条规矩，见
-[`docs/plugin-spec.md`](docs/plugin-spec.md) §四——那是设计权威，这里不复制第二遍。
+注入为什么分两套接口、以及"空的东西不产生任何输出"这条规矩，见
+[`docs/plugin-spec.md`](docs/plugin-spec.md) §四 —— 那是设计权威，这里不复制第二遍。
 
 ## 二、装完你会得到什么
 
@@ -111,26 +74,17 @@
 | **普通 Agent Skill**（`skills/`） | 只要 `project-work-log`：完整的记录体系与 27 个命令 | 记忆注入、工具、配置卡片 |
 | **纯文档变体**（`skill-only/`） | 同一套约定与模板，**没有脚本**——给跑不了 Python 的平台 | 机械门禁（改成人手复核清单）、分析命令 |
 
-三个技能：
-
 | 技能 | 默认 | 是什么 |
 |---|---|---|
 | `project-work-log` | 开 | 本仓库的主体：记录体系 + 工具箱 |
 | `reliability-guidelines` | 开（可关） | 八条可靠性工作准则（事实优先 · 不清楚就问 · 假设要确认 · 能复用别新建 · 按既有约定 · 承认不知道 · 改动要验证 · 小步可回退），中英双语 |
-| `client-require-whitelist` | **默认关** | 写 DSH 客户端半边时检查 `require(...)` 是否都落在宿主那 9 项浏览器模块表里——表外的名字在浏览器里解析不到**而且不报错**。删掉 frontmatter 里那行 `disable-model-invocation: true` 即可让模型也能用；`node scripts/check-requires.mjs --彩蛋 <file>` 附一支叠词「诊断签」 |
+| `client-require-whitelist` | **默认关** | 写 DSH 客户端半边时检查 `require(...)` 是否都落在宿主那 9 项浏览器模块表里——表外的名字在浏览器里解析不到**而且不报错**。删掉 frontmatter 里那行 `disable-model-invocation: true` 即可让模型也能用 |
 
 ## 三、安装
 
 ### DeepSeek Harness（dsh）
 
 本包声明了 `dsh.bundle`，装进某个 profile 后会把自带技能注册进去，不需要复制文件、也不需要配置技能搜索路径。
-
-> ⚠ **先说代价最大的那条**：**用本地目录路径装，装出来是一个链接（link / junction），不是拷贝。**
-> `dsh plugin` 把参数**原样转发给 pnpm**，而 pnpm 对本地目录建链接 —— 于是
-> **源目录一移动、一删除，插件就废了**（profile 里那条链接指向空气）。
-> 实测：本仓库以 `link:` 装进本机 profile 后，`node_modules/dsh-lore` 就是一个
-> `<JUNCTION>`。**要长期用，就按包名/固定 tag 装**（下面第一、二条），或者把 checkout
-> 放到一个不会挪窝的位置再接受这个代价。
 
 ```bash
 # 1) 按包名装（推荐；装的是 registry 上的发布版，真文件）
@@ -139,23 +93,24 @@ dsh plugin --profile <profile> add dsh-lore
 # 2) 固定到某个版本
 dsh plugin --profile <profile> add dsh-lore@0.8.1
 
-# 3) 从本地 checkout 装 —— 记住上面那条：这是链接安装
+# 3) 从本地 checkout 装 —— 记住下面那条警告：这是链接安装
 dsh plugin --profile <profile> add /绝对/路径/<你的 checkout>
 ```
 
-也可以让 agent 用 `plugin_manager` 工具装（spec 支持绝对路径 / `file:` / 包名 / git / tarball）。
+也可以让 agent 用 `plugin_manager` 工具装（支持绝对路径 / `file:` / 包名 / git / tarball）。
+
+> ⚠ **用本地目录路径装，装出来是一个链接（link / junction），不是拷贝。** `dsh plugin` 把参数
+> **原样转发给 pnpm**，而 pnpm 对本地目录建链接 —— **源目录一移动、一删除，插件就废了**。
+> 要长期用，就按包名/固定 tag 装（上面第一、二条），或把 checkout 放到不会挪窝的位置。
 
 **本包的 `cordis.patch.yml` 做两件事**（都是踩过坑才定下来的）：
 
 1. **打开 `skill-filesystem`**（按 id override 已有行，不新增）。这一行 `dsh-base` 声明、`dsh-web-app` 关掉，
-   而**插件管理页不把它当可添加插件列出来** —— 用户在 UI 里根本找不到这个开关。
-   实测：这一行关着时，**技能注册表虽然活着，但技能到不了 `skill` 工具** —— 放多少份技能文件进
-   `~/.dsh/skills`、`.dsh/skills` 都不会被发现，插件自己注册的技能也查不到。
-   **自带技能的包必须自己把这一行打开。**
+   而**插件管理页不把它当可添加插件列出来**。它关着时**技能注册表虽然活着，但技能到不了 `skill` 工具** ——
+   放多少份技能文件进 `~/.dsh/skills`、`.dsh/skills` 都不会被发现。**自带技能的包必须自己把这一行打开。**
 2. **插入本插件自己的行**，并把技能目录等信息作为行配置写进去。
 
 **`tool-skill` 依然不碰**：它决定"技能能不能被模型加载"，属于消费端，由你所在的 preset 提供。
-若构图里没有任何技能消费端，注册了也没有渲染路径。
 
 | 依赖 | 谁提供 | 说明 |
 |---|---|---|
@@ -164,18 +119,8 @@ dsh plugin --profile <profile> add /绝对/路径/<你的 checkout>
 | 技能渲染 / `skill` 工具 | 你所在 preset 挂的 `tool-skill` | **本插件不提供** |
 
 **排查：技能查不到怎么办。** 插件内置一个**默认关闭**的诊断开关，用来回答"宿主到底有没有调我"
-（注册表会把提供者的异常吞成一条宿主日志，树外插件读不到）：
-
-```bash
-# 方式一：环境变量指向一个日志文件
-DSH_WORKLOG_TRACE=/tmp/worklog-trace.log
-
-# 方式二：把目标路径写进 <包>/lib/.trace
-echo /tmp/worklog-trace.log > <包>/lib/.trace
-```
-
-它会记录 `apply`（含 `ctx.skills` 是否可用）、每次 `list()`（含注册表传来的 **scope 与 cwd**，
-这是识别调用者的关键）、每次 `get()`。典型判读：
+（注册表会把提供者的异常吞成一条宿主日志）：`DSH_WORKLOG_TRACE=/tmp/worklog-trace.log`，或把目标路径
+写进 `<包>/lib/.trace`。它会记录 `apply`、每次 `list()`（含注册表传来的 **scope 与 cwd**）、每次 `get()`。
 
 | 日志 | 含义 |
 |---|---|
@@ -197,70 +142,41 @@ pi install git:github.com/IThinkItsaName/dsh-lore@v0.8.1
 pi install -l git:github.com/IThinkItsaName/dsh-lore
 ```
 
-> ⚠ **别和旧的 `pi-project-work-log` 同装。** 那是改名前的另一份独立扩展（`worklog` 那个仓库，
-> 不是本仓库），提供的是**同名技能** `project-work-log`。两者同时可见时只会有一个被遮蔽，
-> 谁赢取决于平台 —— 二者留一个。另外 pi 侧只拿得到**技能层**：记忆索引注入、
-> `worklog_memory` 工具与配置卡片都是 DSH 专属。
+> ⚠ **别和旧的 `pi-project-work-log` 同装**（那是改名前的另一份扩展，提供**同名技能**，二者留一个）。
+> pi 侧只拿得到**技能层**：记忆索引注入、`worklog_memory` 工具与配置卡片都是 DSH 专属。
 
 ### 手动（任意 harness）
 
-**dsh 用不着这一节**：装 bundle（上一节第 1、2 条）会自己注册技能，不必复制文件。
-确实要手动放时，dsh 的技能发现目录是全局 `<DSH_HOME>/skills/`（`<DSH_HOME>` 未设时为 `~/.dsh`）
-与项目级 `.dsh/skills/`：
+dsh 用不着这一节（装 bundle 会自己注册技能）。要手动放：dsh 的技能目录是全局
+`<DSH_HOME>/skills/`（未设时为 `~/.dsh`）与项目级 `.dsh/skills/`；pi 是 `~/.pi/agent/skills/`
+与项目级 `.pi/skills/`；其它 harness 把 `skills/` 加进它的搜索路径即可（目录结构遵循
+[Agent Skills 规范](https://agentskills.io/specification)）：
 
 ```bash
-# dsh：全局
-cp -r skills/project-work-log "${DSH_HOME:-$HOME/.dsh}/skills/"
-
-# dsh：项目级
-mkdir -p <project>/.dsh/skills && cp -r skills/project-work-log <project>/.dsh/skills/
+cp -r skills/project-work-log "${DSH_HOME:-$HOME/.dsh}/skills/"   # dsh：全局（项目级换成 .dsh/skills/）
+cp -r skills/project-work-log ~/.pi/agent/skills/                  # pi：全局（项目级换成 .pi/skills/）
 ```
 
-> ⚠ **只把文件放进去，可能什么都不出现。** dsh 的文件系统技能发现行 `skill-filesystem`
-> 在 `dsh-base` 里是开的、却被 `dsh-web-app` 关掉，改由每个 agent preset 自己声明
-> （见上一节「本包的 `cordis.patch.yml` 做两件事」）。**那一行关着时，
-> `~/.dsh/skills` 与 `.dsh/skills` 里的文件一律不会被发现**，插件自己注册的技能也查不到。
-
-pi 与其它 harness：
-
-```bash
-# pi：全局
-cp -r skills/project-work-log ~/.pi/agent/skills/
-
-# pi：项目级（项目受信任后生效）
-mkdir -p <project>/.pi/skills && cp -r skills/project-work-log <project>/.pi/skills/
-```
-
-Claude Code 等其它 harness：把 `skills/` 加入它的 skill 搜索路径即可（目录结构遵循
-[Agent Skills 规范](https://agentskills.io/specification)）。
-**不要同时装 `skill-only/` 那一份**：两者技能名相同，同时可见时会有一个被遮蔽，行为取决于平台。
+> ⚠ **只把文件放进去，可能什么都不出现** —— 见上一节：`skill-filesystem` 那一行由每个 agent preset
+> 自己声明，关着时 `~/.dsh/skills` 与 `.dsh/skills` 里的文件一律不会被发现。
+> **也不要同时装 `skill-only/` 那一份**：两者技能名相同，同时可见时会有一个被遮蔽。
 
 ## 四、用法
 
 代理在匹配到「开始新任务要留记录」「建工作日志」「总结踩坑/经验」「整理台账/当前状态」「阶段性复盘」
-「归档旧记录」这类意图时会自动加载本技能；也可以显式触发：
-
-```
-/skill:project-work-log
-```
-
+「归档旧记录」这类意图时会自动加载本技能；也可以显式触发 `/skill:project-work-log`。
 脚本可以独立使用（只依赖 Python 标准库）：
 
 ```bash
 cd <你的项目根>   # 目录里应有 journal/ 与 lessons/（SKILL.md 的「工作流 A」会教你建）
 
-# 一屏掌握当前坐标（替代整读索引）
-python <skill>/scripts/journal.py brief
-
-# 生成下一篇记录并自动补索引行
+python <skill>/scripts/journal.py brief                       # 一屏掌握当前坐标（替代整读索引）
 python <skill>/scripts/journal.py new --title "给登录加限流" --iter 42 --insert --stage "B. 迭代"
-# 非编程项目完全一样用：标题写“第三轮用户访谈结论”，迭代字段也可写 批次/阶段/版本
-python <skill>/scripts/journal.py new --title "第三轮用户访谈结论" --iter 3
+python <skill>/scripts/journal.py new --title "第三轮用户访谈结论" --iter 3   # 非编程项目一样用
 
-# 收尾：更新状态 → 抽经验 → 过门禁
-python <skill>/scripts/journal.py status --set "核对=抽样 30 条全部通过" --date
+python <skill>/scripts/journal.py status --set "核对=抽样 30 条全部通过" --date  # 收尾：状态 → 经验 → 门禁
 python <skill>/scripts/journal.py lesson add --volume 02-verification.md --source 42 --text "…"
-python <skill>/scripts/journal.py check --strict --lint   # 结构 + 内容，两道门禁一次跑完
+python <skill>/scripts/journal.py check --strict --lint       # 结构 + 内容，两道门禁一次跑完
 ```
 
 ### 命令一览（27 个）
@@ -272,21 +188,16 @@ python <skill>/scripts/journal.py check --strict --lint   # 结构 + 内容，�
 | 门禁 | `check`（结构）、`lint`（内容质量）—— 有 ERROR 时退出码 1 |
 | 分析生成 | `stats`、`topics`、`digest`（交接摘要）、`retro`（复盘骨架）、`export`（JSON/CSV） |
 | 容器维护 | `archive`（篇号区间归档 + 链接重写）、`split`（按年分卷）、`prune`（冷存候选，默认只报告） |
-| **记忆（跨工作区）** | `memory publish\|collect\|add\|search\|index\|lint\|status`、`dream`（把一个项目的记录收敛成摘要）、`inbox put\|list\|take\|sweep\|count`、`promote suggest\|scaffold`（升格为技能） |
+| **记忆（跨工作区）** | `memory publish\|collect\|add\|search\|index\|lint\|status`、`dream`、`inbox put\|list\|take\|sweep\|count`、`promote suggest\|scaffold`（升格为技能） |
 
-完整参数与组合套路见 [`references/commands.md`](skills/project-work-log/references/commands.md)；
+完整参数见 [`references/commands.md`](skills/project-work-log/references/commands.md)；
 记忆层的目录布局与准入规则见 [`docs/memory-spec.md`](docs/memory-spec.md)。
 
 ### 记忆层怎么用
 
 ```bash
-# 把一个项目的教训收进全局记忆（已在所有工作区之外）
 python <skill>/scripts/journal.py memory add --root <项目根> --source wl/0042 "当……先……再……"
-
-# 建索引 —— 不建索引就检索不到（子串匹配，不是语义检索）
-python <skill>/scripts/journal.py memory index
-
-# 别处查得到：CLI 是给人和脚本的，模型在会话里用 worklog_memory 工具
+python <skill>/scripts/journal.py memory index      # 不建索引就检索不到（子串匹配，不是语义检索）
 python <skill>/scripts/journal.py memory search "样式"
 ```
 
@@ -298,17 +209,8 @@ python <skill>/scripts/journal.py memory search "样式"
 
 **配置只有一个事实源：宿主的设置通道**（profile patch 的 `cordis.patch.yml`，由插件页的配置卡片读写；
 没有 `configEditor` 的 headless 宿主退回到 `<DSH_HOME>/worklog/settings.json`）。
-
 **字段、默认值、哪些改动需要重启、两个设置面的分界，全部在 [`SETTINGS.md`](SETTINGS.md)** ——
-这里只给最小示例，不复制那张表。
-
-> **多 profile 的机器注意**：`<DSH_HOME>/worklog/settings.json` 是**全机一份**，而配置卡片
-> 是**每个 profile 一份**。两个 profile 都改 `memoryDir` 时以最后一次保存为准；某个 profile
-> 把那一栏留空保存会删掉共享文件里的这一行（它自己的行配置还在，所以它看着没变）。
-> 细节见 [`SETTINGS.md`](SETTINGS.md) 的「这份文件是全机一份」（审查报告 N6）。
-
-改语言/关掉准则，可以在**本插件自己的那一页**上点（插件页 → `dsh-lore` → 描述与行列表之间那张卡片），
-也可以写进 profile 补丁（profile 层在所有 bundle 层之后应用，所以能盖住包内默认值）：
+这里只给最小示例：
 
 ```yaml
 - id: dsh-lore
@@ -317,59 +219,35 @@ python <skill>/scripts/journal.py memory search "样式"
     guidelinesLanguage: 'en'
 ```
 
-> 本插件导出 `Config`（**13 个字段**全带 `.volatile()`），所以官方配置通道认识它们，写回前由宿主校验一次。
-> **新增字段时只挑一个家**：进 `Config` 标 `.volatile()`，同时把名字加进客户端 `lib/client.js` 的
-> `FORM_FIELDS` —— 两边漂移会让卡片**认领不到自己的 namespace**，整页消失。
-> **而且改完要重启 DSH**：运行中的宿主还发着旧 schema，卡片会**消失到重启为止**（2026-09-30 真发生过；
-> 现在认领失败会在浏览器控制台点名缺哪个字段 —— 见 [`SETTINGS.md`](SETTINGS.md) 与
-> [`RELEASING.md`](RELEASING.md) 的坑表）。
+> **多 profile 的机器注意**：`<DSH_HOME>/worklog/settings.json` 是**全机一份**，而配置卡片是
+> **每个 profile 一份**；两个 profile 都改 `memoryDir` 时以最后一次保存为准（细节见 `SETTINGS.md`）。
+> **新增字段时只挑一个家**：进 `Config` 标 `.volatile()`，同时把名字加进 `lib/client.js` 的
+> `FORM_FIELDS` —— 两边漂移会让卡片认领不到自己的 namespace、整页消失，**改完要重启 DSH**。
 
 ## 六、目录结构
 
 ```
 .
-├── README.md                    # 本文件：这是什么、怎么装、怎么用
-├── SETTINGS.md                  # 插件配置的权威：字段、默认值、要不要重启
-├── CHANGELOG.md                 # 版本变化（只追加）
-├── RELEASING.md                 # 发版清单：源/副本方向、检查点、打 tag
-├── PUBLISHING.md                # 仓库怎么建（一次性）
-├── package.json                 # npm / pi / dsh.bundle 三份声明
-├── cordis.patch.yml             # DSH 补丁：打开 skill-filesystem + 插入本插件的行
-├── lib/
-│   ├── index.js                 # 宿主半边：技能 provider、记忆注入、worklog_memory 工具、只读状态端点
-│   └── client.js                # 浏览器半边：插件页上那张配置卡片（三个页签）
-├── locale/                      # 卡片词典（zh / zh-cn / en）
-├── docs/                        # **设计权威**（给维护者）：见下
-│   ├── README.md                # 文档地图与三条跨规格规矩
-│   ├── plugin-spec.md           # 边界与权威：分几层、设置谁说了算、注入怎么进提示词
-│   ├── worklog-spec.md          # 记录格式、精细度档位、check/lint 判定
-│   ├── memory-spec.md           # 全局记忆：目录、来源分档、索引、dream、inbox、升格
-│   ├── settings-spec.md         # 配置卡片：三页签、字段归属、写回通路
-│   └── goals-spec.md            # 目标.md：长期目标 → 阶段的两层表
-├── skills/
-│   ├── project-work-log/        # 主技能
-│   │   ├── SKILL.md             # 技能入口：三层模型、铁律、工作流、反模式
-│   │   ├── references/          # conventions / templates / commands / memory / analysis
-│   │   └── scripts/
-│   │       ├── journal.py       # 工具箱（唯一入口，纯标准库）
-│   │       ├── _selftest.py     # 自测：临时工程跑通全部命令 + CRLF 保真
-│   │       └── _measure.py      # 对现成记录目录做一次性测量（analysis.md 的数字可复现）
-│   ├── reliability-guidelines/  # 八条准则：SKILL.md（中文）+ en/SKILL.md
-│   └── client-require-whitelist/ # 客户端 require 白名单检查（默认关）
-├── skill-only/                  # **第二条发行线**：无脚本的纯文档变体（手写源）
-├── dist/skill-only/             # 上面那份的构建产物（别手改，见 tools/）
-├── tests/                       # 常驻回归防线：16 支 .mjs + reverse-verify.py
-└── tools/
-    └── build-skill-only.mjs     # 构建 / 查漂移 skill-only → dist
+├── README.md / SETTINGS.md / CHANGELOG.md / RELEASING.md / PUBLISHING.md
+├── package.json / cordis.patch.yml        # 三份声明 / DSH 补丁
+├── lib/index.js                           # 宿主半边：技能 provider、记忆注入、worklog_memory 工具
+├── lib/client.js / locale/                # 浏览器半边（配置卡片）/ 卡片词典
+├── docs/                                  # **设计权威**：plugin / worklog / memory / settings / goals spec
+├── skills/project-work-log/               # 主技能：SKILL.md + references/ + scripts/
+│   └── scripts/{journal.py,_selftest.py,_measure.py}
+├── skills/{reliability-guidelines,client-require-whitelist}/
+├── skill-only/ → dist/skill-only/         # 第二条发行线：无脚本的纯文档变体（源 → 构建产物）
+├── tests/                                 # 常驻回归防线：16 支 .mjs + reverse-verify.py
+└── tools/build-skill-only.mjs             # 构建 / 查漂移 skill-only → dist
 ```
 
 三条纪律：
 
 - **`dist/` 是产物**，手改会被下次构建覆盖；一致性由 `tests/audit-paths.mjs` 与
   `build-skill-only.mjs --check` 把关。
-- **`tests/` 是镜像**：harness 的源在工作区的 `logs/tests/`，由 `_package.py` 同步进来，**不要手改**。
-- **技能源不在本仓库**：源在工作区的 `.pi/skills/`；本仓库的 `skills/` 与 `tests/` 都是
-  `_package.py` 同步出来的**镜像**，`dist/skill-only/` 是构建产物 —— 改源再同步，直接改镜像会被下次同步覆盖。
+- **`tests/` 与 `skills/` 都是镜像**：源在工作区的 `logs/tests/` 与 `.pi/skills/`，由 `_package.py`
+  同步进来，**不要手改**（直接改镜像会被下次同步覆盖）。
+- **要改这个包**，先读 [`RELEASING.md`](RELEASING.md) 的发版清单 —— 三处源/副本方向不同，走错方向会**静默删东西**。
 
 ## 七、领域适配（不限于编程）
 
@@ -378,41 +256,24 @@ python <skill>/scripts/journal.py memory search "样式"
 | 迭代叫什么 | 入口字段默认 `迭代：N`；也认 `变更集 / 批次 / 阶段 / 版本 / 里程碑` |
 | 怎么算"验证" | 小节标题含 `验证 / 复核 / 检查 / 评审 / 结果 / 证据 / 评估 / 确认` 任一即可 |
 | 什么算"可核对" | 命令、数字、链接、引用、样本都算（**不**强制要求可执行命令） |
-| 例子 | 研究：`批次：3` + `## 结果`（样本量、结论、反例）；写作：`版本：v2` + `## 评审`（编辑意见与处理）；软件：`变更集：154` + `## 验证`（命令与通过数） |
+| 例子 | 研究：`批次：3` + `## 结果`（样本量、结论、反例）；写作：`版本：v2` + `## 评审`；软件：`变更集：154` + `## 验证`（命令与通过数） |
 
 ## 八、环境要求与自测
 
-- **Python**（仅标准库，无第三方依赖）
-- **Node**（只有插件 harness 与 `skill-only` 构建需要，同样不装任何依赖）
+- **Python**（仅标准库，无第三方依赖）、**Node**（只有插件 harness 与 `skill-only` 构建需要）
 - 脚本会读写 Markdown 文件；建议把 `journal/`、`lessons/` 纳入版本控制
 
 ```bash
-# 技能：临时工程跑通全部命令 + 断言
-python skills/project-work-log/scripts/_selftest.py
-
-# 插件门禁：16 支 harness（注册表契约、补丁清单、版本/文档/路径/本地化一致性、客户端运行期、
-# 设置、记忆注入、记忆根设置、记忆迁移、门禁自身的卫生）
-npm run test:plugin
-
-# 端到端审计：宿主将会 import 什么、sha256 是否为当前工作树
-npm run audit
-
-# 纯文档变体没漂移
-npm run test:skill-only
+python skills/project-work-log/scripts/_selftest.py   # 技能：临时工程跑通全部命令 + 断言
+npm run test:plugin                                   # 16 支 harness
+npm run audit                                         # 端到端审计：宿主会 import 什么、sha256 是否对得上
+npm run test:skill-only                               # 纯文档变体没漂移
 ```
-
-自测断言的内容包括：CRLF 保真、**只改目标行**、来源校验会拒绝不存在的篇号、`status --set` 的
-短名解析（`核对` → `核对 / 验证`）不新增字段、以及**文档模板落盘后能被自己的门禁接受**。
 
 > 写入受限的环境（某些沙箱只允许进程写自己创建过的目录）用 `--root <已存在的目录>` 指定夹具父目录，
 > 例如 `python scripts/_selftest.py --root ./.scratch`。
-
-两个可选环境变量让插件 harness 更完整，**缺省时相应检查自动跳过、不会误报失败**：
-
-| 变量 | 作用 |
-|---|---|
-| `DSH_SRC_DIR` | 指向抽取出的 DSH 源码目录，用于核对补丁里的 id 是否真在 `dsh-base` 里声明 |
-| `DSH_PROFILE_DIR` | 指向 dsh profile，用于核对链接安装是否指向本包、pnpm store 是否在位 |
+> 两个可选环境变量让 harness 更完整，**缺省时相应检查自动跳过、不会误报失败**：
+> `DSH_SRC_DIR`（核对补丁里的 id 是否真在 `dsh-base` 里声明）、`DSH_PROFILE_DIR`（核对链接安装是否指向本包）。
 
 ## 九、支持矩阵（诚实标注验证情况）
 
@@ -421,45 +282,30 @@ npm run test:skill-only
 | **Python** | **3.9+** | 代码用了 PEP 585 注解（`list[str]`）与海象运算符；仅在 **3.12**（CI / Ubuntu）与 **3.14**（Windows 本机）实测 |
 | 第三方依赖 | **无**（纯标准库） | 不需要 `pip install` |
 | 操作系统 | Windows / macOS / Linux | 无平台相关 API；CI 在 Ubuntu、本机在 Windows 实测通过 |
-| 字符编码 | UTF-8 文件 | 控制台编码无关（脚本自行把 stdout 设为 UTF-8）；非 UTF-8 文件不崩但标签会认不出来（按 `errors="replace"` 读），建议先转为 UTF-8 |
-| **解析语言** | 中文默认 + **英文别名** | `日期/Date`、`结论/Conclusion`、`迭代/Iteration`、`验证/Verification`、`当前状态/Status`、`待办/TODO`、`文件索引/Index` 均可解析（英文 fixture 下 `check --strict` 与 `lint --strict` 均 0 error） |
+| 字符编码 | UTF-8 文件 | 控制台编码无关（脚本自行把 stdout 设为 UTF-8）；非 UTF-8 文件不崩但标签认不出来（按 `errors="replace"` 读） |
+| **解析语言** | 中文默认 + **英文别名** | `日期/Date`、`结论/Conclusion`、`迭代/Iteration`、`验证/Verification`、`当前状态/Status`、`待办/TODO`、`文件索引/Index` 均可解析 |
 | 写入语言 | 中文（模板默认） | 要英文写入，改 `references/templates.md` 与 `journal.py` 的模板字符串 |
 | 命令执行 | 可选 | 无 Python / 不能执行命令时退化为纯规范，见 SKILL.md「没有 Python 怎么办」 |
-| harness | 任何支持 Agent Skills 的；以及 **DeepSeek Harness 插件** | skill frontmatter 仅 `name` + `description`，且 name 与目录名一致；DSH 侧另由 `lib/index.js` 注册 |
+| harness | 任何支持 Agent Skills 的；以及 **DeepSeek Harness 插件** | skill frontmatter 仅 `name` + `description`，且 name 与目录名一致 |
 | DSH 版本 | 需要 `dsh-base` 已声明 `skill-filesystem` / `tool-skill` 行的版本（**0.1.7 起**） | 本机 0.2.0-rc.1 实测装载正常 |
 | 外部程序 | 无（git 可选） | — |
 
 ## 十、设计依据与文档地图
 
 不是凭空设计的约定，而是对一套真实的长期项目记录做实测后总结的：哪些做法有效（编号即地址、
-三层不互相复制、证据优先），哪些会腐坏（台账漂移、格式漂移、双份数字）。
-详见 [`references/analysis.md`](skills/project-work-log/references/analysis.md)。
+三层不互相复制、证据优先），哪些会腐坏（台账漂移、格式漂移、双份数字）。详见
+[`references/analysis.md`](skills/project-work-log/references/analysis.md)。
 
 **`docs/` 是设计权威**（改实现就要改对应规格），每份都在文档一致性门禁的审计清单里；
 映射表与三条跨规格规矩见 [`docs/README.md`](docs/README.md)。
-**要改这个包**，先读 [`RELEASING.md`](RELEASING.md) 的发版清单（三处源/副本的固定方向 ——
-走错方向会**静默删东西**）。
 
 ## 十一、依赖声明（`peerDependencies` 不是装饰，是**能不能加载**）
 
-`package.json` 里的两条 peer 是**运行必需**：
-
-```json
-"peerDependencies": {
-  "@deepseek-ai/dsh-tools": ">=0.1.7-alpha.1",
-  "@deepseek-ai/schemastery": "^3.18.3"
-}
-```
-
-**为什么**：本包通常以 **junction / symlink 链接**的方式装进 profile（开发时的常态），
-于是它落在 DSH 的 **linked root** 里。宿主对链接目录内的 `import '@deepseek-ai/…'`
-**只有在该名字出现在 `peerDependencies` 里时**才走拦截、把它解析到宿主自己那一份；
-否则退回原生 Node 解析，而在链接包内部与 profile 目录下都解析不到（实测 `MODULE_NOT_FOUND`）。
-
-后果不是"少一个字段"，是**条目 `inactive`、插件整体消失**（技能与配置卡片一起）。
-
-> 改完这条要**重启宿主进程**才生效：插件的 `fiber.runtime`（含它拿到的 `Config`）在首次挂载时
-> 就固定下来，Node 的 ESM 模块缓存也按 URL 复用；只禁用/启用那一行拿到的是同一个旧实例。
+`package.json` 里的两条 peer 是**运行必需**：`@deepseek-ai/dsh-tools` 与 `@deepseek-ai/schemastery`。
+**为什么**：本包通常以 **junction / symlink 链接**的方式装进 profile（开发时的常态），于是它落在 DSH 的
+**linked root** 里；宿主对链接目录内的 `import '@deepseek-ai/…'` **只有在该名字出现在 `peerDependencies` 里时**
+才走拦截、解析到宿主自己那一份，否则退回原生 Node 解析（实测 `MODULE_NOT_FOUND`）。
+后果不是"少一个字段"，是**条目 `inactive`、插件整体消失**（技能与配置卡片一起）。改完这条要**重启宿主**才生效。
 
 ## 十二、更新日志与许可
 

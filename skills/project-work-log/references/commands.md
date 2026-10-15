@@ -763,7 +763,7 @@ python scripts/journal.py digest --out HANDOFF.md
 | `_package.py` | 把 skill 源目录同步进可发布仓库（开发工作区专用，不随包发布）；`--check` 兼作漂移与插件文件完整性门禁 |
 | `_measure.py` | 对现成 `work_log/`（或旧 `work-log/`）+ `lessons/` 做一次性测量，`references/analysis.md` 的数字由它复现；同时报出台账的 `精细度`（缺字段则报默认档） |
 
-> `reverse-verify.py`（源在 `publish/worklog/tests/`，随包镜像到 `tests/`）把全局记忆那一相的每条断言
+> `reverse-verify.py`（源就是 `tests/`，2026-10-15 起不再有第二份镜像）把全局记忆那一相的每条断言
 > 逐条弄红一次：它按一张变异表改坏 `journal.py` 的**临时副本**，确认期望的断言确实
 > 变红。本项目的硬规矩是**没见它红过的断言不算数**，这个脚本就是那条规矩的执行者。
 > 它是开发工具，**不在 `npm run test:plugin` 的清单里**（一次要跑几十遍自测）。

@@ -3701,6 +3701,30 @@ def numbering_phase(parent: str) -> None:
        f"HEADING_RE={JOURNAL.HEADING_RE.pattern!r} "
        f"小节={JOURNAL._SECTION_HEADING_RE.pattern!r}")
 
+    # ---- 短路的等价性（2026-10-15 复核 L2）：等价变换，变异法盯不住，只能对拍 ---------- #
+    #
+    # `heading_level()` 的第一句 `if not line.startswith("#"): return None` 是**等价**的加速：
+    # 拆掉它结果不变、只是变慢 —— 没有哪条变异能让它变红（变异法证明不了等价变换）。
+    # 所以把改动之前那条字面量正则留在断言里，对一段样例逐行比 `heading_level()` 与它的判定：
+    # 以后谁再动短路条件或正则，只要有一行结果不同，这条就红（样例含 CRLF、行尾空白、制表符、
+    # 行首缩进、单个 `#` 与七级井号这些边界）。
+    legacy_section = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*\r?\n?$")
+    heading_sample = [
+        "# 0001 · 标题", "## 验证", "## 验证 \t\n", "### 三级   ", "#### 四级\r\n",
+        "###### 六级", "#\t制表符分隔", "####### 七级不算", "# 无空格不算", "#",
+        "", "正文一行，不是标题", "  ## 缩进不算（原来那条正则也不认）",
+    ]
+    heading_mismatch = []
+    for line in heading_sample:
+        m = legacy_section.match(line)
+        want = (len(m.group(1)), m.group(2)) if m else None
+        got = JOURNAL.heading_level(line)
+        if got != want:
+            heading_mismatch.append((line, got, want))
+    ok(not heading_mismatch,
+       "标题扫描的短路与改动前那条字面量正则逐行同判（等价变换：变异法盯不住，只能对拍）",
+       f"对不上={heading_mismatch}")
+
     # ---- 对账的另一半：先收工的那一份，不许被"名字更小"顶掉（2026-10-15 补）-------- #
     #
     # 上面那两条是**顺序**调用的：每份都还没收工就被叫来对账。真实并发下还有另一半时序 ——

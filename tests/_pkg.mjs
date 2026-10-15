@@ -1,9 +1,9 @@
 // Locate the package under test, wherever this file is run from.
 //
 // The same harnesses run from two places — the copy inside the package
-// (`<pkg>/tests/`) and the working copy in this workspace (`logs/tests/`) — so a
-// bare `resolve(HERE, '..')` is wrong for one of them: from `logs/tests` the parent
-// is `logs`, not the package. Probe instead of assuming.
+// (`<pkg>/tests/`) and the working copy in this workspace (`publish/worklog/tests/`) — so a
+// bare `resolve(HERE, '..')` is wrong for one of them: from `publish/worklog/tests` the parent
+// is `work_log/logs`, not the package. Probe instead of assuming.
 import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createRequire, registerHooks } from 'node:module'
@@ -34,7 +34,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
  */
 function installHostSpecifierResolver() {
   const candidates = [
-    resolve(HERE, '..', '..', 'dsh-ref', 'source', '@deepseek-ai'), // logs/tests → workspace
+    resolve(HERE, '..', '..', 'dsh-ref', 'source', '@deepseek-ai'), // publish/worklog/tests → workspace
     resolve(HERE, '..', '..', '..', 'dsh-ref', 'source', '@deepseek-ai'), // <pkg>/tests
   ]
   const sourceRoot = candidates.find((dir) => existsSync(dir))

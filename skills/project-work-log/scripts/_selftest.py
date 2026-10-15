@@ -20,6 +20,7 @@ import io
 import json
 import os
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -288,19 +289,48 @@ def run(root: str, *argv: str) -> subprocess.CompletedProcess:
                           cwd=root, capture_output=True, text=True, encoding="utf-8")
 
 
+def make_tmp(prefix: str) -> str:
+    """建一个**能继续往下建目录**的临时根。
+
+    为什么不直接用 `tempfile.mkdtemp`：它内部写死 `os.mkdir(file, 0o700)`，而 **Windows 上
+    Python 会把 mode 翻成 ACL** —— 新建目录只允许"所有者"写。在受限沙箱（DSH 的
+    workspace-write）里，随后的 `os.makedirs(<tmp>/work_log/lessons)` 就被内核拒了：
+
+        PermissionError: [WinError 5] 拒绝访问。: '...\\journal-selftest-xxxx\\work_log'
+
+    2026-10-15 实测：同一个父目录下 `os.mkdir(p)` 建的目录能继续往下建，`os.mkdir(p, 0o700)`
+    建的不能；`C:\\Users\\...\\Temp\\dsh-<会话>\\` 与工作区里的目录**都一样**，所以不是某一处
+    的权限坏了，是这个 mode 本身。`tempfile.mkdtemp()` 也没有 `mode=` 参数（3.14 都没有），
+    所以这里自己挑名字 + `os.mkdir(..., 0o755)`（POSIX 上临时目录本来也该可读可进）。
+    """
+    base = tempfile.gettempdir()
+    if not os.path.isdir(base):
+        raise RuntimeError(f"临时目录不存在：{base}")
+    for _ in range(64):
+        cand = os.path.join(base, prefix + secrets.token_hex(4))
+        try:
+            os.mkdir(cand, 0o755)
+        except FileExistsError:
+            continue
+        return cand
+    raise RuntimeError(f"在 {base} 下连试 64 次都没抢到临时目录名")
+
+
 def harness_fixture(name: str) -> str:
     """找 JS harness 的夹具文件（`tests/fixtures/<name>`），找不到返回空串。
 
     **为什么要找而不是写死一个相对路径**：这份 `_selftest.py` 同时活在两种布局里 ——
-    工作区源码树（`.pi/skills/project-work-log/scripts/`，harness 在 `<工作区>/logs/tests/`）
-    与发布包（`<包>/skills/project-work-log/scripts/`，harness 在 `<包>/tests/`）。
-    另外从 npm 装出来的副本可能**根本没有** `tests/`（它不属于插件运行时）。
+    工作区源码树（`.pi/skills/project-work-log/scripts/`）与发布包
+    （`<包>/skills/project-work-log/scripts/`）。2026-10-15 整理把 harness 塌成了一份：
+    源就在发布仓库里（`<工作区>/publish/worklog/tests/`），发布包那份是它自己
+    （`<包>/tests/`），顶层 `logs/` 下不再有 `tests/`。另外从 npm 装出来的副本可能
+    **根本没有** `tests/`（它不属于插件运行时）。
     所以这里按候选顺序找，找不到就由调用方记一条 `SKIP` —— 不假装验过。
     """
     for cand in (
-        os.path.join(HERE, "..", "..", "..", "tests", "fixtures", name),        # 发布包布局
-        os.path.join(HERE, "..", "..", "..", "..", "logs", "tests", "fixtures", name),  # 工作区源码树
-        os.path.join(HERE, "..", "..", "..", "..", "..", "logs", "tests", "fixtures", name),
+        os.path.join(HERE, "..", "..", "..", "tests", "fixtures", name),                              # 发布包布局
+        os.path.join(HERE, "..", "..", "..", "..", "publish", "worklog", "tests", "fixtures", name),   # 工作区源码树
+        os.path.join(HERE, "..", "..", "..", "..", "..", "publish", "worklog", "tests", "fixtures", name),
     ):
         path = os.path.normpath(cand)
         if os.path.isfile(path):
@@ -629,7 +659,7 @@ def appendix_phase(parent: str) -> None:
     """审查报告 §附录那几条的常驻判据（2026-10-15）。
 
     附录那几条的共同点是"看着像问题"：光读代码只能得出"代码是这样写的"，得不出
-    "这件事会不会真的发生"。所以那时先把每一条写成可执行判据（`logs/sr-check/probe-appendix-5.py`），
+    "这件事会不会真的发生"。所以那时先把每一条写成可执行判据（`work_log/logs/eng/checks/probe-appendix-5.py`），
     该修的修掉，再把判据钉成这里的行为断言：
 
       ① `status --set` 命中重复字段时**每一行**都要改（原来命中第一行就 break，
@@ -743,7 +773,7 @@ def appendix_phase(parent: str) -> None:
 def review2_phase(parent: str) -> None:
     """第二轮审查（`_tmp/worklog-review-2026-10-15.md`）里 CLI 侧的常驻判据（2026-10-15）。
 
-    那一轮的 JS 半边（N1 门禁要无条件钉 `$DSH_HOME`、N2 take 的并发占号）判据在 `logs/tests/`；
+    那一轮的 JS 半边（N1 门禁要无条件钉 `$DSH_HOME`、N2 take 的并发占号）判据在 `publish/worklog/tests/`；
     这里收 CLI 半边：
 
       · N5-① `reserve_new_record` 不再把"目录根本写不进去"当成"名字被占"（原来要空转一千轮，
@@ -3541,7 +3571,7 @@ def numbering_phase(parent: str) -> None:
     """写盘原义性、两条占号路径、`new --dry-run` 的预报（F6/F7、第三轮 N-A/N-B）。
 
     **为什么单独一个相**：这些断言原来内联在 `main()` 里，而
-    `logs/tests/reverse-verify.py` 只按 `PHASES` 里登记的函数跑相 ——
+    `publish/worklog/tests/reverse-verify.py` 只按 `PHASES` 里登记的函数跑相 ——
     内联断言它根本跑不到。第三轮新加的三条变异因此只能报
     "MISS：期望的标签没变红；红了 0 条"，测了等于没测。
     搬出来登记进 `PHASES`，变异才算真的被覆盖。
@@ -3813,7 +3843,7 @@ def main() -> int:
             print(f"ERROR: --root 目录不可写：{tmp}（{exc}）")
             return 2
     else:
-        tmp = tempfile.mkdtemp(prefix="journal-selftest-")
+        tmp = make_tmp(prefix="journal-selftest-")
     try:
         os.makedirs(os.path.join(tmp, CONTAINER, "lessons"))
         write(os.path.join(tmp, CONTAINER, "README.md"), INDEX)
@@ -3831,13 +3861,15 @@ def main() -> int:
         ok("01-topic" not in r.stdout and "01-topic" not in r.stderr,
            "a lessons volume is never listed as a record", r.stdout + r.stderr)
 
-        # logs/ 里的文件名与记录同形（`2026-01-01-run.md`），但**不是记录**
+        # <容器>/logs/ 里的文件名与记录同形（`2026-01-01-run.md`），但**不是记录**。
+        # 注意是容器**自己的** `logs/`（`<容器>/logs/`），不是 `<容器>/work_log/logs/` ——
+        # 后者会造出一个嵌套的 `work_log/`，让这条断言在错误的路径上通过（2026-10-15 修正）。
         os.makedirs(os.path.join(tmp, CONTAINER, "logs", "build"))
         write(os.path.join(tmp, CONTAINER, "logs", "build", "2026-01-01-run.md"),
               "# 构建日志\n\n构建于 2026-01-01，产物见项目根的 dist/。\n")
         r = run(tmp, "outline")
         ok(r.stdout.count("\n") == 1 and "2026-01-01" not in r.stdout,
-           "a logs/ file shaped like a record is not read as one", r.stdout)
+           "a <container>/logs/ file shaped like a record is not read as one", r.stdout)
 
         numbering_phase(tmp)
 

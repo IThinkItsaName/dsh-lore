@@ -13,9 +13,12 @@
  *
  * 输出**两份**：
  *   - `tests/tools/host-tokens.txt` —— **随包提交**的那份。`audit-client-tokens.mjs` 的权威，
- *     也是 CI 上唯一够得着的那份（CI 只 checkout 这个包，看不到工作区里的 `logs/`）。
+ *     也是 CI 上唯一够得着的那份（CI 只 checkout 这个包，看不到工作区里的 `work_log/logs/`）。
  *     以前只写工作区那份，于是这条断言在 CI 上静默 SKIP —— 门禁看着接上了，其实从没验过。
- *   - `<工作区>/logs/dsh-src/dsw-tokens.txt` —— 工作区的镜像，继续写，供翻查与旧路径兼容。
+ *   - `<工作区>/work_log/logs/eng/dsh-src/dsw-tokens.txt` —— 工作区的镜像，继续写，供翻查。
+ *     工作区已经整理过（顶层不再有 `logs/dsh-src/`），所以这里是三级向上；
+ *     老工作区的 `<工作区>/logs/dsh-src/dsw-tokens.txt` 由 `audit-client-tokens.mjs`
+ *     作为兼容落点继续认。
  *
  * 两份一起写，就不会再出现"本机绿、CI 跳过"这种不一致。
  */
@@ -26,7 +29,7 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const PKG = join(here, '..', '..')
 const OUT = join(here, 'host-tokens.txt')
-const MIRROR = join(PKG, '..', '..', 'logs', 'dsh-src', 'dsw-tokens.txt')
+const MIRROR = join(PKG, '..', '..', '..', 'work_log/logs', 'eng', 'dsh-src', 'dsw-tokens.txt')
 const DEFAULT_CHECKOUT = 'D:\\Program Files (x86)\\dsh_from_github\\deepseek-harness'
 
 const checkout = process.argv[2] ?? DEFAULT_CHECKOUT

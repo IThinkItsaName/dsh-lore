@@ -159,7 +159,7 @@ python <skill>/scripts/journal.py memory search "样式"   # 子串匹配，不�
 └── tools/build-skill-only.mjs             # 构建 / 查漂移 skill-only → dist
 ```
 
-三条纪律：**`dist/` 是产物**（手改会被下次构建覆盖，`audit-paths.mjs` 与 `build-skill-only.mjs --check` 把关）；**`tests/` 与 `skills/` 都是镜像**（源在工作区的 `logs/tests/` 与 `.pi/skills/`，由 `_package.py` 同步进来，别手改）；**要改这个包先读 [`RELEASING.md`](RELEASING.md)** —— 三处源/副本方向不同，走错方向会**静默删东西**。
+三条纪律：**`dist/` 是产物**（手改会被下次构建覆盖，`audit-paths.mjs` 与 `build-skill-only.mjs --check` 把关）；**`tests/` 与 `skills/` 都是镜像**（源在工作区的 `publish/worklog/tests/` 与 `.pi/skills/`，由 `_package.py` 同步进来，别手改）；**要改这个包先读 [`RELEASING.md`](RELEASING.md)** —— 三处源/副本方向不同，走错方向会**静默删东西**。
 
 ## 七、领域适配（不限于编程）
 
@@ -174,11 +174,15 @@ python <skill>/scripts/journal.py memory search "样式"   # 子串匹配，不�
 - **Python**（仅标准库）、**Node**（只有插件 harness 与 `skill-only` 构建需要）；建议把 `journal/`、`lessons/` 纳入版本控制
 
 ```bash
-python skills/project-work-log/scripts/_selftest.py   # 技能：临时工程跑通全部命令 + 断言
+python -B skills/project-work-log/scripts/_selftest.py  # 技能：临时工程跑通全部命令 + 断言
 npm run test:plugin                                   # 16 支 harness
 npm run audit                                         # 端到端审计：宿主会 import 什么、sha256 是否对得上
 npm run test:skill-only                               # 纯文档变体没漂移
 ```
+
+> `-B` 是**不要写 `.pyc`**：自测脚本住在技能包里，Python 默认会把 `__pycache__` 生成在包内，
+> 而 `_package.py --check` 把副本里的 `__pycache__` 判成漂移（它会随包发出去）—— 跑过自测就把
+> 下一道门禁弄红。`npm test` 与 CI 都带 `-B`。
 
 > 写入受限的环境（沙箱只允许进程写自己创建过的目录）用 `--root <已存在的目录>` 指定夹具父目录。两个可选环境变量让 harness 更完整，**缺省时相应检查自动跳过、不会误报失败**：`DSH_SRC_DIR`、`DSH_PROFILE_DIR`。
 

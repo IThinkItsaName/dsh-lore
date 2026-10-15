@@ -99,7 +99,7 @@
 
 > 实测方法：按文件名、H1、标题级小节逐一匹配；词表用技能自己的同义词集
 > （验证/复核/检查/评审/结果/证据/评估/确认/实测/审查 + 实验/判定/评测）。
-> 复现脚本见 `logs/tests/measure-real-corpus.mjs`。
+> 复现脚本见 `publish/worklog/tests/measure-real-corpus.mjs`。
 
 
 ## 二、实测出来的两个事实

@@ -14,13 +14,13 @@
 "没测到"，是"压根没执行"）。三条占号变异就是这么白跑一轮的：断言内联在 `main()` 里，
 而本脚本只跑 `PHASES` 登记的函数。这种局面现在当场报错（`--no-preflight` 可跳过）。
 
-    python logs/tests/reverse-verify.py                  # 逐条变异，全中退出码 0
-    python logs/tests/reverse-verify.py --list           # 只列变异表
-    python logs/tests/reverse-verify.py --phase config   # 只跑某一相
-    python logs/tests/reverse-verify.py --keep           # 留下临时目录便于排查
-    python logs/tests/reverse-verify.py --root DIR       # 夹具父目录（须已存在）
-    python logs/tests/reverse-verify.py --skill-dir DIR  # 技能源 scripts/ 目录（默认自动解析）
-    python logs/tests/reverse-verify.py --no-preflight   # 跳过起飞前检查（急着看某一条时）
+    python publish/worklog/tests/reverse-verify.py                  # 逐条变异，全中退出码 0
+    python publish/worklog/tests/reverse-verify.py --list           # 只列变异表
+    python publish/worklog/tests/reverse-verify.py --phase config   # 只跑某一相
+    python publish/worklog/tests/reverse-verify.py --keep           # 留下临时目录便于排查
+    python publish/worklog/tests/reverse-verify.py --root DIR       # 夹具父目录（须已存在）
+    python publish/worklog/tests/reverse-verify.py --skill-dir DIR  # 技能源 scripts/ 目录（默认自动解析）
+    python publish/worklog/tests/reverse-verify.py --no-preflight   # 跳过起飞前检查（急着看某一条时）
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE = os.path.dirname(os.path.dirname(HERE))
 
-# 技能源在哪：这份文件在**两个地方**是同一份字节 —— 工作区的 `logs/tests/`（作者改这里）
+# 技能源在哪：这份文件在**两个地方**是同一份字节 —— 工作区的 `publish/worklog/tests/`（作者改这里）
 # 与仓库的 `tests/`（`_package.py` 同步出来的镜像）。`WORKSPACE` 那个表达式只对前者成立，
 # 在镜像下会多算一级（落到仓库的父目录），所以不能只认一条路径：先试作者布局，再试镜像布局。
 # `--skill-dir` 覆盖这两者，给两种布局都对不上的 checkout 用。
@@ -669,8 +669,9 @@ def reachability(expect: str, labels: set[str], selftest_src: str) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description="把 memory_phase 的断言逐条弄红一次")
     ap.add_argument("--root", default=os.path.join(WORKSPACE, "logs", "fixtures"),
-                    help="夹具父目录（必须已存在）。默认是作者工作区里的 logs/fixtures——"
-                         "夹具不随包发布，所以在仓库镜像里跑必须显式给这一项")
+                    help="夹具父目录（必须已存在）。默认是作者工作区顶层那个 logs/fixtures（属于"
+                         "可丢弃的运行产物，不进记录容器；夹具不随包发布，所以在仓库镜像里跑"
+                         "必须显式给这一项，例如 --root <pkg>/tests/fixtures）")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--phase", choices=sorted(PHASES), default=None,

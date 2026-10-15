@@ -8,7 +8,7 @@
 // exists in DSH, and nothing anywhere said so. It was found by reading the host's CSS,
 // which is not a mechanism.
 //
-// The authority is the host's own stylesheets. `logs/dsh-src/dsw-tokens.txt` is the
+// The authority is the host's own stylesheets. `work_log/logs/eng/dsh-src/dsw-tokens.txt` is the
 // deduplicated list extracted from deepseek-harness/packages/client/*/src/**/*.css, and
 // `tests/tools/refresh-tokens.mjs` regenerates it from a DSH checkout.
 //
@@ -39,14 +39,16 @@ ok(used.every((t) => /^--dsw-[a-z0-9-]+$/.test(t)),
 //   - `tests/tools/host-tokens.txt` —— 随包提交的夹具。206 个名字、5.7 KB，一年也变不了几次，
 //     而它是这条断言唯一的权威，所以它必须**跟着仓库走**：CI 只 checkout 这个包，
 //     工作区里那份够不着。
-//   - `<工作区>/logs/dsh-src/dsw-tokens.txt` —— `refresh-tokens.mjs` 原来的落点，继续认，
-//     本机重生成时不会因为两份不同步而误报。
+//   - `<工作区>/work_log/logs/eng/dsh-src/dsw-tokens.txt` —— `refresh-tokens.mjs` 的工作区镜像，
+//     继续认（本机重生成时不会因为两份不同步而误报）。
+//   - `<工作区>/logs/dsh-src/dsw-tokens.txt` —— 工作区整理前的旧落点，作为兼容继续认。
 //
-// 这一条曾经只认第二个：本机有那棵树，所以一直是绿的；CI 上它会**静默 SKIP**
+// 这一条曾经只认工作区那份：本机有那棵树，所以一直是绿的；CI 上它会**静默 SKIP**
 // （报告 F3 的同族问题：门禁看着接上了，其实从没验过）。
 const CANDIDATES = [
   join(PKG, 'tests', 'tools', 'host-tokens.txt'),
-  join(PKG, '..', '..', 'logs', 'dsh-src', 'dsw-tokens.txt'),
+  join(PKG, '..', '..', '..', 'work_log/logs', 'eng', 'dsh-src', 'dsw-tokens.txt'),
+  join(PKG, '..', '..', '..', 'logs', 'dsh-src', 'dsw-tokens.txt'),
 ]
 const listPath = CANDIDATES.find((p) => existsSync(p)) ?? ''
 if (listPath === '') {

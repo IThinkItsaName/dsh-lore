@@ -8,6 +8,19 @@
 
 ## [未发布]
 
+### 变更：测试 harness 不再随镜像发两份
+
+- 发出去的包里**少了一份重复的 24 文件测试 harness**：从前它在作者工作区的 `logs/tests/`
+  与仓库的 `tests/` 各存一份（`_package.py` 每次同步覆盖镜像侧，逐字节相同）。现在**只有一份**，
+  就住在本仓库的 `tests/`。安装包大小不变（harness 本来就被 `files` 收进来），少的是发布侧的
+  同步负担 —— 改测试不会再出现"改了源忘了镜像"。
+- 开发侧的两处路径跟着变：`logs/tests/` → `publish/worklog/tests/`、`logs/fixtures/` 留在
+  工作区顶层（变异驱动的 `--root`）。**已经发布的 0.8.1 不受影响**：包里的 `tests/` 与
+  `skills/` 位置、命令、`journal.py` 行为全都没动。
+- **`npm test` 现在带 `-B`**（不写 `.pyc`）：自测脚本住在技能包里，Python 默认会把
+  `__pycache__` 生成在包内，而 `_package.py --check` 把副本里的 `__pycache__` 判成漂移 ——
+  于是"跑过自测"本身会把下一道门禁弄红。README 的自测段与 CI 同步带上 `-B`。
+
 ## [0.8.1] - 2026-10-15
 
 > **升级须知**：这是一次**修缺陷**的发版。0.8.0 的「记忆存放位置」在**桌面 profile 上不生效**
@@ -360,7 +373,7 @@
 
 - **`archive --stage` 从"只能一层名字"放开到"可带主题层"**（`研究/01-采样`）。动机是长期容器的实际形态：
   一个阶段一个平铺目录，跑上几十个阶段就平铺一大片（同工作区另一个用这套技能的容器根上就躺着 34 篇未归档记录）。
-  规则是**逐段**套用原来那套名字校验（4 位数字是年份卷、`lessons`/`logs` 是容器内非记录目录），
+  规则是**逐段**套用原来那套名字校验（4 位数字是年份卷、`lessons`/`work_log/logs` 是容器内非记录目录），
   另加两条防越界：`.` / `..` 段与绝对路径一律拒绝。归档表与索引里写的都是**完整相对路径**。
 - **同一个归档目录分几次归档时，`ARCHIVE.md` 那一行就地更新并并入篇号区间**：
   先归档 1–2、后补 3，表里显示 `0001–0003（3 篇）`，而不是只剩最后一批。
@@ -400,7 +413,7 @@
 - **修正一处过期计数**：`SETTINGS.md` 仍写着 `Config` 有「11 个字段」（现为 12）—— 0.7.0 那次
   「顺带修掉两处过期计数」漏了它；`lib/client.js` 里四处「十一个」的注释也一并改成十二个。
 - **`tests/reverse-verify.py` 不再假定技能源在 `.pi/skills/`**：它原先从 `WORKSPACE` 推导路径，
-  在作者工作区（`logs/tests/`）下正确，同步进仓库镜像（`tests/`）后却多算一级而落空，
+  在作者工作区（`publish/worklog/tests/`）下正确，同步进仓库镜像（`tests/`）后却多算一级而落空，
   于是仓库内 `--phase config` 直接 `FileNotFoundError`。现在按候选解析（先作者布局、再镜像布局），
   新增 `--skill-dir` 覆盖，找不到时打印**试过的路径**与下一步命令。
   夹具是作者侧数据、不随包发布，所以在仓库里跑仍需显式 `--root` —— 默认值与报错都写清了这一点。
@@ -421,7 +434,7 @@
   `work_log/00xx` 的**指路**跟着更新：`docs/settings-spec.md` **9** 处、`SETTINGS.md` **4** 处、
   `RELEASING.md` **3** 处、`lib/index.js` 与 `lib/client.js` 各 **1** 处；
   随包技能里的 `_selftest.py` 与 `journal.py` 各 1 处改的是 **`.pi/skills/` 的源**、
-  `tests/audit-client-runtime.mjs` 那 1 处改的是 **`logs/tests/` 的源**，改完由 `_package.py` 同步进仓库。
+  `tests/audit-client-runtime.mjs` 那 1 处改的是 **`publish/worklog/tests/` 的源**，改完由 `_package.py` 同步进仓库。
   **`CHANGELOG.md` 自己那两条历史引用故意没改**（本文件只追加、不改写历史条目），
   技能文档里的**示例路径**（`references/commands.md` 的样例 check 输出、`skill-only/` 的 `work_log/0042-*.md`）
   也没动 —— 后者原文已写「已归档则在 `<stage>/` 下」，本来就对。
@@ -1395,7 +1408,7 @@
 
 - `_selftest.py` 断言 96 → **122**：新增容器根放记录、`lessons/` 属容器子目录、归档落
   `work_log/<stage>/`、`STATE-HISTORY.md` 落容器根、`lessons/` 不被当成归档阶段、
-  `logs/` 下同形文件名不算记录、`--lessons` 改名后仍被排除、以及整套旧布局回退的回归。
+  `work_log/logs/` 下同形文件名不算记录、`--lessons` 改名后仍被排除、以及整套旧布局回退的回归。
 - 文档里的自测数字**不再硬编码**（`analysis.md` 原写 `95/95`，且因计数时机差一本来就错）。
   约束仍在：`_selftest.py` 会核对文档里出现的任何统计数字，写死过期数字会被判 FAIL。
 

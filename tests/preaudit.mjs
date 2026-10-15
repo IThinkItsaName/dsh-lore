@@ -8,7 +8,7 @@ import { PKG, extraBundledSkills } from './_pkg.mjs'
 
 /*
  * The profile link can only be checked against the package that is actually
- * installed. Running from a copied tree (or from `logs/tests/` while the workspace
+ * installed. Running from a copied tree (or from `publish/worklog/tests/` while the workspace
  * copy is the installed one) makes that comparison meaningless rather than failing,
  * so it is skipped unless this package IS the installed one — see isInstalled().
  */

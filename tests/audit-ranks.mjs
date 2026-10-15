@@ -27,8 +27,7 @@ let runtimeRank
 let registryPath = ''
 for (const candidate of [
   process.env.DSH_SKILL_SRC ?? '',
-  `${PKG}/../../logs/dsh-src/dsh/node_modules/@deepseek-ai/dsh-skill/lib/index.js`,
-  `${PKG}/../../logs/dsh-src/full/dsh-skill/lib/index.js`,
+  `${PKG}/../../../dsh-ref/source/@deepseek-ai/dsh-skill/lib/index.js`,
 ].filter(Boolean)) {
   try {
     const text = readFileSync(candidate, 'utf8')

@@ -15,7 +15,7 @@
         LEGACY.md            旧记录声明（可选，见「渐进原则」）
         目标.md              长期目标 → 阶段的两层表（可选，见 references/conventions.md「目标」）
         lessons/             经验层（分册），是容器的子目录
-        logs/<来源>/         日志与运行产物（见 conventions.md「日志归位要求」）
+        work_log/logs/<来源>/         日志与运行产物（见 conventions.md「日志归位要求」）
         .config.json         项目配置文件（可选）：默认档位 / 容器名 / 经验目录名 / 旧记录清单 / 快照篇数
 
 项目配置文件（`<容器>/.config.json`，可选）
@@ -249,6 +249,10 @@ CONTAINER_FALLBACKS = ("work_log", "journal", "work-log")
 LESSONS_DEFAULT = "lessons"
 # 容器内**不属于过程记录**的子目录：经验层与日志。
 # `--lessons` 改名后由调用方把实际名字并进来（见 lessons_skip）。
+#
+# 这里放的是**目录名**（`dn[:] = [d for d in dn if d not in skip]` 比的是 basename），
+# 不是路径：2026-10-15 整理时这一项一度被写成 `work_log/logs`，于是日志目录不再被排除 ——
+# 容器根的 `logs/` 里文件名与记录同形的那些（`2026-01-01-run.md`）会被当成记录。
 NON_RECORD_DIRS = ("lessons", "logs")
 # 容器根上的辅助文档（旧布局里它们住在 archive/ 下）
 ARCHIVE_INDEX = "ARCHIVE.md"
@@ -1402,7 +1406,7 @@ def find_entries(container: str, skip_dirs: tuple[str, ...] = ()) -> dict[int, l
     `find_records`；需要篇号（归档 / 分卷 / `wl/NNNN` 回指）时才用本函数。
 
     `skip_dirs` 用来排除容器内**不是记录**的子目录：经验层（`--lessons` 改名后
-    要显式传进来，见 `lessons_skip`）与日志目录（`logs/`）。它们里面的
+    要显式传进来，见 `lessons_skip`）与日志目录（`work_log/logs/`）。它们里面的
     `01-topic.md`、`2026-01-01-run.md` 与记录文件名形状相同，不排除就会被当成记录。
     """
     skip = {".git", "node_modules", *NON_RECORD_DIRS, *skip_dirs}
@@ -1487,7 +1491,7 @@ def is_archived_entry(container: str, path: str, skip_dirs: tuple[str, ...] = ()
     """已归档记录 = 编号记录文件，且位于容器下的阶段目录里。
 
     `lessons/01-topic.md`、`lessons/99-retrospectives.md` 的文件名与编号记录同形，
-    `logs/<来源>/2026-01-01-run.md` 也是；`README.md`、`STATE-HISTORY.md`、`ARCHIVE.md`
+    `work_log/logs/<来源>/2026-01-01-run.md` 也是；`README.md`、`STATE-HISTORY.md`、`ARCHIVE.md`
     同样住在容器里。它们**都不是记录**：一律先按路径与文件名挡掉，
     否则 `index compact` 会把经验分册折成一个「归档阶段」（`--lessons` 改名后
     由 `skip_dirs` 补上实际名字，见 `lessons_skip`）。

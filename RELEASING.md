@@ -11,12 +11,16 @@
 |---|---|---|---|
 | 技能 + 工具箱 | `.pi/skills/project-work-log/` | `publish/worklog/skills/project-work-log/` | `python scripts/_package.py` |
 | 附带技能（默认关着） | `.pi/skills/client-require-whitelist/` | `publish/worklog/skills/client-require-whitelist/` | 同上（每个技能一项，见 `SKILL_SOURCES`） |
-| 测试 harness | `logs/tests/` | `publish/worklog/tests/` | 同上（一次跑完三处） |
+| 测试 harness | `publish/worklog/tests/` | `publish/worklog/tests/` | 同上（2026-10-15 整理后只此一份，故是恒等映射） |
 | 纯文档变体 | `skill-only/`（手写源） | `dist/skill-only/`（构建产物） | `node tools/build-skill-only.mjs` |
 
-> **前两处源与同步脚本本身都不在本仓库。** `publish/worklog/` 里没有 `scripts/_package.py`，
-> 也没有 `.pi/skills/`、`logs/tests/`——它们都在**工作区**里（本仓库只是它们的下游副本）。
-> 所以只拿到本仓库的人跑不了第 1 行的同步命令；要发版得先有那份工作区。
+> **技能那两处源与同步脚本本身都不在本仓库。** `publish/worklog/` 里没有 `scripts/_package.py`，
+> 也没有 `.pi/skills/`——技能源都在**工作区**里（本仓库只是它们的下游副本）。
+> 所以只拿到本仓库的人跑不了第 1、2 行的同步命令；要发版得先有那份工作区。
+>
+> 例外是**测试 harness**（第 3 行）：2026-10-15 起它就只有这一份，住在本仓库里
+> （源与副本同一处，`_package.py --check` 仍会校验它没缺文件）。在此之前它曾在工作区
+> `logs/tests/` 与仓库 `tests/` 各存一份（24 个文件逐字节相同）。
 
 **两条纪律**：
 
@@ -46,7 +50,7 @@ npm test
 npm run test:skill-only
 
 # 6. 变异驱动（约 10 分钟，故意不进 npm 脚本）
-python ../../logs/tests/reverse-verify.py --root ../../logs/fixtures
+python -B tests/reverse-verify.py --root ../../logs/fixtures
 ```
 
 **判读只有一条**：结尾那行

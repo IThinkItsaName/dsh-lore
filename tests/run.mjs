@@ -2,7 +2,7 @@
 // stubbed `ctx.skills` registry, asserting the provider contract the registry
 // actually enforces (candidate fields, definition fields, content type).
 //
-//   node logs/tests/run.mjs
+//   node publish/worklog/tests/run.mjs
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

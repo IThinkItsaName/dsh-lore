@@ -49,8 +49,12 @@ jobs:
       # 别在步骤名里写断言条数：那个数字会过期（这里曾写死 95，后来写"实际已是 586"，
       # 一样会过期 —— 所以现在连那个数字也不写了）。
       # 要看条数就读这一步的输出最后一行。
+      #
+      # `-B`（不写 `.pyc`）不是洁癖：脚本就住在 `skills/` 里，Python 会把 `__pycache__`
+      # 生成在**包内**，而 `_package.py --check` 把副本里的 `__pycache__` 当漂移（它会随包发出去）。
+      # 于是"跑过自测"本身会把下一道门禁弄红 —— 实测踩过。`npm test` 同样带 `-B`。
       - name: Skill self-test
-        run: python skills/project-work-log/scripts/_selftest.py
+        run: python -B skills/project-work-log/scripts/_selftest.py
 
       # `dist/skill-only/` 是 `tools/build-skill-only.mjs` 的产物，但**有 3 个文件是跟踪的**
       # （SKILL.md 与两份 references）；`tests/audit-paths.mjs` 会核对它与源逐字节一致，

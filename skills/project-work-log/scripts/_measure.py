@@ -108,6 +108,7 @@ def main() -> int:
     print()
 
     # 容器里 lessons/logs 是**非记录**目录（分册名 `01-topic.md` 与记录同形），必须排除。
+    # `skip` 比的是目录名（`dn` 里的 basename），所以写 `logs` 而不是 `work_log/logs`。
     skip = {".git", "node_modules", "logs"}
     if os.path.isdir(ls) and os.path.abspath(os.path.dirname(ls)) == os.path.abspath(wl):
         skip.add(os.path.basename(ls))

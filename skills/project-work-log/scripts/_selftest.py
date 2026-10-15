@@ -3414,6 +3414,214 @@ def _memory_phase(parent: str) -> None:
     ok("只报候选" in r.stdout, "promote: 明说只报候选、不自动打包", r.stdout)
 
 
+def numbering_phase(parent: str) -> None:
+    """写盘原义性、两条占号路径、`new --dry-run` 的预报（F6/F7、第三轮 N-A/N-B）。
+
+    **为什么单独一个相**：这些断言原来内联在 `main()` 里，而
+    `logs/tests/reverse-verify.py` 只按 `PHASES` 里登记的函数跑相 ——
+    内联断言它根本跑不到。第三轮新加的三条变异因此只能报
+    "MISS：期望的标签没变红；红了 0 条"，测了等于没测。
+    搬出来登记进 `PHASES`，变异才算真的被覆盖。
+    """
+
+
+    # ---- 写盘的原子性（审查报告 F6/F7）-------------------------------- #
+    #
+    # 这两条护的是容器最核心的那句承诺："文件永不删、只会丢"。`write_raw()` 原来是
+    # `open(path, "w")`——先截断再写，中途失败就留下一份**残缺的记录**；`cmd_new`
+    # 原来是"先问再写"，两个进程同时建记录会**静默覆盖**。两条各用一个便宜的手法钉住：
+    # 前者看"临时文件收不收得干净 + 内容换不换得掉"，后者看"同时起 6 个进程会不会少一份"。
+    fx = os.path.join(parent, "_f67")
+    os.makedirs(fx)
+    target = os.path.join(fx, "note.md")
+    write(target, "old\n")
+    JOURNAL.write_raw(target, "new\n")
+    leftovers = [f for f in os.listdir(fx) if f != "note.md"]
+    ok(read(target) == "new\n" and leftovers == [],
+       "write_raw: 换掉内容且不留临时文件", f"leftovers={leftovers}")
+
+    # 真正的判据是"占名与写入之间没有窗口"，而窗口只在并发下才看得见：
+    # 6 个进程同时 `new`（`--title` 各不相同，便于分辨谁是谁）。
+    con = os.path.join(fx, "con")
+    os.makedirs(os.path.join(con, CONTAINER))
+    write(os.path.join(con, CONTAINER, "README.md"), INDEX)
+    procs = [subprocess.Popen(
+        [sys.executable, TOOL, "new", "--root", con, "--title", f"race {i}"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8", errors="replace", cwd=HERE)
+        for i in range(6)]
+    outs = []
+    for p in procs:
+        try:
+            o, e = p.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            o, e = p.communicate()
+        outs.append((p.returncode, o, e))
+    made = sorted(f for f in os.listdir(os.path.join(con, CONTAINER))
+                  if f != "README.md")
+    ok(all(rc == 0 for rc, _, _ in outs) and len(made) == 6,
+       "6 个进程同时 new：一人一份，没有静默覆盖",
+       f"rc={[rc for rc, _, _ in outs]} files={made}")
+    bodies = [read(os.path.join(con, CONTAINER, f)) for f in made]
+    ok(all(f"race {i}" in "\n".join(bodies) for i in range(6)),
+       "6 个进程同时 new：每份正文都在，没有谁被谁吃掉",
+       f"{[b.splitlines()[3] if len(b.splitlines()) > 3 else '?' for b in bodies]}")
+    # 条数对**不等于**号不重：六份文件全叫 `0001-race-i.md` 时上面两条照样全绿，
+    # 而"编号永不复用"正是容器承诺过的那条不变量（审查报告 §附录 N2 就是这么漏的）。
+    # 判据是**号两两不同**，不是"恰好 1..6"：顺序密集是正常时序的巧合，不是不变量
+    # （第三轮复查 N-A 指出这条断言写窄了，真撞号时它反而看不出区别）。
+    nums = sorted(JOURNAL.name_number(f) for f in made)
+    ok(len(set(nums)) == 6,
+       "6 个进程同时 new：篇号互不相同（判据是「号不重」，不是「文件数对」）", str(nums))
+
+    # ---- `inbox take --into-record` 是**另一条**占号路径（2026-10-15 修）------------ #
+    #
+    # 它原来自己算号 + `os.path.exists` + `write_raw`：6 个进程同时 take、且目标标题相同
+    # 时，六份都算到同一个文件名 —— `write_raw` 用的是 `os.replace`，后写者**静默覆盖**
+    # 先写者，而且每个进程都把自己取走的那条信箱消息删掉了（那条消息就此永久消失）。
+    # 判据与上面 `new` 那条同源，但刻意用**同一个标题**：不同标题只会撞号（号重的记录
+    # 还都在），相同标题才会撞名 —— 撞名才是覆盖，也才是"只会丢"里最坏的那一种。
+    take_con = os.path.join(fx, "take")
+    take_mem = os.path.join(fx, "take-mem")
+    os.makedirs(os.path.join(take_con, CONTAINER))
+    write(os.path.join(take_con, CONTAINER, "README.md"), INDEX)
+    for i in range(6):
+        r = run(take_con, "inbox", "put", f"payload {i}", "--memory", take_mem)
+        ok(r.returncode == 0, f"concurrency fixture: inbox put {i}", r.stdout + r.stderr)
+    take_inbox = JOURNAL.memory_inbox_dir(take_mem)
+    items = sorted(os.listdir(take_inbox))
+    procs = [subprocess.Popen(
+        [sys.executable, TOOL, "inbox", "take", items[i], "--into-record", "same title",
+         "--memory", take_mem, "--root", take_con],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8", errors="replace", cwd=HERE)
+        for i in range(len(items))]
+    outs2 = []
+    for p in procs:
+        try:
+            o, e = p.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            o, e = p.communicate()
+        outs2.append((p.returncode, o, e))
+    made2 = sorted(f for f in os.listdir(os.path.join(take_con, CONTAINER))
+                   if f != "README.md")
+    ok(all(rc == 0 for rc, _, _ in outs2) and len(made2) == 6,
+       "6 个进程同时 take 同一个标题：一人一份，没有静默覆盖",
+       f"rc={[rc for rc, _, _ in outs2]} files={made2} "
+       f"err={[e.strip().splitlines()[-1:] for _, _, e in outs2 if e.strip()]}")
+    nums2 = sorted(JOURNAL.name_number(f) for f in made2)
+    ok(len(set(nums2)) == 6,
+       "6 个进程同时 take：篇号互不相同（原来六份都算在 0001 上）", str(nums2))
+    taken = "\n".join(read(os.path.join(take_con, CONTAINER, f)) for f in made2)
+    ok(taken.count("（来自信箱") == 6 and all(f"payload {i}" in taken for i in range(6)),
+       "6 个进程同时 take：六条正文都在，没有哪一条被覆盖掉",
+       f"（来自信箱 ×{taken.count('（来自信箱')}；"
+       f"缺={[i for i in range(6) if f'payload {i}' not in taken]}）")
+    ok(os.listdir(take_inbox) == [],
+       "6 个进程同时 take：取走的六条都从信箱里删干净了", str(os.listdir(take_inbox)))
+
+    # ---- 占号对账：**确定性**地撞号（第三轮复查 N-A）------------------- #
+    #
+    # 上面那两条并发用例要"真撞上"才算数，而正常时序下六个进程拿到的是 1..6 ——
+    # 也就是说它们**测不到**对账逻辑本身（N-A 就是这么漏过去的）。这里不靠运气：
+    # 直接把两/三份同号记录摆好，再像"每个进程各对账一次"那样各调用一次
+    # `settle_number_collision()`。判据三条：号两两不同、正文首行的篇号等于文件名、
+    # 旧实现（一轮只搬一份）在三路时会留下重号，所以三路这条是**必然**变红的。
+    def same_number(cnt: int, tag: str) -> tuple[str, list[str], list[str]]:
+        d = os.path.join(fx, f"settle-{tag}")
+        os.makedirs(os.path.join(d, CONTAINER))
+        write(os.path.join(d, CONTAINER, "README.md"), INDEX)
+        slugs = [f"{tag}-{i}" for i in range(cnt)]
+        paths = []
+        for slug in slugs:
+            p = JOURNAL.reserve_new_record(
+                os.path.join(d, CONTAINER), 1, slug,
+                f"# 0001 · 同号 {slug}\n\n日期：2026-09-14\n迭代：12\n触发：\n范围：\n结论：\n")
+            paths.append(p)
+        return d, paths, slugs
+
+    for cnt in (2, 3):
+        d, paths, slugs = same_number(cnt, f"{cnt}way")
+        jd = os.path.join(d, CONTAINER)
+        for p, s in zip(paths, slugs):
+            JOURNAL.settle_number_collision(jd, p, s)
+        files = sorted(f for f in os.listdir(jd) if f != "README.md")
+        got = sorted(JOURNAL.name_number(f) for f in files)
+        ok(len(set(got)) == len(got),
+           f"{cnt} 路同号各对账一次：篇号互不相同（一轮只搬一份会留下重号）",
+           f"files={files} nums={got}")
+        heads = []
+        for f in files:
+            m = JOURNAL.HEADING_RE.match(read(os.path.join(jd, f)).splitlines()[0])
+            heads.append(int(m.group(1)) if m else None)
+        ok(heads == got,
+           f"{cnt} 路同号：正文首行的篇号 == 文件名里的号（改名要连正文一起改）",
+           f"heads={heads} nums={got}")
+
+    # ---- 对账的另一半：先收工的那一份，不许被"名字更小"顶掉（2026-10-15 补）-------- #
+    #
+    # 上面那两条是**顺序**调用的：每份都还没收工就被叫来对账。真实并发下还有另一半时序 ——
+    # 先跑完对账的进程那一份**先收工**（它那时只看得见自己，留下是应该的），后到的那份若按
+    # "名字最小者留下"判，可能因为名字恰好排前面而**也**留下：两边都以为自己赢了，重号就
+    # 留在盘上。这不是推演出来的：起飞前检查跑未变异自测时真冒出来过一次
+    # `[1, 2, 3, 4, 5, 5]`（重号率很低，靠并发用例撞是撞不出来的）。这里不靠运气：
+    # 先让一份单独对完账（模拟"先收工"），再塞一份**名字更小**的同号记录进去。
+    early = os.path.join(fx, "settle-early")
+    os.makedirs(os.path.join(early, CONTAINER))
+    write(os.path.join(early, CONTAINER, "README.md"), INDEX)
+    ed = os.path.join(early, CONTAINER)
+    late = "# 0005 · 后到的\n\n日期：2026-09-14\n迭代：12\n触发：\n范围：\n结论：\n"
+    mine = JOURNAL.reserve_new_record(ed, 5, "mine", late.replace("后到的", "先收工的"))
+    JOURNAL.settle_number_collision(ed, mine, "mine")        # 只看得见自己：留着 5 收工
+    also = JOURNAL.reserve_new_record(ed, 5, "also", late)   # 同号，名字排在 "mine" 前面
+    _path, also_num = JOURNAL.settle_number_collision(ed, also, "also")
+    early_files = sorted(f for f in os.listdir(ed) if f != "README.md")
+    early_nums = sorted(JOURNAL.name_number(f) for f in early_files)
+    ok(len(set(early_nums)) == len(early_nums) and also_num != 5,
+       "同号对账：先收工的那一份留下，后到的让路（名字排前面也不算赢）",
+       f"files={early_files} nums={early_nums}")
+
+    # `new --dry-run` 的预报必须与真跑**同判**（第三轮复查 N-B）：真跑每次尝试都重问
+    # `taken_numbers()`，而只看名字会预报出被**别的 slug** 占着的号。窗口用"把号快照
+    # 钉在旧的一刻"来复现 —— 那是唯一确定性复现它的办法，且不改被测代码路径。
+    drift = os.path.join(fx, "dryrun-drift")
+    os.makedirs(os.path.join(drift, CONTAINER))
+    write(os.path.join(drift, CONTAINER, "README.md"), INDEX)
+    jd = os.path.join(drift, CONTAINER)
+    JOURNAL.reserve_new_record(jd, 1, "first", "# 0001 · 先来的\n")
+    real_find = JOURNAL.find_entries
+    stale = JOURNAL.find_entries(jd, JOURNAL.lessons_skip(None))
+    JOURNAL.reserve_new_record(jd, 2, "others", "# 0002 · 窗口里插进来的\n")
+
+    def dry_run_number(dry: bool) -> str:
+        JOURNAL.find_entries = lambda *a, **k: {n: list(v) for n, v in stale.items()}
+        try:
+            argv = ["new", "--root", drift, "--title", "drift", "--slug", "mine"]
+            if dry:
+                argv.append("--dry-run")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                JOURNAL.main(argv)
+        finally:
+            JOURNAL.find_entries = real_find
+        key = "将创建" if dry else "created"
+        hit = [l.split(key, 1)[1].strip() for l in buf.getvalue().splitlines() if key in l]
+        return hit[0] if hit else ""
+
+    pred = dry_run_number(True)
+    real = dry_run_number(False)
+    ok(bool(pred) and pred == real,
+       "new --dry-run 的篇号 == 真跑的篇号（别的 slug 抢在窗口里占了那个号时也一样）",
+       f"dry-run={pred!r} 真跑={real!r}")
+
+    # 兜底名字也得是**合法记录名**，否则连撞一千次之后会造出一个 `brief` 看不见的文件。
+    fb = JOURNAL.new_record_fallback_name(42, "some-slug")
+    ok(JOURNAL.NUM_FILE_RE.match(fb) is not None and fb.startswith("0042-"),
+       "兜底记录名仍然是记录（NUM_FILE_RE 认它）", fb)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="journal.py 自测")
     ap.add_argument("--root", default=None,
@@ -3466,105 +3674,7 @@ def main() -> int:
         ok(r.stdout.count("\n") == 1 and "2026-01-01" not in r.stdout,
            "a logs/ file shaped like a record is not read as one", r.stdout)
 
-        # ---- 写盘的原子性（审查报告 F6/F7）-------------------------------- #
-        #
-        # 这两条护的是容器最核心的那句承诺："文件永不删、只会丢"。`write_raw()` 原来是
-        # `open(path, "w")`——先截断再写，中途失败就留下一份**残缺的记录**；`cmd_new`
-        # 原来是"先问再写"，两个进程同时建记录会**静默覆盖**。两条各用一个便宜的手法钉住：
-        # 前者看"临时文件收不收得干净 + 内容换不换得掉"，后者看"同时起 6 个进程会不会少一份"。
-        fx = os.path.join(tmp, "_f67")
-        os.makedirs(fx)
-        target = os.path.join(fx, "note.md")
-        write(target, "old\n")
-        JOURNAL.write_raw(target, "new\n")
-        leftovers = [f for f in os.listdir(fx) if f != "note.md"]
-        ok(read(target) == "new\n" and leftovers == [],
-           "write_raw: 换掉内容且不留临时文件", f"leftovers={leftovers}")
-
-        # 真正的判据是"占名与写入之间没有窗口"，而窗口只在并发下才看得见：
-        # 6 个进程同时 `new`（`--title` 各不相同，便于分辨谁是谁）。
-        con = os.path.join(fx, "con")
-        os.makedirs(os.path.join(con, CONTAINER))
-        write(os.path.join(con, CONTAINER, "README.md"), INDEX)
-        procs = [subprocess.Popen(
-            [sys.executable, TOOL, "new", "--root", con, "--title", f"race {i}"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            encoding="utf-8", errors="replace", cwd=HERE)
-            for i in range(6)]
-        outs = []
-        for p in procs:
-            try:
-                o, e = p.communicate(timeout=120)
-            except subprocess.TimeoutExpired:
-                p.kill()
-                o, e = p.communicate()
-            outs.append((p.returncode, o, e))
-        made = sorted(f for f in os.listdir(os.path.join(con, CONTAINER))
-                      if f != "README.md")
-        ok(all(rc == 0 for rc, _, _ in outs) and len(made) == 6,
-           "6 个进程同时 new：一人一份，没有静默覆盖",
-           f"rc={[rc for rc, _, _ in outs]} files={made}")
-        bodies = [read(os.path.join(con, CONTAINER, f)) for f in made]
-        ok(all(f"race {i}" in "\n".join(bodies) for i in range(6)),
-           "6 个进程同时 new：每份正文都在，没有谁被谁吃掉",
-           f"{[b.splitlines()[3] if len(b.splitlines()) > 3 else '?' for b in bodies]}")
-        # 条数对**不等于**号不重：六份文件全叫 `0001-race-i.md` 时上面两条照样全绿，
-        # 而"编号永不复用"正是容器承诺过的那条不变量（审查报告 §附录 N2 就是这么漏的）。
-        nums = sorted(JOURNAL.name_number(f) for f in made)
-        ok(nums == list(range(1, 7)),
-           "6 个进程同时 new：篇号互不相同（判据是「号不重」，不是「文件数对」）", str(nums))
-
-        # ---- `inbox take --into-record` 是**另一条**占号路径（2026-10-15 修）------------ #
-        #
-        # 它原来自己算号 + `os.path.exists` + `write_raw`：6 个进程同时 take、且目标标题相同
-        # 时，六份都算到同一个文件名 —— `write_raw` 用的是 `os.replace`，后写者**静默覆盖**
-        # 先写者，而且每个进程都把自己取走的那条信箱消息删掉了（那条消息就此永久消失）。
-        # 判据与上面 `new` 那条同源，但刻意用**同一个标题**：不同标题只会撞号（号重的记录
-        # 还都在），相同标题才会撞名 —— 撞名才是覆盖，也才是"只会丢"里最坏的那一种。
-        take_con = os.path.join(fx, "take")
-        take_mem = os.path.join(fx, "take-mem")
-        os.makedirs(os.path.join(take_con, CONTAINER))
-        write(os.path.join(take_con, CONTAINER, "README.md"), INDEX)
-        for i in range(6):
-            r = run(take_con, "inbox", "put", f"payload {i}", "--memory", take_mem)
-            ok(r.returncode == 0, f"concurrency fixture: inbox put {i}", r.stdout + r.stderr)
-        take_inbox = JOURNAL.memory_inbox_dir(take_mem)
-        items = sorted(os.listdir(take_inbox))
-        procs = [subprocess.Popen(
-            [sys.executable, TOOL, "inbox", "take", items[i], "--into-record", "same title",
-             "--memory", take_mem, "--root", take_con],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            encoding="utf-8", errors="replace", cwd=HERE)
-            for i in range(len(items))]
-        outs2 = []
-        for p in procs:
-            try:
-                o, e = p.communicate(timeout=120)
-            except subprocess.TimeoutExpired:
-                p.kill()
-                o, e = p.communicate()
-            outs2.append((p.returncode, o, e))
-        made2 = sorted(f for f in os.listdir(os.path.join(take_con, CONTAINER))
-                       if f != "README.md")
-        ok(all(rc == 0 for rc, _, _ in outs2) and len(made2) == 6,
-           "6 个进程同时 take 同一个标题：一人一份，没有静默覆盖",
-           f"rc={[rc for rc, _, _ in outs2]} files={made2} "
-           f"err={[e.strip().splitlines()[-1:] for _, _, e in outs2 if e.strip()]}")
-        nums2 = sorted(JOURNAL.name_number(f) for f in made2)
-        ok(nums2 == list(range(1, 7)),
-           "6 个进程同时 take：篇号互不相同（原来六份都算在 0001 上）", str(nums2))
-        taken = "\n".join(read(os.path.join(take_con, CONTAINER, f)) for f in made2)
-        ok(taken.count("（来自信箱") == 6 and all(f"payload {i}" in taken for i in range(6)),
-           "6 个进程同时 take：六条正文都在，没有哪一条被覆盖掉",
-           f"（来自信箱 ×{taken.count('（来自信箱')}；"
-           f"缺={[i for i in range(6) if f'payload {i}' not in taken]}）")
-        ok(os.listdir(take_inbox) == [],
-           "6 个进程同时 take：取走的六条都从信箱里删干净了", str(os.listdir(take_inbox)))
-
-        # 兜底名字也得是**合法记录名**，否则连撞一千次之后会造出一个 `brief` 看不见的文件。
-        fb = JOURNAL.new_record_fallback_name(42, "some-slug")
-        ok(JOURNAL.NUM_FILE_RE.match(fb) is not None and fb.startswith("0042-"),
-           "兜底记录名仍然是记录（NUM_FILE_RE 认它）", fb)
+        numbering_phase(tmp)
 
         # new --insert -----------------------------------------------------
         r = run(tmp, "new", "--title", "Add login rate limit", "--iter", "12",

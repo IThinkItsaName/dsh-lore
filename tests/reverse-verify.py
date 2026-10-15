@@ -9,19 +9,28 @@
 都成立，只覆盖一相等于只在很小一部分地方守规矩。变异行的第一个字段就是它属于哪一相，
 新增一相只要在 `PHASES` 里登记它的函数名。
 
+**起飞前先查一遍"这条断言到底跑没跑"**（2026-10-15 加的）：跑变异之前先跑一遍**未变异**
+的自测，把标签全收进来；某条变异的期望字样要是在里面找不到，它**不可能**变红（不是
+"没测到"，是"压根没执行"）。三条占号变异就是这么白跑一轮的：断言内联在 `main()` 里，
+而本脚本只跑 `PHASES` 登记的函数。这种局面现在当场报错（`--no-preflight` 可跳过）。
+
     python logs/tests/reverse-verify.py                  # 逐条变异，全中退出码 0
     python logs/tests/reverse-verify.py --list           # 只列变异表
     python logs/tests/reverse-verify.py --phase config   # 只跑某一相
     python logs/tests/reverse-verify.py --keep           # 留下临时目录便于排查
     python logs/tests/reverse-verify.py --root DIR       # 夹具父目录（须已存在）
     python logs/tests/reverse-verify.py --skill-dir DIR  # 技能源 scripts/ 目录（默认自动解析）
+    python logs/tests/reverse-verify.py --no-preflight   # 跳过起飞前检查（急着看某一条时）
 """
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import os
+import re
 import shutil
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -47,8 +56,14 @@ def default_skill_dir() -> str:
 SKILL = default_skill_dir()
 
 # 相名 → `_selftest.py` 里那个阶段函数的函数名。新增一相就在这里登记。
+#
+# **登记是硬要求**：本脚本只跑这里的函数。断言要是内联在 `main()` 里（那个函数本脚本
+# 调不了：它自己解析 argv），变异就永远等不到它变红 —— 会报
+# "MISS：期望的标签没变红；红了 0 条"，也就是"测了等于没测"。2026-10-15 那三条占号
+# 变异就是这么报的：断言内联在 `main()` 里，直到把整段搬成 `numbering_phase()` 才通。
 PHASES: dict[str, str] = {
     "memory": "memory_phase",
+    "numbering": "numbering_phase",
     "config": "config_phase",
     "gates": "gate_phase",
     "links": "link_phase",
@@ -478,6 +493,30 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "（当前 {cur}）",
      "（当前 {MODE_DEFAULT}）",
      "mode's hint line names the effective tier, not the built-in default"),
+
+    # ── 占号对账（第三轮复查 N-A / N-B）────────────────────────────────────────
+    # 这一组护的是"编号永不复用"这条承诺：改名不改正文会让记录被自己的 `check` 判 ERROR
+    # （N-A 后半），只看名字的 dry-run 会预报出被别的 slug 占着的号（N-B）。下面三条各破坏
+    # 其中一面。
+    # 它们挂在 `numbering` 相上 —— 那几条断言 2026-10-15 从 `main()` 内联段搬进了
+    # `numbering_phase()`，因为内联断言本脚本跑不到（见 `PHASES` 上的说明）。
+    # 头一条 2026-10-15 换过锚点：对账规则本身也从"名字最小的留下"改成了"只剩我一份才算数"
+    # （旧规则在并发下漏掉一整边：先收工的只看得见自己、后到的若名字排前面也会留下 —— 自测
+    # 里真冒出来过一次 `[1, 2, 3, 4, 5, 5]`）。所以这里改回**旧规则**，红的是那条新断言。
+    ("numbering", "占号对账退回「名字最小的留下」（并发下先收工的会被顶掉）",
+     "        if len(peers) < 2:",
+     "        if len(peers) < 2 or os.path.basename(path) == peers[0]:",
+     "先收工的那一份留下，后到的让路"),
+    ("numbering", "对账改名之后不再改正文首行的篇号",
+     "        if not renumber_body(dst, target):",
+     "        if not True:  # 变异：改名不改正文",
+     "路同号：正文首行的篇号 == 文件名里的号"),
+    ("numbering", "new --dry-run 又只看名字、不看号",
+     "        while (os.path.exists(_record_name(journal, n, slug)) or n in taken_numbers(journal)) \\\n"
+     "                and n - num < NEW_RECORD_TRIES:",
+     "        while (os.path.exists(_record_name(journal, n, slug))) \\\n"
+     "                and n - num < NEW_RECORD_TRIES:",
+     "new --dry-run 的篇号 == 真跑的篇号"),
 ]
 
 
@@ -486,6 +525,110 @@ def load_module(path: str, tag: str):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def unmutated_labels(selftest_path: str, pre_root: str) -> tuple[set[str], list[str]]:
+    """跑一遍**未变异**的自测，收下它打印的每一条断言标签。
+
+    为什么要走"跑真入口的子进程"而不是 import 进来调相：标签就是它**打印的那一行**，
+    判据与下面 `expect in label` 的匹配方式同源；顺带用上自测自己的夹具播种和 `--root`
+    纪律，不必在这里重搭一套（重搭的那一套一旦与自测脱节，检查本身就不可信了）。
+
+    返回（标签集合, 问题清单）。退出码非 0 时问题清单里会写明"未变异的自测本身就没过"——
+    那时标签是**残缺**的，调用方不能把"找不到"直接当成"断言没执行"。
+    """
+    os.makedirs(pre_root, exist_ok=True)
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    try:
+        proc = subprocess.run([sys.executable, selftest_path, "--root", pre_root],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", env=env, timeout=1800)
+    except (OSError, subprocess.SubprocessError) as exc:   # 起不来或超时，都算"这一关没过"
+        return set(), [f"未变异的自测没跑起来：{type(exc).__name__}: {exc}"]
+    labels = {line[6:].strip() for line in proc.stdout.splitlines()
+              if line.startswith("PASS  ")}
+    problems: list[str] = []
+    if proc.returncode != 0:
+        fails = [line.strip() for line in proc.stdout.splitlines() if line.startswith("FAIL  ")]
+        problems.append(f"未变异的自测本身就没过（exit {proc.returncode}，"
+                        f"{len(fails)} 条失败）——先让它全绿再看变异")
+        problems.extend("  " + f for f in fails[:5])
+    return labels, problems
+
+
+def phase_ranges(selftest_src: str) -> dict[str, tuple[int, int]]:
+    """每个**登记过的相**函数的行区间（1-based 闭区间）。"""
+    tree = ast.parse(selftest_src)
+    want = set(PHASES.values())
+    return {n.name: (n.lineno, n.end_lineno or n.lineno)
+            for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in want}
+
+
+def top_level_ranges(selftest_src: str) -> list[tuple[str, int, int]]:
+    """所有顶层函数的行区间：用来回答"这个字样落在哪个函数里"。"""
+    tree = ast.parse(selftest_src)
+    return [(n.name, n.lineno, n.end_lineno or n.lineno)
+            for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def phase_templates(selftest_src: str, ranges: dict[str, tuple[int, int]]) -> list[re.Pattern]:
+    """登记过的相里所有"能拼出标签"的字符串模板，插值处换成 `.*`。
+
+    为什么需要这一步：标签不都是字面量。`f"gates: the central list names `{name}`"` 在
+    未变异时生成的是**别的**规则名，变异之后才轮到 `RULE_UNLISTED` —— 这种"动态标签"既
+    问不出"字面量在不在相里"，也问不出"未变异时标签在不在"（第一次跑起飞前检查就被它
+    绊了一下：差点把一条**一直好好的**变异判成不可达）。
+
+    只收字面部分 ≥ 8 个字符的模板：`f"{x}"` 这种纯插值转成正则就是 `.*`，能匹配一切，
+    留着只会把这一关废掉。
+    """
+    tree = ast.parse(selftest_src)
+    want = set(PHASES.values())
+    patterns: list[re.Pattern] = []
+    for node in tree.body:
+        if not (isinstance(node, ast.FunctionDef) and node.name in want):
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.JoinedStr):
+                parts: list[str] = []
+                literal = 0
+                for value in sub.values:
+                    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                        parts.append(re.escape(value.value))
+                        literal += len(value.value)
+                    else:
+                        parts.append(".*")
+                if literal >= 8:
+                    patterns.append(re.compile("".join(parts), re.S))
+            elif (isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+                    and len(sub.value) >= 8):
+                patterns.append(re.compile(re.escape(sub.value), re.S))
+    return patterns
+
+
+def reachability(expect: str, labels: set[str], selftest_src: str) -> str:
+    """这条变异的期望字样**有没有可能**被某条登记过的相产生？返回 ""（可能）或一句原因。
+
+    四种情形，按可信度排：
+      1. 未变异的相里**已经**有这么一条标签 —— 最直接；
+      2. 字样就写在某个登记过的相的源码里（这次的值不同而已）；
+      3. 以上都不是，但字样出现在 `_selftest.py` 的**相之外**（多半是 `main()` 里）——
+         就是 2026-10-15 那个洞：驱动跑不到那里；
+      4. 相里的模板也拼不出来 —— 期望字样多半写错了。
+    """
+    if any(expect in label for label in labels):
+        return ""
+    hits = [i + 1 for i, line in enumerate(selftest_src.split("\n")) if expect in line]
+    ranges = phase_ranges(selftest_src)
+    if any(any(a <= n <= b for a, b in ranges.values()) for n in hits):
+        return ""
+    if hits:
+        owner = next((name for name, a, b in top_level_ranges(selftest_src) if a <= hits[0] <= b),
+                     "模块层")
+        return f"字样只出现在相之外：`{owner}()` 第 {hits[0]} 行"
+    if any(pattern.search(expect) for pattern in phase_templates(selftest_src, ranges)):
+        return ""
+    return "字样既不在任何相的源码里，也不在任何标签里（期望字样写错了？）"
 
 
 def main() -> int:
@@ -500,6 +643,9 @@ def main() -> int:
     ap.add_argument("--only", default=None, metavar="SUBSTR",
                     help="只跑名字里含这段字的一条/几条变异。整相跑一遍要几十分钟，"
                          "改了一处想当场确认那一条时用它（名字用 --list 看）")
+    ap.add_argument("--no-preflight", action="store_true",
+                    help="跳过起飞前检查（默认先跑一遍未变异的自测，确认每条变异的期望"
+                         "字样真的有人记下来；找不到就当场退出，不白跑一整轮）")
     ap.add_argument("--skill-dir", default=None, metavar="DIR",
                     help="技能源所在的 scripts/ 目录。默认自动解析：先试工作区布局 "
                          "`<工作区>/.pi/skills/project-work-log/scripts`，再试镜像布局 "
@@ -556,6 +702,44 @@ def main() -> int:
         return 2
     if len(selected) != len(MUTATIONS):
         print(f"（只跑选中的 {len(selected)} 条变异）")
+
+    # ---- 起飞前的检查：期望的那条断言，未变异时也得真有人记下来 -------------------
+    #
+    # 为什么（2026-10-15，第三条踩过的坑）：`expect` 是程序化匹配的字符串 —— 只有当
+    # **登记过的相**记下过这个标签时，"变异之后它变红"才可能发生。断言要是内联在
+    # `main()` 里（本脚本调不了那个函数：它自己解析 argv），跑完一整轮才看到
+    # `MISS … 期望「…」没变红；红了 0 条`，而真实原因与自测内容无关：那条断言从头到尾
+    # 没被执行过。三条占号变异就是这么白跑一轮的（见 `PHASES` 上面的说明）。
+    #
+    # 判据：先跑一遍未变异的自测，把标签全收进来；期望字样不在其中就当场报出来，
+    # 一条变异都不用跑。这不是"没测到"，是"根本没有机会"。
+    #
+    # 但"不在标签里"不等于"不可达"：标签可以是拼出来的。`gates: the central list names
+    # `{name}`` 在未变异时拼的是**别的**规则名，变异之后才轮到那条没登记进清单的规则 ——
+    # 第一次跑这一关时它差点把一条**一直好好的**变异判成不可达。所以这里交给
+    # `reachability()` 分情形判（见那个函数的说明），不是拿 `in` 硬比。
+    if not args.no_preflight:
+        labels, pre_problems = unmutated_labels(st_path, os.path.join(scratch_root, "preflight"))
+        unreachable: list[str] = []
+        for phase, name, _old, _new, expect in selected:
+            if phase not in PHASES:
+                unreachable.append(f"{name}：相 `{phase}` 没登记进 PHASES")
+                continue
+            why = reachability(expect, labels, selftest_src)
+            if why:
+                unreachable.append(f"{name}（相 {PHASES[phase]}）：{why} —— 期望「{expect}」")
+        for p in pre_problems:
+            print("[起飞前检查] " + p)
+        if unreachable:
+            print(f"\n[起飞前检查] {len(unreachable)} 条变异的期望字样，未变异的自测里"
+                  f"没有任何断言标签含它：")
+            for u in unreachable:
+                print("  ! " + u)
+            print("  → 这种变异**不可能**变红（不是「没测到」，是「没执行」）。最常见的原因"
+                  "是断言内联在 `main()` 里：本脚本只跑 `PHASES` 登记的函数。")
+            print("     把它搬进某一相、在 `PHASES` 里登记，再跑。想跳过这一关用 --no-preflight。")
+            return 1
+
     for i, (phase, name, old, new, expect) in enumerate(selected):
         n = original.count(old)
         if n != 1:

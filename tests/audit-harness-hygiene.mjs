@@ -13,6 +13,11 @@
 //   5. CI 仍然跑两道 node 门禁与 python 自测（F3：`lib/**` 与 15 支 harness 曾经无人守）。
 //   6. 文档里写的 harness 支数（CI 注释、`RELEASING.md` 的发版清单）必须等于链上真跑的数。
 //      "15 支"在 16 支时留着过一次：发版清单也是断言漏掉的地方。
+//   7. `RELEASING.md` 判读行里那句"N 条变异"必须等于变异表里真有的条数 —— 同一个理由，
+//      只是这条守的是第 6 步（变异驱动）而不是第 5 步。
+//   8. 变异驱动自己不许有"看着在跑、其实没跑"：表里用到的每一相都得在 `PHASES` 里登记，
+//      而且它得保留**起飞前检查**（先跑一遍未变异的自测，期望字样不在标签里就当场退出）。
+//      2026-10-15：三条变异的期望断言内联在 `main()` 里，驱动跑不到它们，白跑一整轮。
 //
 //   运行：node tests/audit-harness-hygiene.mjs
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
@@ -104,4 +109,46 @@ ok(releasingClaim !== null && Number(releasingClaim[1]) === wiredGates.length,
   '`RELEASING.md` 发版清单里的 harness 支数与链上真跑的一致',
   releasingClaim ? `清单说 ${releasingClaim[1]} 个，链上 ${wiredGates.length} 支` : '清单里没写支数')
 
-report(`harness hygiene OK — ${wiredGates.length} gates wired, all importing the shim, and the CI + RELEASING prose matches reality`)
+/* 判读行里那句"N 条变异"同样是发版时才看的数字：表长了而清单没跟，就是 F17 那类
+   "文档里抄了一个会过期的字面值"。数的是表里以 `("` 开头的行。 */
+const driver = read(join(PKG, 'tests', 'reverse-verify.py'))
+const table = /MUTATIONS[^=]*=\s*\[([\s\S]*?)\n\]/.exec(driver)
+const rows = table ? (table[1].match(/^\s*\("/gm) || []).length : 0
+const mutationClaim = /(\d+)\s*条变异：/.exec(releasing)
+ok(rows > 0 && mutationClaim !== null && Number(mutationClaim[1]) === rows,
+  '`RELEASING.md` 判读行里的变异条数与 `tests/reverse-verify.py` 的变异表一致',
+  `清单说 ${mutationClaim ? mutationClaim[1] : '（没写）'} 条，表里有 ${rows} 条`)
+
+/* ---- 7. 变异驱动自己也有"看着在跑、其实没跑"（第三轮复查踩到的）----
+   2026-10-15：三条新变异的期望断言内联在 `_selftest.py` 的 `main()` 里，而驱动只跑
+   `PHASES` 登记过的函数 —— 跑完一整轮才报"期望的标签没变红；红了 0 条"，真实原因却是
+   那条断言从头到尾没被执行过（跑完九十条才发现，一轮白跑）。修法两半：断言搬进相
+   （`numbering_phase`），驱动加**起飞前检查**（先跑一遍未变异的自测，期望字样不在标签
+   里就当场退出）。下面几条守的就是这两半别被改回去。
+
+   起飞前检查自己也有过一次假警报：`gates` 那一相的标签是拼出来的
+   （`f"gates: the central list names \`{name}\`"` —— 未变异时拼的是别的规则名），拿
+   "未变异时的标签里有没有这个字样"硬比，会把一条一直好好的变异判成不可达。所以那关按
+   `reachability()` 分情形判：标签里有 → 通过；字样写在相源码里 → 通过；只出现在相之外
+   （`main()` 里）→ 当场报"不可达"；相里的模板也拼不出来 → 报"期望字样写错了"。 */
+const phaseBlock = /PHASES[^=]*=\s*\{([\s\S]*?)\n\}/.exec(driver)
+const registered = new Set([...(phaseBlock ? phaseBlock[1].matchAll(/"(\w+)":/g) : [])].map((m) => m[1]))
+const usedPhases = new Set((table ? (table[1].match(/^\s*\("(\w+)"/gm) || []) : [])
+  .map((line) => /"(\w+)"/.exec(line)[1]))
+const unregistered = [...usedPhases].filter((phase) => !registered.has(phase))
+ok(registered.size > 0 && usedPhases.size > 0 && unregistered.length === 0,
+  '变异表里用到的每一相都在 `PHASES` 里登记过（没登记的那一相，驱动当场 KeyError）',
+  `登记 ${registered.size} 相；表里用到 ${usedPhases.size} 相`
+  + (unregistered.length ? `；没登记的：${unregistered.join(', ')}` : ''))
+ok(/^def unmutated_labels\(/m.test(driver) && /unmutated_labels\(st_path, /.test(driver),
+  '驱动有起飞前检查：先跑一遍未变异的自测，把断言标签收进来')
+ok(/^def reachability\(/m.test(driver) && /if any\(expect in label for label in labels\)/.test(driver),
+  '起飞前检查与判定用同一种匹配（`expect in label`）——两处不一样就等于没查')
+ok(/^def phase_templates\(/m.test(driver) && /phase_templates\(selftest_src, ranges\)/.test(driver),
+  '起飞前检查认"动态标签"（相里拼出来的 `f"…{name}…"`），不把好好的变异判成不可达')
+ok(/^def top_level_ranges\(/m.test(driver) && /字样只出现在相之外/.test(driver),
+  '起飞前检查能指出"字样落在哪个函数里"（内联在 `main()` 里的那种，当场点名）')
+ok(/--no-preflight/.test(driver),
+  '起飞前检查能显式跳过（`--no-preflight`），而不是悄悄失效')
+
+report(`harness hygiene OK — ${wiredGates.length} gates wired, all importing the shim, the CI + RELEASING prose matches reality (${rows} mutations), and the driver keeps its preflight (${registered.size} phases registered)`)

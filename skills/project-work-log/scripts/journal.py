@@ -701,30 +701,78 @@ def _move_without_overwrite(src: str, dst: str) -> bool:
     return True
 
 
+def renumber_body(path: str, new_num: int) -> bool:
+    """把记录正文**首行**的篇号改成 `new_num`（对账搬完家之后必须做）。
+
+    判据是"标题篇号必须等于文件名里的号"（`journal.py:2197` 的 `check`）：只改文件名
+    会把这条记录变成自己判 ERROR 的对象 —— 那正是审查报告 N-A 的后一半。
+
+    只认首行、只认 `HEADING_RE`（`# 0001 · 标题`，分隔符也认 `.`、`、`、`:`、`：`）：
+    正文里回指别的记录的行不动。返回"首行的号现在是不是 `new_num`" —— 首行本来就不是
+    篇号式标题（或写不进去）都算没成，由调用方报一句，不让它静默留在那里。
+    """
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            text = fh.read()
+    except OSError:
+        return False
+    head, sep, rest = text.partition("\n")
+    m = HEADING_RE.match(head)
+    if m is None:
+        return False
+    if int(m.group(1)) == new_num:
+        return True
+    # `m.end(1)` 是篇号数字之后的位置：只换数字，分隔符与标题原样留着。
+    try:
+        write_raw(path, f"# {new_num:04d}" + head[m.end(1):] + sep + rest)
+    except (WriteRefused, OSError):
+        return False
+    return True
+
+
 def settle_number_collision(journal: str, path: str, slug: str) -> tuple[str, int]:
-    """并发下同一个篇号可能落在**两个不同名字**上，落地之后对一次账。
+    """并发下同一个篇号可能落在**两个以上**不同名字上，落地之后对账。
 
     返回（最终路径, 最终篇号）—— 调用方必须用返回值，因为**自己可能就是让路的那一份**。
 
-    规则：同号里名字最大的那份改到下一个空号。两边看到的是同一批文件，所以只有一份会让路；
-    让路用的是"下一号"，不是"对方的号"，所以不会两个进程互相搬来搬去。
+    规则：**只有"这一号眼下确实只剩我一份"才算数**；只要还看得见同号的别人，就让到"比
+    当前所有号都大"的空号，让完**再扫一遍**，直到没人跟我同号。
+
+    为什么不是"名字最小的留下"（2026-10-15 改）：那条规则在**并发**下会漏一整边。先跑完
+    对账的进程只看得见自己（同号的别人那时还没落地），留下是应该的；后到的那份按"名字最小
+    者留下"判，可能因为名字恰好排在前面而**也**留下 —— 两边都以为自己赢了，重号留在盘上
+    （起飞前检查跑未变异自测时真冒出来过一次 `[1, 2, 3, 4, 5, 5]`）。而"看不见同号的别人"
+    这个判据与名字无关、与时间也无关：先收工的那份一定留得下，后到的必然看得见它。
+
+    搬家是两件事：`_move_without_overwrite` 把文件挪到空号上（绝不覆盖），`renumber_body`
+    把正文首行的篇号一起改掉 —— 只改文件名的话，记录会被自己的 `check` 判成 ERROR。
+
     号挪不走（文件系统不让链也不让改）就留着 —— 重号是难看，丢内容是事故。
     """
     num = name_number(os.path.basename(path))
     if num is None:                              # 兜底名字（带进程号）本来就不占号
         return path, num
-    peers = sorted(name for name in os.listdir(journal) if name_number(name) == num)
-    if len(peers) < 2 or os.path.basename(path) != peers[-1]:
-        return path, num                         # 没有同号同伴，或者我不是最后那一个
-    used = taken_numbers(journal)
-    target = (max(used) + 1) if used else 1
     for _ in range(NEW_RECORD_TRIES):
-        dst = _record_name(journal, target, slug)
-        if not os.path.exists(dst) and _move_without_overwrite(path, dst):
-            return dst, target
-        target += 1
-        while target in used:
+        peers = sorted(name for name in os.listdir(journal) if name_number(name) == num)
+        if len(peers) < 2:
+            return path, num                     # 这一号眼下只有我一份：留下
+        target = max(taken_numbers(journal) | {num}) + 1
+        moved = False
+        for _try in range(NEW_RECORD_TRIES):
+            # 号也得是空的，不能只看名字：两个进程各带不同 slug 时可以各建一个名字、
+            # 同占一个号（`O_EXCL` 与 `os.link` 挡的都是名字），那正是要修的那种重号。
+            if target not in taken_numbers(journal):
+                dst = _record_name(journal, target, slug)
+                if not os.path.exists(dst) and _move_without_overwrite(path, dst):
+                    moved = True
+                    break
             target += 1
+        if not moved:
+            return path, num                     # 搬不动：留着重号（比丢内容好）
+        if not renumber_body(dst, target):
+            print(f"! {os.path.basename(dst)}：正文首行的篇号没能改成 {target:04d}，"
+                  f"`check` 会报「标题篇号与文件名不一致」，请手工改那一行")
+        path, num = dst, target
     return path, num
 
 
@@ -2770,9 +2818,12 @@ def cmd_new(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         # dry-run 不占名，所以这里仍然要"先问"：只问不写不会有覆盖风险。
-        # 但**要问到底**——占着的名字要跳过、一路试到空位，报出来的才是真会用的那个篇号。
+        # 但**要问到底**，而且要问**同一件事**——真跑每次尝试都重问一遍 `taken_numbers()`
+        # （`O_EXCL` 只管名字，标的是号），这里只问"我那个名字在不在"就会预报出一个
+        # 已经被**别的 slug** 占着的号（审查报告 N-B）：那条路真跑会跳过去。
         n = num
-        while os.path.exists(_record_name(journal, n, slug)) and n - num < NEW_RECORD_TRIES:
+        while (os.path.exists(_record_name(journal, n, slug)) or n in taken_numbers(journal)) \
+                and n - num < NEW_RECORD_TRIES:
             n += 1
         path = _record_name(journal, n, slug)
         print(f"[dry-run] 将创建 {rel(root, path)}\n")
@@ -5809,10 +5860,11 @@ def cmd_inbox_take(args: argparse.Namespace) -> int:
 
         if args.dry_run:
             # dry-run 不占名，所以这里"只问不写"是安全的 —— 但要**问到底**（照 `cmd_new`）：
-            # 占着的篇号要跳过，报出来的才是真会用的那个。
+            # 占着的篇号要跳过，报出来的才是真会用的那个。判据与真跑同源，包括
+            # `taken_numbers()`：只看名字会预报出被**别的 slug** 占着的号（审查报告 N-B）。
             n = first_free
-            while (os.path.exists(_record_name(journal, n, slug))
-                   and n - first_free < NEW_RECORD_TRIES):
+            while (os.path.exists(_record_name(journal, n, slug)) or n in taken_numbers(journal)) \
+                    and n - first_free < NEW_RECORD_TRIES:
                 n += 1
             print(f"[dry-run] 将创建 {rel(root, _record_name(journal, n, slug))}，"
                   f"并删除信箱条目 `{item['name']}`")

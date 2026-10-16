@@ -2894,27 +2894,47 @@ def mem_snapshot(root: str) -> dict[str, bytes]:
 
 
 def memory_phase(parent: str) -> None:
-    """隔离包装：整相把 `DSH_HOME` 指进夹具，再跑 `_memory_phase`。
+    """隔离包装：整相把 `DSH_HOME` 与 `USERPROFILE`/`HOME` 一起指进夹具，再跑 `_memory_phase`。
 
     **为什么只靠 `--memory` 与 `$DSH_WORKLOG_MEMORY` 不够**：记忆根是四级解析
-    （`--memory` > 设置文件里的 `memoryDir` > `$DSH_WORKLOG_MEMORY` > 默认 `<用户主目录>/dsh-lore-memory`，
-    0.8.0 起默认不再是 `$DSH_HOME/memory`），而这一相里前两档
-    **都被专门测过** —— 变异驱动正是拿它们开刀：`reverse-verify.py` 的 memory 相里
+    （`--memory` > 设置文件里的 `memoryDir` > `$DSH_WORKLOG_MEMORY` > 默认 `<用户主目录>/dsh-lore-memory`），
+    而这一相里前两档 **都被专门测过** —— 变异驱动正是拿它们开刀：`reverse-verify.py` 的 memory 相里
     「`--memory` 不再覆盖路径」与「环境变量那一档失效」两条，就是把前两档打断。
-    两条一断，兜底就落到**用户真实的**那个默认根（0.8.0 之前是 `~/.dsh/memory`）。
-    2026-09-28 真发生过：真实记忆库里留下 8 条 `wsA` 夹具条目，并且被注入了每个请求
-    （清理记录见 `work_log/06-release-060/0051`）。`DSH_HOME` 在那两条变异之外，所以拿它兜底 ——
-    变异要红的那两条断言都是**进程内**比对，不受这里影响。
+    两条一断，兜底就落到第四级：**用户真实的**那个默认根。
+
+    **2026-10-17：这道兜底曾经静默失效过，而且没人发现。** 2026-09-28 的老事故（真实记忆库里
+    留下 8 条 `wsA` 夹具条目、并被注入每个请求，清理记录见 `work_log/06-release-060/0051`）
+    当时的修法是钉 `DSH_HOME` —— 那时第四级还是 `$DSH_HOME/memory`，钉得住。
+    **0.8.0 把第四级换成了 `<用户主目录>/dsh-lore-memory`（走 `os.path.expanduser("~")`），
+    `DSH_HOME` 从那天起就罩不住它**：同一种事故在 2026-10-15 ~ 10-17 又发生了 9 次，
+    真实库里攒下 54 条夹具工作区路径（`workspaces.json` 里一条真工作区都没有），
+    并且被当成"跨工作区记忆"注入每场会话。`ntpath.expanduser` 认 `USERPROFILE`
+    （POSIX 认 `HOME`），所以两个都钉，第四级才真正落在夹具里。
+
+    最后那条**前置断言**是这一课的重点：钉不住就**当场**红，而不是等事后发现库里多了东西 ——
+    事后发现意味着泄漏已经写进用户真实的库、而且已经进了注入。变异要红的那两条断言都是
+    **进程内**比对，不受这里影响。
     """
-    saved_home = os.environ.get("DSH_HOME")
-    os.environ["DSH_HOME"] = os.path.join(parent, "home")
+    saved = {name: os.environ.get(name)
+             for name in ("DSH_HOME", "USERPROFILE", "HOME", "DSH_WORKLOG_SETTINGS")}
+    fixture_home = os.path.join(parent, "home")
+    os.environ["DSH_HOME"] = fixture_home
+    os.environ["USERPROFILE"] = fixture_home
+    os.environ["HOME"] = fixture_home
+    # 设置文件那一档（第二级）也要落在夹具里：用户真实环境里若设了 `$DSH_WORKLOG_SETTINGS`
+    # 或 `memoryDir`，它会把根指回真实库 —— 子测试各自显式传这个变量，不靠继承。
+    os.environ.pop("DSH_WORKLOG_SETTINGS", None)
     try:
+        default_root = JOURNAL.memory_root(None)
+        ok(os.path.abspath(default_root).startswith(os.path.abspath(fixture_home) + os.sep),
+           "memory: 第四级兜底钉在夹具里（不给 --memory 也落不到用户真实的库）", default_root)
         _memory_phase(parent)
     finally:
-        if saved_home is None:
-            os.environ.pop("DSH_HOME", None)
-        else:
-            os.environ["DSH_HOME"] = saved_home
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _memory_phase(parent: str) -> None:

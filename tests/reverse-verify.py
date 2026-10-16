@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import importlib.util
 import os
 import re
@@ -779,6 +780,42 @@ def reachability(expect: str, labels: set[str], selftest_src: str) -> str:
     return "字样既不在任何相的源码里，也不在任何标签里（期望字样写错了？）"
 
 
+# 真实记忆库里不参与指纹的东西。`.git` 会被提交改变（与本次运行无关）；
+# `personal/` 与 `inbox/` 是用户自己的东西，跑驱动的这二十几分钟里用户完全可能动它们，
+# 算进去只会变成假警报 —— 而金丝雀一旦会误报，就会被当成噪声关掉。
+CANARY_SKIP = (".git", "personal", "inbox")
+
+
+def real_memory_fingerprint() -> tuple:
+    """用户**真实**记忆库的指纹（相对路径 + 大小 + mtime + 内容的 sha256）。
+
+    为什么驱动要盯这个：**它是唯一一个故意去打断记忆根隔离的东西**。memory 相里
+    「`--memory` 不再覆盖路径」与「环境变量那一档失效」两条变异，干的就是让命令找不到
+    覆盖、掉到第四级默认根上。2026-10-17 就是这么漏的：0.8.0 把第四级从
+    `$DSH_HOME/memory` 换成了 `<用户主目录>/dsh-lore-memory`，而 `memory_phase` 的兜底
+    还停在钉 `DSH_HOME` —— **连着 9 次全量跑往用户真实库里灌了 54 条夹具工作区路径，
+    一条门禁都没发现**（`npm test`、`test:plugin`、`audit` 全绿）。断言只能证明"该红的红了"，
+    证明不了"没顺手改坏别人家的东西"—— 这件事得由这条金丝雀自己说。
+
+    库不存在时返回 `None`：那种情况下要验的是"跑完仍然不存在"（别把它建出来）。
+    """
+    root = os.path.join(os.path.expanduser("~"), "dsh-lore-memory")
+    if not os.path.isdir(root):
+        return None
+    rows = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in CANARY_SKIP]
+        for fn in sorted(filenames):
+            path = os.path.join(dirpath, fn)
+            try:
+                with open(path, "rb") as fh:
+                    digest = hashlib.sha256(fh.read()).hexdigest()
+            except OSError as exc:
+                digest = f"<读不到：{exc.__class__.__name__}>"
+            rows.append((os.path.relpath(path, root).replace("\\", "/"), digest))
+    return tuple(sorted(rows))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="把 memory_phase 的断言逐条弄红一次")
     ap.add_argument("--root", default=os.path.join(WORKSPACE, "logs", "fixtures"),
@@ -813,6 +850,10 @@ def main() -> int:
                 continue
             print(f"[{phase}] {name}\n    打在 {src} 上\n    → 期望变红：{expect}")
         return 0
+
+    # 金丝雀的第一半：**在任何变异跑起来之前**给用户真实的记忆库拍一张指纹。
+    # 这一句必须留在这儿（`--list` 之后、任何夹具与子进程之前），否则"改动前"就不是改动前了。
+    canary_before = real_memory_fingerprint()
 
     src_path = os.path.join(SKILL, "journal.py")
     st_path = os.path.join(SKILL, "_selftest.py")
@@ -1058,6 +1099,28 @@ def main() -> int:
         shutil.rmtree(scratch_root, ignore_errors=True)
     else:
         print(f"（临时目录保留在 {scratch_root}）")
+
+    # 金丝雀的第二半：用户真实的记忆库动没动过。
+    #
+    # 这一条**必须能盖过"全绿"**：一条变异都没漏、却把用户真实的库改了，那是更坏的结果 ——
+    # 断言证明不了"没有副作用"，只有前后指纹能。2026-10-17 那次就是这样：9 轮全绿，
+    # 库里攒了 54 条夹具路径。
+    canary_after = real_memory_fingerprint()
+    if canary_after != canary_before:
+        print("\nCANARY  隔离失效：本次运行**改动了用户真实的记忆库**"
+              f"（{os.path.join(os.path.expanduser('~'), 'dsh-lore-memory')}）")
+        if canary_before is None:
+            print("  ! 它原本不存在，现在被建出来了 —— 有命令掉到了第四级默认根上")
+        else:
+            old, new = dict(canary_before), dict(canary_after)
+            for key in sorted(set(old) | set(new)):
+                if old.get(key) != new.get(key):
+                    how = "新增" if key not in old else ("消失" if key not in new else "被改写")
+                    print(f"  ! {how}：{key}")
+        print("  ! 先查 `_selftest.py` 的 `memory_phase`：四级解析里每一级都钉住夹具了吗？")
+        print("  ! 变异跑红是**结果**，污染真实库是**代价** —— 两者不能相抵。")
+        return 1
+
     return 1 if (missed or broken or crashed) else 0
 
 

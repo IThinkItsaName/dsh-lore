@@ -69,12 +69,19 @@ def write_atomic(path: str, text: str) -> None:
     中途断电/被 kill 就留下一份**残缺的卡或 INDEX**。投影器的产物可以重建，
     但"读到半份 INDEX"会让人以为卡真的少了（INDEX 是导航，断了比没有更坏）。
     `journal.py` 的 `write_raw()` 早就是这个写法（还带非 UTF-8 拒写与权限位保留）；
-    卡的正文是工具自己生成的 UTF-8，那两条在这里用不上，所以只搬原子那半。
+    卡的正文是工具自己生成的 UTF-8，所以**非 UTF-8 拒写**那条在这里用不上。但**权限位保留**
+    那条用得上一一 `_mark_stale()` 改写的正是**已经存在**的卡：目标被设过只读或特殊 ACL 时，
+    新 tmp 是 `0666 & ~umask`，直接 replace 会把权限悄悄换掉（或直接被拒），
+    而"这份文件的权限被人特意调过"本身是有意的状态（2026-10-17 复核）。所以照搬那三条。
     """
     tmp = f"{path}.{os.getpid()}.tmp"
     try:
         with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
+        try:
+            os.chmod(tmp, os.stat(path).st_mode)
+        except OSError:
+            pass  # 首次创建（目标还不存在）或平台不支持（Windows 只有只读位）：按默认
         os.replace(tmp, path)
     finally:
         if os.path.exists(tmp):
@@ -202,6 +209,17 @@ def slugify(title: str, fallback: str) -> str:
 def norm_ws(text: str) -> str:
     """折叠换行与多空格 —— 卡片正文是一段，不该把 markdown 的硬换行带进灵枢。"""
     return " ".join(text.split())
+
+
+def _trim_ellipsis(text: str) -> str:
+    """去掉尾部的截断标记与空白（`…`, `...`, `。`, 空格）。
+
+    `first_sentence()` 截断时会**自己补一个 `…`** 告诉读者"这里断了"。那个字不在正文里，
+    所以拿它当"正文开头"去比前缀永远比不中（2026-10-17 实测：7 条超 200 字的执行段里
+    5 条因此走了 else 分支，把整段追加在摘要后面 → 开头逐字出现两遍）。
+    只去尾部、只去这几样：正文中间的 `…` 是作者自己写的省略，不能动。
+    """
+    return text.rstrip().rstrip("…").rstrip(".。 ").rstrip()
 
 
 def first_sentence(text: str, limit: int = 400) -> str:
@@ -334,14 +352,26 @@ def parse_lessons(path: str) -> list[dict]:
 
 
 # ── 去重面：已有卡 + lessons 条目 ───────────────────────────────────────
+# 本工具投出来的卡，frontmatter 里一定有这一行（`pointer` 与 `full` 都写）。
+# 它是**认亲的唯一判据**：`*.pointer.md` 这个后缀不是本工具专有的 —— 灵枢插件自己也
+# 往 `memory-cards/` 投卡、命名规则相同。读的一侧与写的一侧都用它，才不会一边跳过、
+# 一边 `os.replace` 把人家的卡盖掉（2026-10-17 修，写侧从前漏了这道）。
+OURS_RE = re.compile(r"(?m)^tags:\s*\[\s*dsh-lore\b")
+
+
+def is_our_card(path: str) -> bool:
+    """这个文件是不是本工具投出来的卡（看 frontmatter 的 `tags: [dsh-lore, …]`）。"""
+    return os.path.isfile(path) and bool(OURS_RE.search(read(path)))
+
+
 def existing_cards(card_dir: str) -> list[dict]:
     """`memory-cards/` 里**本工具投出来的**卡（`.pointer.md`）。
 
     ⚠ `*.pointer.md` 这个后缀不是本工具专有的：`memory-cards/` 里可能有别的工具写的
-    pointer（灵枢插件自己也投卡）。从前一律当自家卡收进去，于是外部卡会参与三道去重，
+    pointer（灵枢插件自己也投卡）。从前一律当自家卡收进去，于是外部卡会参与三道去重、
     还会在"slug 撞名"时被当成冲突 —— 而它没有本工具写的那行标签。
-    判据是**本工具写在 frontmatter 里的那一行**（`tags: [dsh-lore, …]`）：认它，
-    没有就当外人，只报一行、不进去重面（2026-10-17 修）。不按文件名判是因为
+    判据是**本工具写在 frontmatter 里的那一行**（`tags: [dsh-lore, …]`，见 `OURS_RE`）：
+    认它，没有就当外人，只报一行、不进去重面（2026-10-17 修）。不按文件名判是因为
     slug 的形制两边可能一样；不按 `id:` 判是因为两边都有 `id:`。
     """
     if not os.path.isdir(card_dir):
@@ -352,7 +382,7 @@ def existing_cards(card_dir: str) -> list[dict]:
             p = os.path.join(card_dir, fn)
             body = read(p)
             m = re.search(r"(?m)^id:\s*(\S+)", body)
-            if not re.search(r"(?m)^tags:\s*\[\s*dsh-lore\b", body):
+            if not OURS_RE.search(body):
                 print(f"[skip] {fn} 的 frontmatter 没有 `tags: [dsh-lore, …]` —— "
                       f"不是这份投影投出来的卡，不参与去重", file=sys.stderr)
                 continue
@@ -360,6 +390,47 @@ def existing_cards(card_dir: str) -> list[dict]:
             out.append({"id": m.group(1) if m else fn[:-11], "path": p, "text": body,
                         "title": t.group(1).strip() if t else ""})
     return out
+
+
+def avoid_foreign(card_dir: str, slug: str, ours: set[str],
+                  used_slugs: dict[str, int]) -> tuple[str, str]:
+    """写盘**准入**：目标文件名上若压着一张外来卡，别覆盖它，换个名字写。
+
+    返回 `(最终 slug, 说明)`；没撞上返回 `(原 slug, "")`。
+
+    读的一侧（`existing_cards()`）早就把外来卡跳过了，但**写的一侧从前不查** ——
+    投影出的卡按同一套文件名直接 `write_atomic()`（`os.replace`），于是文件名一撞，
+    人家的卡就被悄悄换掉：实测量到 sha 变了，而同一轮还打印着"不参与去重"，两句话
+    自相矛盾（2026-10-17 复核发现）。灵枢插件也往同一个目录投卡、命名规则相同，撞名
+    是会发生的；那些卡可重建，所以不算 critical，但"报着跳过、实际覆盖"是最坏的一种。
+
+    `ours` 是**本工具已有卡的 id 全集**（`existing_cards()` 收上来的），`used_slugs` 是本轮
+    已经分配出去的名字。两者分工不同，混用会出事：
+
+      · `ours` 回答"**这个名字我们已经有卡了**" —— 有的话，这条教训走到去重那一步就会
+        REUSE、根本不会写盘，**不该改名也不该报改名**；但要连**改过名的那些**一起看
+        （`slug-dsh` / `slug-dsh2` …），因为改名之后原名在磁盘上永远压着那张外来卡，
+        只看 `slug in ours` 会让每一轮都重新预告一遍新名字（2026-10-17 实测）。
+      · `used_slugs` 回答"**本轮这个名字已经分给别人了**" —— 那**不是**"我们已有卡"，
+        此时盘上还什么都没有，该照常查外人不该跳过。第一版把这条也算进"自己的"，
+        于是外来卡在它第一次撞名的时刻被直接覆盖 —— 正是要防的那件事（实测踩到）。
+    """
+    if not os.path.isdir(card_dir):
+        return slug, ""
+    if slug in ours or any(s.startswith(f"{slug}-dsh") for s in ours):
+        return slug, ""
+    ptr = os.path.join(card_dir, f"{slug}.pointer.md")
+    if not os.path.exists(ptr) or is_our_card(ptr):
+        return slug, ""
+    why = f"`{slug}.pointer.md` 已存在、且不是本工具投的卡（没有 `tags: [dsh-lore, …]`）"
+    for i in range(1, 100):
+        cand = f"{slug}-dsh" if i == 1 else f"{slug}-dsh{i}"
+        if not os.path.exists(os.path.join(card_dir, f"{cand}.pointer.md")):
+            used_slugs[cand] = 1
+            return cand, (f"{why} —— **不覆盖它**，本卡改写到 `{cand}.pointer.md` / "
+                          f"`{cand}.full.md`。要合成就先把它挪走或改名"
+                          f"（它的 `id:` 与本卡不同时，那本来就是两张卡）")
+    return slug, f"{why} —— 换了 99 个名字都不空（这目录不对劲），仍按原名写"
 
 
 def record_rel(container: str, no: str) -> tuple[str, bool]:
@@ -379,9 +450,19 @@ def record_rel(container: str, no: str) -> tuple[str, bool]:
     return f"{no}-unknown.md", False
 
 
-def display_source(rel: str) -> str:
-    """容器相对路径 → 卡里/索引里给人看的 `work_log/…` 形态。**只用于显示。**"""
-    return f"work_log/{rel}" if rel else ""
+def display_source(rel: str, container: str = "") -> str:
+    """容器相对路径 → 卡里/索引里给人看的 `<容器名>/…` 形态。**只用于显示。**
+
+    前缀取**容器的真实目录名**（容器总是工作区根下的一级目录，所以这个名字就是它在工作区
+    里的相对路径）。从前这里写死 `work_log/`：容器叫 `journal/`、`ops/` 时，卡里的 `source:`
+    / `cited_by:` 指着一个**不存在**的路径 —— 读的人不受影响（`index_rows()` 会把前缀剥掉），
+    但 grep 与人眼会当真，与 H2 刚消灭的"两处各自拼路径"是同一味道（2026-10-17 复核）。
+    没给容器时退回 `work_log`：那是默认容器名，也是"不知道"时唯一说得通的显示。
+    """
+    if not rel:
+        return ""
+    prefix = os.path.basename(container.rstrip("/\\")) if container else "work_log"
+    return f"{prefix or 'work_log'}/{rel}"
 
 
 def abs_in(container: str, rel: str) -> str:
@@ -448,15 +529,19 @@ def build_cards(lesson: dict, ctx: dict, slug: str) -> tuple[str, str]:
                 # 整卡里「执行」要一次说完，但**别再重复开头那一段**：
                 # `head["执行"]` 是正文的 `first_sentence(body, 200)`，通常是正文的**前缀**。
                 # 直接追加整段会变成「片段 + 全句」，前 200 字符逐字出现两遍
-                # —— 实测 41 张 full 卡里 27 张如此。判据不能写成
-                # `norm_ws(extra) != norm_ws(head["执行"])`：正文是**原文换行**、head 是
-                # **归一空白**，两者几乎永不相等，所以那个守卫等于没写。
-                n_sum, n_body = norm_ws(head["执行"]), norm_ws(extra_exec)
-                if n_body.startswith(n_sum):
-                    # 切片必须落在**归一后**的字符串上。从前切的是 `n_body`、换算却用
-                    # `len(head["执行"])`（未归一的那个）：正文里有换行或连续空格时两个长度
-                    # 不同，切偏几个字符 —— 恰好把 `…`（正文里表示截断，两边都有）留在开头，
-                    # 于是拿去重判的空串非空，**真重复反而不报**（实测 42 张里 ≥6 张已重复）。
+                # —— 实测 42 张 full 卡里 5 张如此（`wl0006` / `wl0098` / `wl0100`–`wl0102`）。
+                #
+                # **两道守卫，缺一条就漏**（2026-10-17 两轮才修全）：
+                #   ① 摘要是 `…` 结尾时，`n_body.startswith(n_sum)` 必为假 ——
+                #      `…` 是 `first_sentence()` 截断时**自己补的标记**，正文里没有这个字，
+                #      于是走了 else 分支把整段追加在摘要后面。实测 7 条超 200 字的执行段里
+                #      5 条命中这一条。所以比较前先把尾部的 `…` 去掉（`_trim_ellipsis`）。
+                #   ② 真命中时切片必须与比较**同源**：从前切 `n_body`、长度却取未归一的
+                #      `len(head["执行"])`，正文里有换行/连续空格时两个长度不同，切偏几个
+                #      字符就把 `…` 留在开头，拿去重判的串非空 —— 真重复反而不报。
+                n_sum = _trim_ellipsis(norm_ws(head["执行"]))
+                n_body = norm_ws(extra_exec)
+                if n_sum and n_body.startswith(n_sum):
                     rest = n_body[len(n_sum):].lstrip()
                     if rest:
                         out.append(rest)
@@ -531,7 +616,7 @@ def rec_units(full_path: str, domain: str, container: str = "") -> list[tuple[di
         rel = os.path.relpath(full_path, container).replace("\\", "/")
     else:
         rel = rec["name"]
-    shown = display_source(rel)
+    shown = display_source(rel, container)
     ctx0 = {"domain": domain, "source": shown,
             "applies_to": rec["meta"].get("主题", ""),
             "scope": rec["meta"].get("范围", ""),
@@ -554,21 +639,21 @@ def lessons_units(container: str, lp: str, domain: str) -> list[tuple[dict, dict
         # 就退回**它所在的分册**（那才是这条经验真正的落点）。体量闸量的是这个。
         if len(set(refs)) == 1:
             rel, found = record_rel(container, refs[0])
-            cite = display_source(os.path.basename(rel))
+            cite = display_source(os.path.basename(rel), container)
             note = "" if found else "（记录未在本容器找到，可能已归档到别的工作区）"
             if note:
                 cite += note
-            src = display_source(rel)
+            src = display_source(rel, container)
             src_bytes = os.path.getsize(abs_in(container, rel)) if found else 0
             status = "ok" if found else "stale"
         elif refs:
             # 多条出处：**取第一条当主源**，别退回"分册"——分册是落点，不是这篇结论的出处；
             # 拿它当 source，读者会顺手去看整册，指认反而更糊。其余出处留在 cited_by 里。
             rel, found = record_rel(container, refs[0])
-            cite = display_source(os.path.basename(rel))
+            cite = display_source(os.path.basename(rel), container)
             if not found:
                 cite += "（记录未在本容器找到，可能已归档到别的工作区）"
-            src = display_source(rel)
+            src = display_source(rel, container)
             src_bytes = os.path.getsize(abs_in(container, rel)) if found else 0
             status = "ok" if found else "stale"
         else:
@@ -634,8 +719,8 @@ def index_rows(card_dir: str, container: str = "", write: bool = False) -> list[
 
     两件事与 cwd 无关，也都**只在真的允许写盘时**才落盘（`write`）：
       · `container` 给定时当场核源记录还在不在（不在就把 `source_status: stale` 补进卡里）；
-      · 卡里写的是**工作区相对**路径（`work_log/0001-x.md`），核的时候把 `work_log/` 前缀剥掉，
-        再 `join(container, …)` —— 前缀是**固定的那一个**，不是拿容器 basename 去凑。
+      · 卡里写的是**工作区相对**路径（容器叫 `work_log` 就是 `work_log/0001-x.md`，
+        叫 `ops` 就是 `ops/0001-x.md`），核之前把那一层前缀剥掉，再 `join(container, …)`。
 
     `write=False` 时只**报告**（返回行里带 `stale_now`），一个字节都不改：只读语义得住。
     """
@@ -651,13 +736,16 @@ def index_rows(card_dir: str, container: str = "", write: bool = False) -> list[
         # 只在真给了容器时才核（容器空串 = 调用方只要表格，不做追溯校验）。
         # 卡里写的是 `work_log/0001-x.md`（工作区相对），而 `container` 已经指到容器根，
         # 直接 join 会得到 `…\work_log\work_log\…`，于是每张卡都被判成 stale（2026-10-16 真踩过）。
-        # 修法是把**固定的 `work_log/` 前缀**剥掉 —— 早先拿容器 basename 去剥，
-        # 容器不叫 work_log 时前缀剥不掉，卡就"出生即 stale"（2026-10-17 实测）。
+        # 剥前缀的判据取**容器自己的目录名**（2026-10-17 起 `display_source()` 写的就是它）；
+        # 固定的 `work_log/` 也要认 —— 容器不叫 work_log 时，**已经落盘的旧卡**写的正是那个前缀，
+        # 不认它那些卡就会集体"出生即 stale"（H2 修的是写入侧，读侧得两边都认）。
         missing = False
         if container and source:
             rel = source
-            if rel.startswith("work_log/"):
-                rel = rel[len("work_log/"):]
+            for prefix in (os.path.basename(container.rstrip("/\\")), "work_log"):
+                if prefix and rel.startswith(f"{prefix}/"):
+                    rel = rel[len(prefix) + 1:]
+                    break
             missing = not os.path.exists(os.path.join(container, *rel.split("/")))
         if missing and "source_status: stale" not in t:
             if write:
@@ -769,7 +857,12 @@ def write_manifest(card_dir: str, container: str, domain: str, rows: list[dict])
         "note": "本目录整体是**生成物**（记忆卡投影）：删掉 memory-cards/ 即完全回退，"
                 "真源是记录与 lessons 分册，不在本目录内。",
         "rebuilt_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "container": os.path.relpath(container, os.path.dirname(card_dir)).replace("\\", "/"),
+        # 容器**相对工作区根**的路径（`work_log`）。从前写的是
+        # `os.path.relpath(container, os.path.dirname(card_dir))`，而 `card_dir` 就是
+        # `<container>/memory-cards` —— 两者同一个目录，relpath 恒等于 `"."`（2026-10-17
+        # 复核发现：真实容器里那份清单也写着 `container: "."`，看的人会以为容器在
+        # `memory-cards/` 那一层）。容器总是工作区根下的一级目录，所以拿它的父目录当基准。
+        "container": os.path.relpath(container, os.path.dirname(container)).replace("\\", "/"),
         "domain": domain,
         "count": len(rows),
         "cards": [{"id": r["id"], "pointer": r["path"], "bytes": r["bytes"],
@@ -880,6 +973,19 @@ def main(argv: list[str]) -> int:
                 return 1
             rec_path = hits[0]
         full_path = rec_path if os.path.isabs(rec_path) else os.path.join(container, rec_path)
+        if not os.path.isfile(full_path):
+            # 从前这里直接把路径交给 `rec_units()`，于是 `read()` 抛出裸的
+            # `FileNotFoundError` 回溯（栈顶在 `read()`），不是给人看的
+            # （2026-10-17 复核）。记录**已经归档**是最常见的原因 —— 归档后它不在容器根了，
+            # 所以顺手用 `record_rel()` 找一下它在哪，直接把路指出来。
+            hint = ""
+            m_no = re.match(r"(\d+)", os.path.basename(rec_path))
+            if m_no:
+                rel, found = record_rel(container, m_no.group(1))
+                if found:
+                    hint = f"；它在 `{display_source(rel, container)}`（记录可能已归档到子目录）"
+            print(f"ERROR: 找不到记录 `{args.rec}` —— 找过 `{full_path}`{hint}")
+            return 1
         units = rec_units(full_path, args.domain, container)
         if not units:
             print(f"（记录 `{os.path.basename(full_path)}` 没有可投影的教训：需要结论性小节里"
@@ -927,7 +1033,10 @@ def main(argv: list[str]) -> int:
 
     any_new = False
     dropped: list[str] = []
+    similar_only = 0
     used_slugs: dict[str, int] = {}
+    # 本工具已有卡的 id 全集：`avoid_foreign()` 用它区分"这个名字是我们的"与"是外人的"。
+    our_ids = {c["id"] for c in cards}
     expand: dict[str, int] = {}
     for i, (les, ctx) in enumerate(units, 1):
         # id 前缀：lessons 用「出处篇号」，记录投影用「记录号」——两边都能顺着 id 找回工作区那份 md
@@ -943,6 +1052,14 @@ def main(argv: list[str]) -> int:
             used_slugs[slug] += 1
             slug = f"{slug}-{used_slugs[slug]}"
         used_slugs[slug] = 1
+        # 第二道撞名：磁盘上这个名字压着一张**外来卡**（别的工具投的 pointer，命名规则可能
+        # 一样）。读的一侧早就跳过它了，写的一侧从前不查 —— 那就成了"报着跳过、实际覆盖"。
+        # 这一查必须在 `ctx["pointer_path"]` / `full_rel` 落定**之前**：卡里写的正文真源
+        # 路径是从 slug 拼的，改名要两个文件一起改（2026-10-17 复核发现）。
+        # 不给 `--write` 时也照样报：预演与实际落盘得是同一个名字，否则预演没有意义。
+        slug, why = avoid_foreign(card_dir, slug, our_ids, used_slugs)
+        if why:
+            print(f"[{i}] 改名 {why}\n")
         # 源键：有 wl 编号就用编号（跨分册/跨工作区同一条经验 → 同一个键 → 收敛成一张卡），
         # 否则退回记录路径。
         if ctx.get("fallback_no"):
@@ -969,6 +1086,25 @@ def main(argv: list[str]) -> int:
                     best, best_s = c, s
             if best is not None and best_s >= DUP_THRESHOLD:
                 hit, why = best, f"与已有卡 `{best['id']}` 正文/标题相似度 {best_s:.2f} ≥ {DUP_THRESHOLD}"
+
+        # ── `--list-similar`：只报相似度，一张卡也不出、一个字节也不写 ────────
+        # 这个开关从前只声明、没人读（`--help` 许了一个不做的事，2026-10-17 复核发现）。
+        # 实现放在这三道去重**之后**：`hit` 已经把"会不会 REUSE、为什么"算出来了，
+        # 这里只是把"离阈值还有多远"补给人看 —— 调卡的时候要的正是这个距离。
+        if args.list_similar:
+            ranked = sorted(
+                ((max(similarity(les["body"], c["text"]), similarity(les["title"], c.get("title", ""))), c)
+                 for c in cards), key=lambda t: -t[0])[:3]
+            print(f"[{i}] {les['title']}")
+            print(f"    {'会 REUSE `' + hit['id'] + '`（' + why + '）' if hit is not None else '会新建一张卡'}")
+            if not ranked:
+                print("    （还没有已有卡可比）")
+            for s, c in ranked:
+                print(f"    {s:.2f} {'≥' if s >= DUP_THRESHOLD else '<'} {DUP_THRESHOLD}"
+                      f"  {c['id']}   {c.get('title', '')}")
+            print()
+            similar_only += 1
+            continue
 
         if hit is not None:
             expand[hit["id"]] = expand.get(hit["id"], 0) + 1
@@ -1022,6 +1158,10 @@ def main(argv: list[str]) -> int:
             print(f"→ 已写 {card_dir}\\{slug}.pointer.md / .full.md")
         print()
 
+    if args.list_similar:
+        print(f"共 {len(units)} 条教训：报了 {similar_only} 条的相似度，"
+              f"**没出卡、没写盘**（这是只读的对照模式）")
+        return 0
     print(f"共 {len(units)} 条教训：新增 {sum(1 for _ in by_key) if any_new else 0} 张，"
           f"复用/收敛 {sum(expand.values())} 条，丢弃 {len(dropped)} 条")
     if expand:

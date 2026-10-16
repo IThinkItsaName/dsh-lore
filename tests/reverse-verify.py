@@ -74,10 +74,31 @@ PHASES: dict[str, str] = {
     "gates": "gate_phase",
     "links": "link_phase",
     "mode": "mode_phase",
+    # 下面三相是 2026-10-17 复核补的（M-2）：本轮修的恰恰是它们的逻辑，
+    # 而它们当时一条变异都没有 —— 「没有断言/变异盯着」正是 H-1 那种洞的产地。
+    "archive_index": "archive_index_check",
+    "archive_dir_index": "archive_dir_index_phase",
+    "card": "card_phase",
 }
 
-# (相, 名字, 原文, 改成, 期望变红的那条断言里的字样)
-MUTATIONS: list[tuple[str, str, str, str, str]] = [
+# 变异能打在哪个源文件上。默认 `journal.py`（绝大多数变异）；投影器的变异打在
+# `dsh-lore-card.py` 上 —— 两者都住在同一个 `scripts/` 里，宿主相（`card_phase`）自己
+# 按 `HERE/dsh-lore-card.py` 起子进程，所以把改过的那份照布局放进副本就生效。
+JOURNAL_SRC = "journal.py"
+CARD_SRC = "dsh-lore-card.py"
+
+
+def m6(m: tuple) -> tuple:
+    """变异表的一项 → `(相, 名字, 原文, 改成, 期望字样, 目标源文件)`。
+
+    第 6 项可省（省了就是 `journal.py`）—— 表里五十几条旧条目因此不用逐个改，
+    而新加的投影器变异只要多写一个字段就能指到另一个文件。
+    """
+    return (m[0], m[1], m[2], m[3], m[4], m[5] if len(m) > 5 else JOURNAL_SRC)
+
+
+# (相, 名字, 原文, 改成, 期望变红的那条断言里的字样[, 目标源文件，默认 journal.py])
+MUTATIONS: list[tuple] = [
     ("memory", "进索引的档位放宽到含 inferred",
      'MEMORY_SOURCES_IN_INDEX = ("tested", "read")',
      'MEMORY_SOURCES_IN_INDEX = ("tested", "read", "inferred")',
@@ -558,6 +579,51 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      '_SECTION_HEADING_RE = re.compile(r"^(#{1,6})[ \\t]+(.*?)[ \\t]*\\r?\\n?$")',
      '_SECTION_HEADING_RE = re.compile(r"^(#{1,6})[ \\t]+(.*?)$")',
      "两条标题正则各管各的"),
+
+    # ---- 2026-10-17 复核 M-2 补的三相 -------------------------------------------------
+    #
+    # 这三相的**逻辑正是本轮改的**，而它们此前一条变异都没有：`PHASES` 里没登记，
+    # `test:plugin` 报的"96 mutations"也就从不经过它们。H-1（「执行」小节重复开头）
+    # 就是这么活下来的 —— 不是没人写断言，是没有任何东西**逼着**断言去死一次。
+    #
+    # 1) 归档目录的篇数不再排除日期式（H5 的原样回退）。旧行为拿 `NUM_NAME_RE` 自己
+    #    匹配磁盘文件名，把 `2026-09-01-a.md` 读成「编号 2026」，`set()` 一去重恒为 1，
+    #    于是一份**正确**的表被判「标着 3 篇，磁盘上是 1 篇」。
+    ("archive_dir_index", "归档目录的篇数又把日期式读成「编号 2026」",
+     '        on_disk = sorted({n for n in (name_number(f) for f in os.listdir(stage_dir))\n'
+     '                          if n is not None})',
+     '        on_disk = sorted({(re.match(r"(\\d+)", f) or [None, "0"])[1]\n'
+     '                          for f in os.listdir(stage_dir)\n'
+     '                          if re.match(r"(\\d+)", f)})',
+     "a date-form-only stage directory is not counted against its table row"),
+
+    # 2) 反向核对整条拆掉（磁盘上有目录、表里没那一行，从此没人报）。
+    #    这条守的是"整个阶段漏登记"—— 表→磁盘那两条核对对它一声不吭。
+    ("archive_index", "反向核对被拆掉（漏行不再报）",
+     "            if has_records:",
+     "            if False:",
+     "a stage directory with no row in the table is reported (reverse check)"),
+
+    # 3) 投影器「执行」小节那道前缀守卫退回**带 `…` 去比**（H-1 的原样回退）。
+    #    摘要以 `…` 结尾时前缀永远比不中，于是整段正文被追加在摘要后面，开头出现两遍。
+    #    靶子在 `card_phase` 的 `0004-longsentence`（第一句超 200 字、尾巴被补 `…`）。
+    ("card", "「执行」去重又带着截断的 `…` 去比前缀",
+     '                n_sum = _trim_ellipsis(norm_ws(head["执行"]))',
+     '                n_sum = norm_ws(head["执行"])',
+     "the 执行 section never says its opening twice (truncated `…` included)",
+     CARD_SRC),
+
+    # 4) 写盘准入退回"不查撞名"（H-2 的原样回退）：读的一侧照旧打 `[skip]`，
+    #    写的一侧按同一个文件名 `os.replace()` —— 于是"报着跳过、实际覆盖"。
+    ("card", "写盘又不查同名外来卡（撞名即覆盖）",
+     '    ptr = os.path.join(card_dir, f"{slug}.pointer.md")\n'
+     '    if not os.path.exists(ptr) or is_our_card(ptr):\n'
+     '        return slug, ""',
+     '    ptr = os.path.join(card_dir, f"{slug}.pointer.md")\n'
+     '    if True:\n'
+     '        return slug, ""',
+     "a foreign card sitting on one of our names is not overwritten",
+     CARD_SRC),
 ]
 
 
@@ -701,11 +767,12 @@ def main() -> int:
         SKILL = os.path.abspath(args.skill_dir)
 
     if args.list:
-        for phase, name, _old, _new, expect in MUTATIONS:
+        for row in MUTATIONS:
+            phase, name, _old, _new, expect, src = m6(row)
             # `--only` 对列表也生效：列出来的是"这次会跑的"，不是"全部"，免得误读。
             if args.only is not None and args.only not in name:
                 continue
-            print(f"[{phase}] {name}\n    → 期望变红：{expect}")
+            print(f"[{phase}] {name}\n    打在 {src} 上\n    → 期望变红：{expect}")
         return 0
 
     src_path = os.path.join(SKILL, "journal.py")
@@ -721,6 +788,15 @@ def main() -> int:
         original = fh.read()
     with open(st_path, encoding="utf-8", newline="") as fh:
         selftest_src = fh.read()
+    # 变异能打在两个源上（`journal.py` 与 `dsh-lore-card.py`），所以两份都读进来。
+    # 副本目录里**两份都要在位**：`card_phase` 按 `HERE/dsh-lore-card.py` 起子进程，
+    # 缺了它那一相直接跑不起来（"跑不起来"与"如期变红"是两回事，看着像通过其实什么都没验）。
+    sources: dict[str, str] = {JOURNAL_SRC: original}
+    for name in (CARD_SRC,):
+        p = os.path.join(SKILL, name)
+        if os.path.isfile(p):
+            with open(p, encoding="utf-8", newline="") as fh:
+                sources[name] = fh.read()
 
     base = os.path.abspath(args.root)
     if not os.path.isdir(base):
@@ -765,7 +841,8 @@ def main() -> int:
     if not args.no_preflight:
         labels, pre_problems = unmutated_labels(st_path, os.path.join(scratch_root, "preflight"))
         unreachable: list[str] = []
-        for phase, name, _old, _new, expect in selected:
+        for row in selected:
+            phase, name, _old, _new, expect, _src = m6(row)
             if phase not in PHASES:
                 unreachable.append(f"{name}：相 `{phase}` 没登记进 PHASES")
                 continue
@@ -784,10 +861,16 @@ def main() -> int:
             print("     把它搬进某一相、在 `PHASES` 里登记，再跑。想跳过这一关用 --no-preflight。")
             return 1
 
-    for i, (phase, name, old, new, expect) in enumerate(selected):
+    for i, row in enumerate(selected):
+        phase, name, old, new, expect, src = m6(row)
+        if src not in sources:
+            broken.append(f"{name}：找不到要变异的源文件 {src}（技能源目录里没有它）")
+            print(f"MISS  {name}   [源文件不在：{src}]")
+            continue
+        original = sources[src]
         n = original.count(old)
         if n != 1:
-            broken.append(f"{name}：替换源在 journal.py 里出现 {n} 次（应恰好 1 次）")
+            broken.append(f"{name}：替换源在 {src} 里出现 {n} 次（应恰好 1 次）")
             print(f"MISS  {name}   [替换源不唯一：{n} 次]")
             continue
         mutated = original.replace(old, new)
@@ -836,8 +919,12 @@ def main() -> int:
         # 于是变异"跑不起来"而不是"如期变红"，看着像通过其实什么都没验。
         os.makedirs(os.path.join(d, "scripts"))
         os.makedirs(os.path.join(d, "references"))
-        with open(os.path.join(d, "scripts", "journal.py"), "w", encoding="utf-8", newline="") as fh:
-            fh.write(mutated)
+        # 把**所有**技能源都照原样放进副本，只有被测的那一份换成变异后的文本：
+        # 少了 `dsh-lore-card.py` 时 `card_phase` 会直接抛 FileNotFoundError ——
+        # 那看着像"没变红"，其实这一相根本没跑（与"如期变红"是两回事）。
+        for name_, text in sources.items():
+            with open(os.path.join(d, "scripts", name_), "w", encoding="utf-8", newline="") as fh:
+                fh.write(mutated if name_ == src else text)
         with open(os.path.join(d, "scripts", "_selftest.py"), "w", encoding="utf-8", newline="") as fh:
             fh.write(selftest_src)
         shutil.copyfile(

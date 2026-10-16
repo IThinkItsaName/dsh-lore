@@ -352,7 +352,7 @@ python scripts/journal.py promote suggest                                   # �
    （编号式 `# NNN · 标题` / 日期式 `# YYYY-MM-DD 标题`）。
 3. **收尾**：把「工作流 C 收尾清单」当人工检查表逐条走；把 `check` / `lint` 的判据（见 [references/commands.md](references/commands.md)）当核对清单。
 4. **检索导航**：用 `grep` / `rg` 代替 `search`，用 `snapshot` 的判据手工汇总最近几篇，用索引表代替 `brief` / `outline`。
-5. **整理**：归档就是"移文件 + 改链接"（容器根 → `<stage>/`，可带主题层 `<主题>/<阶段>/`），手工做时**先全仓 grep 链接再改**——脚本的价值主要就在这里（自动重写 + 死链自检）。用了归档层 `archive/` 的项目，归档后还在 `archive/README.md` 的表里补/并一行（篇号与日期取并集，同一个阶段只占一行；新容器就按 [references/templates.md](references/templates.md) §3 的骨架建）。
+5. **整理**：归档就是"移文件 + 改链接"（容器根 → `<stage>/`，可带主题层 `<主题>/<阶段>/`），手工做时**先全仓 grep 链接再改**——脚本的价值主要就在这里（自动重写 + 死链自检）。用了归档层 `archive/` 的项目，归档后还在 `archive/README.md` 的表里补/并一行（**篇号与篇数按磁盘重算**、日期区间取并集，同一个阶段只占一行；新容器就按 [references/templates.md](references/templates.md) §3 的骨架建）。
 
 脚本全部只用 Python 标准库，**不需要 `pip install`**；只要 Python 3.9+ 在 PATH 里就能跑
 （更精确的实测范围见下方「环境边界」）。若连命令都不能执行（纯聊天环境），技能退化为一份

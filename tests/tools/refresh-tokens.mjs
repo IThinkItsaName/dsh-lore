@@ -29,8 +29,25 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const PKG = join(here, '..', '..')
 const OUT = join(here, 'host-tokens.txt')
-const MIRROR = join(PKG, '..', '..', '..', 'work_log/logs', 'eng', 'dsh-src', 'dsw-tokens.txt')
 const DEFAULT_CHECKOUT = 'D:\\Program Files (x86)\\dsh_from_github\\deepseek-harness'
+
+// 工作区镜像的落点：`<工作区>/work_log/logs/eng/dsh-src/dsw-tokens.txt`。
+//
+// 从前这里写死 `join(PKG, '..', '..', '..', 'work_log', …)` —— 多退了一级。它在 `.pi`
+// 那份布局里**碰巧**是对的（`.pi/skills/<skill>` 比 `publish/worklog` 浅一层），所以当年
+// 那份镜像就是这么写出来的；换到本仓库的布局，它算出来是**包外面**（实测
+// `D:\Program Files (x86)\work_log\…`），而下面 `mkdirSync(…, { recursive: true })` 会
+// 照建不误 —— 写进一个谁也不看的地方，还打印"mirrored"（2026-10-17 复核发现，
+// 与 `tests/audit-ranks.mjs` 多退一级是同一个形状：路径错了，于是静默失效）。
+//
+// 现在不猜层数：哪一级真有 `work_log/` 就用哪一级，都没有就不写（CI 里正是这个情形）。
+const workspaceWithLog = [
+  join(PKG, '..', '..', 'work_log'), // publish/worklog → 工作区（本仓库布局）
+  join(PKG, '..', 'work_log'),       // <工作区>/skills/<skill> → 工作区（.pi 布局）
+].find((p) => existsSync(p)) ?? null
+const MIRROR = workspaceWithLog === null
+  ? null
+  : join(workspaceWithLog, 'logs', 'eng', 'dsh-src', 'dsw-tokens.txt')
 
 const checkout = process.argv[2] ?? DEFAULT_CHECKOUT
 const clientDir = join(checkout, 'packages', 'client')
@@ -78,12 +95,18 @@ console.log(`tokens    ${sorted.length}`)
 
 // 工作区镜像：尽力而为。在 CI（只有包、没有工作区）里这里会失败，那**正常**——
 // 上面那份随包的在就够了，所以镜像写不进去只提示、不影响退出码。
-try {
-  mkdirSync(dirname(MIRROR), { recursive: true })
-  writeFileSync(MIRROR, sorted.join('\n') + '\n', 'utf8')
+if (MIRROR === null) {
   console.log(`written   ${OUT}`)
-  console.log(`mirrored  ${MIRROR}`)
-} catch (err) {
-  console.log(`written   ${OUT}`)
-  console.log(`mirror    skipped (${err.code ?? err.message}); the packaged copy is the one the gate reads`)
+  console.log('mirror    skipped (包里那一层没有 work_log/，说明不在工作区里); '
+    + 'the packaged copy is the one the gate reads')
+} else {
+  try {
+    mkdirSync(dirname(MIRROR), { recursive: true })
+    writeFileSync(MIRROR, sorted.join('\n') + '\n', 'utf8')
+    console.log(`written   ${OUT}`)
+    console.log(`mirrored  ${MIRROR}`)
+  } catch (err) {
+    console.log(`written   ${OUT}`)
+    console.log(`mirror    skipped (${err.code ?? err.message}); the packaged copy is the one the gate reads`)
+  }
 }

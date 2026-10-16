@@ -788,7 +788,8 @@ def archive_dir_index_phase(parent: str) -> None:
 
       · 新容器首次归档：建骨架（标题 + 表头 + 第一行），别的地方不冒文件；
       · 文件已存在且有正文：只**追加一行**，正文与既有行原样保留，且追加在表末；
-      · 同一阶段再归档：**原地更新那一行**（篇号取并集、日期区间取并集），不新增行；
+      · 同一阶段再归档：**原地更新那一行**（日期区间取并集；**篇号与篇数按磁盘重算**，
+       见 `journal.py` 的 `name_number()`），不新增行；
       · 归档到 `archive/` 直属层：表里没有可写的行 —— 不写、不崩、不改动那份文件；
       · 文件在、但认不出我们的表头：**不猜不动**（悄悄另起一张表会留下两张，人不知道该信哪张）；
       · 认表头只认同名的行，文件里别处的表格不被当数据行（新骨架的标题也不能用旧表的
@@ -865,7 +866,7 @@ def archive_dir_index_phase(parent: str) -> None:
     ok(after.index("`st2/`") < after.index("## 尾注"),
        "the new row lands inside the table, not at the end of the file", after)
 
-    # C) 同一阶段再归档：原地更新，篇号与日期都取并集，不新增行
+    # C) 同一阶段再归档：原地更新，日期取并集、篇号与篇数按磁盘重算，不新增行
     add_entry(tmp, 3, "2026-10-03")
     run(tmp, "archive", "--stage", "archive/st2", "--from", "3", "--to", "3")
     after = read(os.path.join(tmp, CONTAINER, "archive", "README.md"))
@@ -978,6 +979,30 @@ def archive_dir_index_phase(parent: str) -> None:
     ok(got.count("lore-tooling") == 1, "the sparse stage still occupies exactly one row", got)
     ok("人写的自述，工具不许动" in got and "这段也必须在" in got,
        "and the prose around the table is still untouched", got)
+
+    # J) 归档目录里全是**日期式**记录：那一行不参与篇号/篇数两条核对（2026-10-17 修）。
+    #    判据从前拿 `NUM_NAME_RE` 自己匹配磁盘文件名，把 `2026-09-01-a.md` 读成「编号 2026」，
+    #    `set()` 一去重恒为 1 —— 于是在一个**正确**的容器上报「标着 3 篇，磁盘上是 1 篇」，
+    #    `--strict` 直接判红（H5）。日期式记录没有篇号、`archive` 也搬不动它们（它只认编号式），
+    #    所以这一节只数编号式：目录里一篇编号式都没有时，没有可比的东西，跳过。
+    #    ⚠ 夹具必须**只有**日期式记录：混着编号式时 `on_disk` 非空，走的不是这条分支。
+    datefix = mk("datedir", prose)
+    date_index = os.path.join(datefix, CONTAINER, "archive", "README.md")
+    date_dir = os.path.join(datefix, CONTAINER, "archive", "dates")
+    os.makedirs(date_dir, exist_ok=True)
+    for i, slug in enumerate(("alpha", "beta", "gamma"), 1):
+        day = f"2026-09-0{i}"
+        write(os.path.join(date_dir, f"{day}-{slug}.md"), entry(day, slug.title(), day))
+    write(date_index, read(date_index).replace(
+        "| `st0/` | 0001–0001 | 2026-10-01 ~ 2026-10-01 | 1 篇 | 人工 |",
+        "| `st0/` | 0001–0001 | 2026-10-01 ~ 2026-10-01 | 1 篇 | 人工 |\n"
+        "| `dates/` | 2026-09-01 ~ 2026-09-03 | 2026-09-01 ~ 2026-09-03 | 3 篇 | 阶段收口 |"))
+    r = run(datefix, "check", "--strict")
+    out = r.stdout + r.stderr
+    ok("标着" not in out and "篇号格" not in out,
+       "a date-form-only stage directory is not counted against its table row", out)
+    ok("却没有这一行" not in out,
+       "and the row that does mention it keeps the reverse check quiet", out)
 
 
 def status_blocks_phase(parent: str) -> None:
@@ -4252,6 +4277,46 @@ def card_record_mid(no: str, title: str, bar: str, second: str) -> str:
             f"- 未覆盖：无\n\n## 四、遗留与下一轮\n\n- 无。\n")
 
 
+def card_record_long_sentence(no: str, title: str, bar: str) -> str:
+    """第四档：**第一句就超过 200 字**（通篇只在最后收一个句号）。
+
+    为什么非要这一档（2026-10-17 复核指出"投影器那条修法没有断言盯着"）：
+    `first_sentence(text, 200)` 只在"第一句超长"时才走截断分支，而截断时它会**自己补一个 `…`**
+    —— 那个字符正文里根本没有。`ccg()` 里"正文以摘要开头就去掉那一段"的守卫要是带着这个 `…`
+    去比前缀，就永远比不中，于是整段被追加在摘要后面，「执行」小节的开头逐字出现两遍。
+    夹具里没有长句记录，这条守卫在真实卡上就永远测不到 —— 而它恰恰是真卡上先暴露的
+    （实测 42 张 full 卡里 5 张重复）。所以这一档是那条断言的**靶子**，别删。
+    """
+    # 真源必须**厚到"重复版"的卡也能过体量闸**：这一档要验的正是"「执行」小节重复开头"，
+    # 而重复会把卡撑大约 600 B —— 真源贴着两卡之和时，变异一打，卡会**先被体量闸丢掉**，
+    # 于是断言看到的是"没有卡"，永远等不到变红（第一版就是这么假绿的，实测两卡 3845 B
+    # 对真源 3797 B，刚好越线）。所以这里堆到真源的五六倍。
+    filler = "".join(
+        f"\n第 {i} 段：这一节把真源撑得足够厚，好让体量闸放行，与长句本身无关 ——"
+        f"它存在的唯一理由是让「重复版」的卡也过得了闸，"
+        f"否则变异打上去之后卡先被丢掉，那条断言就永远没有机会变红。\n"
+        for i in range(1, 31))
+    # 那条教学 bullet：**一个句末标点都没有，直到最后那个 `。`**（`first_sentence()` 因此
+    # 先把整段当成"第一句"，再发现它超过 200 字，于是从句处截断并补 `…`）。
+    # ⚠ 结尾必须真的落一个 `。`：抽教训那一步只收"以句号收尾的完整 bullet"，
+    # 少了它整篇会被当成"没有可投影的教训"跳过 —— 这一档就白加了（第一次就是这么跳过的）。
+    long_body = (
+        "这一条结论的第一句就必须明显超过两百个字，中间只用顿号、逗号与分号这些停顿连着，"
+        "一直不落句号、不落问号、也不落感叹号，好让摘要那条分支真的走到超长截断上去，"
+        "真的在摘要尾巴上补出一个正文里根本没有的省略号，"
+        "再让「执行」小节拿着那个带省略号的摘要去比前缀，看看它到底认不认得出来；"
+        "后面这一截是故意加长的尾巴，用来保证整段正文明显长于那两百字的摘要，"
+        "也只有这样开头重复才看得出来、这条守卫才算真的被人盯着，"
+        "否则夹具里全是短句、截断那条分支永远走不到，"
+        "这条断言就会变成一条永远不会红的摆设。")
+    return (f"# {no} · {title}\n\n"
+            f"日期：2026-10-16\n迭代：{int(no)}\n触发：自测夹具\n范围：卡投影相\n结论：{bar}\n\n"
+            f"---\n\n## 一、背景\n{filler}\n"
+            f"## 二、核心教训\n\n- **{bar}**：{long_body}\n\n"
+            f"## 三、验证\n\n- 命令：`python -B scripts/_selftest.py`\n- 结果：见本相断言\n"
+            f"- 未覆盖：无\n\n## 四、遗留与下一轮\n\n- 无。\n")
+
+
 def card_phase(tmp: str) -> None:
     """记忆卡投影：体量闸 / 幂等 / 索引 / 归属 / 独立性（不需要灵枢在）。"""
     croot = os.path.join(tmp, "cards")
@@ -4267,6 +4332,10 @@ def card_phase(tmp: str) -> None:
     # 拿 `0001-long` 当出处会让这些卡跟着它一起变 stale，反而验不出「只有该 stale 的 stale」。
     write(os.path.join(cont, "0003-mid.md"), card_record_mid(
         "0003", "中等", "够出卡但很薄的那档。", "一句话结论，凑不出第二句。"))
+    # 第四档：第一句超长（> 200 字、通篇不落句号）—— 专给「执行」小节那条去重断言当靶子，
+    # 详见 `card_record_long_sentence()` 的说明。别删：删了那条断言就没有反例可抓。
+    write(os.path.join(cont, "0004-longsentence.md"), card_record_long_sentence(
+        "0004", "长句", "长句这条结论要被摘要截断。"))
     write(os.path.join(cont, "lessons", "README.md"), LESSONS_INDEX)
     # 另一册：出处指向**本容器里那篇长记录**，验「出处指得到」这一档；
     # 它的源记录在下面会被删掉，用来验「源没了 → 卡要标 stale」。
@@ -4331,7 +4400,11 @@ def card_phase(tmp: str) -> None:
         shutil.rmtree(os.path.join(cont, "memory-cards"), ignore_errors=True)
 
     r = run(croot, CONTAINER, "--all", "--write", "--project", "selftest-project", tool=tool)
-    with open(os.path.join(os.path.dirname(tmp), "cardphase-run1.txt"), "w",
+    # 调试落盘写在**夹具目录里**，跟随 `--keep` 的生命周期（2026-10-17 清理）：
+    # 从前落在 `dirname(tmp)`（也就是 `--root`）里，而 `--root` 是**共享的夹具父目录**，
+    # 跑完谁也不删它 —— 每跑一次自测就在那儿留一份 57 KB 的输出，与 `-B` 那条规矩
+    # （"跑过自测不该弄脏下一道门禁"）是同一件事的两个面。加 `--keep` 才会保留。
+    with open(os.path.join(tmp, "cardphase-run1.txt"), "w",
               encoding="utf-8", newline="\n") as fh:
         fh.write(r.stdout + "\n[stderr]\n" + r.stderr)
     ok(r.returncode == 0, "card projection exits 0", r.stdout + r.stderr)
@@ -4348,6 +4421,22 @@ def card_phase(tmp: str) -> None:
        f"{len(ptrs)} vs {len(fulls)}")
     ok(all(os.path.getsize(os.path.join(cards, f)) > 300 for f in ptrs),
        "cards are not empty stubs")
+
+    # 「执行」小节**不许把开头说两遍**（2026-10-17 第二轮修全的那条）。
+    # 卡里那一节是"摘要 + 正文剩余"，而摘要是正文的 `first_sentence(…, 200)`；
+    # 第一句超长时那个函数会**自己补一个 `…`**，而 `…` 不在正文里 —— 前缀守卫一旦带着它
+    # 就永远比不中，于是整段正文被追加在摘要后面，开头逐字出现两遍（实测真卡里 5 张如此）。
+    # 判据取**归一后**的开头 80 字，数它在整节里出现几次：一次才对。
+    # `0004-longsentence` 就是为这条断言造的靶子（它第一句超过 200 字、尾巴被补了 `…`）。
+    dup_exec = []
+    for fn in fulls:
+        sec = re.search(r"(?m)^#\s*执行\s*$\n(.*?)(?=\n#\s|\Z)", read(os.path.join(cards, fn)), re.S)
+        flat = " ".join(sec.group(1).split()) if sec else ""
+        if len(flat) >= 80 and flat.count(flat[:80]) > 1:
+            dup_exec.append(fn)
+    ok(not dup_exec,
+       "the 执行 section never says its opening twice (truncated `…` included)",
+       "、".join(dup_exec) or f"{len(fulls)} 张 full 卡逐张查过")
     ok(not any(p.startswith("wl0002") for p in ptrs),
        "no card slug derives from the too-short record", " ".join(ptrs)[:200])
 
@@ -4364,10 +4453,11 @@ def card_phase(tmp: str) -> None:
        f"rows={idx1.count(chr(10) + '| `')} cards={len(ptrs)}")
     if "源未找到" in idx1:
         # 断了才把整份 INDEX 落盘，方便直接翻（断言详情会被截断，看不着全貌）。
-        with open(os.path.join(os.path.dirname(tmp), "cardphase-index.txt"), "w",
+        # 同样写在夹具目录里（见上面 `cardphase-run1.txt` 那段）：**加 `--keep` 才留得下**。
+        with open(os.path.join(tmp, "cardphase-index.txt"), "w",
                   encoding="utf-8", newline="\n") as fh:
             fh.write(idx1)
-    stale_detail = "全文见 cardphase-index.txt"
+    stale_detail = "全文见夹具目录里的 cardphase-index.txt（不加 --keep 跑完即删，出这条就加 --keep 重跑）"
     ok("源未找到" not in idx1,
        "nothing is stale while every source record is still there", stale_detail)
     # "表头不许漏卡正文"要断在**整行**上：正文里某个短语本身可能就出现在表头文档里
@@ -4544,6 +4634,55 @@ def card_phase(tmp: str) -> None:
     # 自家卡照旧认得出来：上面那张是外部卡，而这一轮仍应把自己的卡当"已有卡"。
     ok(mod.existing_cards(os.path.join(cont, "memory-cards")) != [],
        "our own cards are still collected", str(len(mod.existing_cards(os.path.join(cont, "memory-cards")))))
+
+    # ── **撞名**那种外来卡：不许覆盖（2026-10-17 复核 H-2）─────────────────────
+    #
+    # 上面那张叫 `foreign.pointer.md`，与自家任何 slug 都不撞 —— 读的一侧跳过它就完了。
+    # 真正会出事的是**文件名一样**：读的一侧照旧打一行 `[skip]`，写的一侧却按同一个名字
+    # `os.replace()`，于是"报着跳过、实际覆盖"。灵枢插件正是往同一个目录投同形制的卡，
+    # 撞名是会发生的（卡可重建，所以不算 critical，但两句话自相矛盾是最坏的一种）。
+    # 判据：外来卡逐字节不变 + 我们的卡改到 `-dsh` 名字下落盘 + 输出里说明白为什么。
+    cards_dir_ = os.path.join(cont, "memory-cards")
+    our_names = sorted(p for p in os.listdir(cards_dir_)
+                       if p.endswith(".pointer.md") and mod.is_our_card(os.path.join(cards_dir_, p)))
+    ok(bool(our_names), "there is at least one of our own cards to collide with", str(our_names)[:200])
+    victim = our_names[0]
+    victim_path = os.path.join(cards_dir_, victim)
+    victim_body = ("---\nid: foreign-collide\nlayer: knowledge\ntags: [other-tool]\n---\n\n"
+                   "# 功能名\n另一件工具写的卡，谁也不许动\n")
+    write(victim_path, victim_body)
+    r9 = run(croot, CONTAINER, "--all", "--write", "--project", "selftest-project", tool=tool)
+    ok(read(victim_path) == victim_body,
+       "a foreign card sitting on one of our names is not overwritten", read(victim_path)[:200])
+    renamed = victim[: -len(".pointer.md")] + "-dsh.pointer.md"
+    ok(os.path.isfile(os.path.join(cards_dir_, renamed)),
+       "our card goes to a non-colliding name instead of over it", renamed)
+    ok("不覆盖它" in r9.stdout, "and the run says so out loud", r9.stdout[-700:])
+
+    # ── 轮六的三条 low：许可了却不做 / 说话不像人话 / 记错自己在哪（2026-10-17）──
+    #
+    # L-1：`--list-similar` 从前**只出现在 `--help` 里**（全文件没读过它），等于 `--help`
+    #      许了一个不做的事。现在它是一条真路：只报相似度、**不写盘**。
+    before = sorted(os.listdir(cards_dir_))
+    r10 = run(croot, CONTAINER, "--all", "--list-similar", "--project", "selftest-project", tool=tool)
+    ok(r10.returncode == 0, "--list-similar runs", r10.stdout + r10.stderr)
+    ok("没出卡、没写盘" in r10.stdout, "and says out loud that it wrote nothing", r10.stdout[-600:])
+    ok(sorted(os.listdir(cards_dir_)) == before, "and really writes nothing",
+       str(sorted(set(os.listdir(cards_dir_)) ^ set(before))))
+
+    # L-2：指到不存在的记录时给人话，不给回溯（从前是裸 `FileNotFoundError`，栈顶在 `read()`）。
+    r11 = run(croot, CONTAINER, "--rec", "9999-nope.md", "--project", "selftest-project", tool=tool)
+    ok(r11.returncode != 0, "a --rec that points nowhere fails", str(r11.returncode))
+    ok("Traceback" not in r11.stderr, "without a Python traceback", r11.stderr[-300:])
+    ok("找不到记录" in r11.stdout + r11.stderr,
+       "but with a sentence a human can act on", (r11.stdout + r11.stderr)[-400:])
+
+    # L-4：manifest 里的 `container` 从前恒是 `"."` —— 它写过 `relpath(container, card_dir)`，
+    # 而卡目录就在容器里面，于是恒等。改成相对**容器父目录**（容器叫 `work_log` 就写 `work_log`）。
+    man = json.loads(read(os.path.join(cards_dir_, ".projection-manifest.json")))
+    ok(man.get("container") == CONTAINER,
+       "the manifest names the container relative to its parent, not '.'",
+       repr(man.get("container")))
 
 
 def main() -> int:

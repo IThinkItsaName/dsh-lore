@@ -996,7 +996,14 @@ def main(argv: list[str]) -> int:
         if os.path.isdir(les_dir):
             for fn in sorted(os.listdir(les_dir)):
                 if fn.endswith(".md") and fn != "README.md":
-                    units += lessons_units(container, os.path.join(les_dir, fn), args.domain)
+                    lp_ = os.path.join(les_dir, fn)
+                    # 与卡目录那两处**同一道守卫**（2026-10-17 轮十）：只按后缀收，
+                    # 会把**目录**（断链同理）也当成一册收进来，`parse_lessons()`
+                    # 的 `read()` 打在目录上抛 `PermissionError` —— 整次投影中止、
+                    # rc=1，用户看到的是一条裸栈。三处枚举点现在过同一道 `isfile`。
+                    if not os.path.isfile(lp_):
+                        continue
+                    units += lessons_units(container, lp_, args.domain)
         if not units:
             print("（容器里没有可投影的教训：记录需有结论性小节里以句号收尾的完整 bullet）")
     elif args.rec:

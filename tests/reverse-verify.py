@@ -653,6 +653,16 @@ MUTATIONS: list[tuple] = [
      '',
      "nor does the index path list it",
      CARD_SRC),
+
+    # 8) 三处枚举点的**第三处**（轮十）：卡目录那两处前两轮各补了一道守卫，
+    #    而 `--all` 那条路上的**分册扫描**只按 `.md` 后缀收 —— 一个叫 `01-weird.md`
+    #    的目录让整次投影中止（rc=1、裸 `PermissionError`）。轮十的穷举扫描漏了它。
+    ("card", "分册扫描又只按后缀收（同名目录让整次投影中止）",
+     '                    if not os.path.isfile(lp_):\n'
+     '                        continue\n',
+     '',
+     "a directory named like a lesson volume does not abort the projection",
+     CARD_SRC),
 ]
 
 

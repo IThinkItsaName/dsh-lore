@@ -4747,6 +4747,23 @@ def card_phase(tmp: str) -> None:
     ok(r14.returncode == 0 and "zz-weird" not in read(os.path.join(fcards, "INDEX.md")),
        "nor does the index path list it", read(os.path.join(fcards, "INDEX.md"))[:400])
 
+    # ── 分册目录里也有同一个形状（2026-10-17 轮十）────────────────────────────
+    #
+    # 三处枚举点要过**同一道** `isfile`：卡目录的两处（`existing_cards()` / `index_rows()`）
+    # 前两轮补过了，而 `--all` 那条路上的**分册扫描**（`for fn in os.listdir(les_dir)`）
+    # 只是按 `.md` 后缀收 —— 一个叫 `01-weird.md` 的目录照样让 `--all --write`
+    # 整次中止（rc=1、裸 `PermissionError`）。轮十的穷举扫描漏了它。
+    ldir = os.path.join(fidx, CONTAINER, "lessons")
+    os.makedirs(os.path.join(ldir, "01-weird.md"))
+    write(os.path.join(ldir, "02-ok.md"),
+          "# 分册\n\n- **一条能用的经验**：正文化，句号收尾。出处：`wl/0001`。\n")
+    r15 = run(fidx, CONTAINER, "--all", "--write", "--project", "selftest-project", tool=tool)
+    ok(r15.returncode == 0,
+       "a directory named like a lesson volume does not abort the projection",
+       (r15.stdout + r15.stderr)[-500:])
+    ok("Traceback" not in r15.stderr, "and it does not surface as a bare traceback",
+       r15.stderr[-300:])
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="journal.py 自测")

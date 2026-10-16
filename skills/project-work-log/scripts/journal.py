@@ -13,8 +13,11 @@
         archive/…            归档层（可选）：把归档都收在一处时用它，
                              里面再按主题/阶段分（archive/<主题>/<阶段>/
                              或 archive/<阶段>/）；第一段不是 4 位年份 ⇒ 已归档
+        archive/README.md    归档索引（**人写为主**：一行一个阶段。`archive --stage`
+                             只补/并表里的行，正文一个字都不动；见 update_archive_index）
+        archive/ARCHIVE.md   遗留的旧归档索引（标题 `# 归档区`；**只读不写**，2026-10-16
+                             起不再更新。容器根的 ARCHIVE.md 也认，见 _check_archive_index）
         STATE-HISTORY.md     被替换下来的旧「当前状态」块
-        ARCHIVE.md           归档索引
         LEGACY.md            旧记录声明（可选，见「渐进原则」）
         目标.md              长期目标 → 阶段的两层表（可选，见 references/conventions.md「目标」）
         lessons/             经验层（分册），是容器的子目录
@@ -257,8 +260,14 @@ LESSONS_DEFAULT = "lessons"
 # 不是路径：2026-10-15 整理时这一项一度被写成 `work_log/logs`，于是日志目录不再被排除 ——
 # 容器根的 `logs/` 里文件名与记录同形的那些（`2026-01-01-run.md`）会被当成记录。
 NON_RECORD_DIRS = ("lessons", "logs")
-# 容器根上的辅助文档（旧布局里它们住在 archive/ 下）
+# 辅助文档：状态史与冷存清单在**容器根**；归档索引分两代，落点不同。
+# `archive/README.md` 是**当前**的归档索引（人写为主，`archive --stage` 只补行，见
+# `update_archive_index`）；`ARCHIVE.md` 是**遗留**的旧表，2026-10-16 退场：只写不读
+# （`index compact` 折归档行读的是 README 索引的小节 + 直接数磁盘篇号），且内容与新索引
+# 重复，双写必然漂移。现在只**认**它（`check` 出 INFO 提示可删），不再写、不再建。
+# 归属判据在 `_is_legacy_archive_index`（看标题，两张表都带「目录」列，光看列名分不开）。
 ARCHIVE_INDEX = "ARCHIVE.md"
+ARCHIVE_DIR = "archive"
 STATUS_HISTORY = "STATE-HISTORY.md"
 COLD_STORE = "COLD-STORE.md"
 # 旧记录声明（可选）：容器里已有的记录写在里面，逐条列出，只有它列到的记录才降级。
@@ -1375,13 +1384,20 @@ def lessons_skip(lessons: str | None) -> tuple[str, ...]:
     return (name,) if name else ()
 
 
-def _aux_path(container: str, legacy_name: str, name: str) -> str:
-    """辅助文档落点：新布局在容器根；旧布局已存在 `archive/<legacy_name>` 就沿用它。
+def _aux_path(container: str, legacy_name: str, name: str, *candidates: str) -> str:
+    """辅助文档落点：先看既有的几处候选，再落到当前布局的首选位置。
 
-    沿用而不是另起一份，是为了不把同一段历史（状态块 / 归档索引 / 冷存清单）
+    `candidates` 按**新旧顺序**给（第一位 = 当前布局的首选落点）。剩下两个辅助文档的
+    首选落点都在**容器根**：状态史与冷存清单（各自只看 `<容器>/archive/<旧名>` 这一处
+    旧落点）。归档索引不走这里了 —— 它已是遗留产物，判据在 `archive_index_path`。
+
+    沿用既有文件而不是另起一份，是为了不把同一段历史（状态块 / 归档索引 / 冷存清单）
     劈成两个文件——历史只搬运、不改写，也不该被搬家。
     """
-    legacy = os.path.join(container, "archive", legacy_name)
+    for cand in candidates:
+        if cand and os.path.exists(os.path.join(container, *cand.split("/"))):
+            return os.path.join(container, *cand.split("/"))
+    legacy = os.path.join(container, ARCHIVE_DIR, legacy_name)
     if os.path.exists(legacy):
         return legacy
     return os.path.join(container, name)
@@ -1393,8 +1409,37 @@ def status_history_path(container: str) -> str:
 
 
 def archive_index_path(container: str) -> str:
-    """归档索引落点（新布局：`<容器>/ARCHIVE.md`）。"""
-    return _aux_path(container, "README.md", ARCHIVE_INDEX)
+    """**遗留**归档索引（旧 `ARCHIVE.md` / 更早的 `archive/README.md`）里，哪一份存在。
+
+    只给 `check` 用：认一认、提示它可删。2026-10-16 起 `archive` 不再写这个文件了 ——
+    归档信息由 `archive/README.md`（归档目录自己的索引）承载，一份就够。
+
+    ⚠ 不能拿 `<容器>/archive/README.md` 当"新落点候选"（2026-10-16 踩过）：那个路径现在是
+    **归档目录自己的索引**（人写的、一行一个阶段）。把它当旧 `ARCHIVE.md` 算，`check` 会把
+    它的 10 行读成"10 个路径全错 + 10 个目录全没登记"，两条读数全是假的。所以这里只在
+    **旧容器真的存在** `<容器>/archive/README.md`（且没有别处的归档索引）时才返回它。
+    """
+    root_index = os.path.join(container, ARCHIVE_INDEX)
+    if os.path.isfile(root_index):
+        return root_index
+    legacy = os.path.join(container, ARCHIVE_DIR, ARCHIVE_INDEX)
+    if os.path.isfile(legacy):
+        return legacy
+    old = os.path.join(container, ARCHIVE_DIR, "README.md")
+    return old if os.path.isfile(old) else root_index
+
+
+def _is_legacy_archive_index(path: str) -> bool:
+    """这份 `README.md` / `ARCHIVE.md` 是不是**旧归档索引**（而不是归档目录自己的新索引）。
+
+    两张表都带「目录」列，光看列名分不开；区分点是标题：旧表 `# 归档区`，新索引是
+    `# work_log/archive/ —— 已归档记录`。没有这个判据，新索引会被认成旧表并报一堆假漂移。
+    """
+    try:
+        head = read(path).lstrip().splitlines()
+    except OSError:
+        return False
+    return bool(head) and head[0].strip().startswith("# 归档区")
 
 
 def cold_store_path(container: str) -> str:
@@ -2192,6 +2237,56 @@ def _check_links(root: str, path: str, rep: Report) -> None:
             rep.add("ERROR", where, f"死链：{target}")
 
 
+def _check_archive_index(root: str, container: str, rep: Report) -> None:
+    """认一认那份**遗留的** `ARCHIVE.md`（归档索引），只出 INFO。
+
+    2026-10-16：`archive` 不再写它了。理由是它是**只写不读**的产物 —— `index compact`
+    折归档行用的是 README 索引里的小节 + 直接数磁盘篇号，从不读这张表；而它记的东西
+    （目录 / 篇号区间 / 篇数）在 README 索引里**已经有一行**，再维护一份就是双写。
+    双写必然漂移：实测 `ops/08-other-plugins/` 被拆成三条主题线之后，旧表那一行没人改，
+    表就成了假的。
+
+    这里仍要**认**它，是因为老容器里有这个文件；但只提一句，不报 ERROR/WARN ——
+    一份可选、可删、与 README 重复的产物，不该让任何容器变红。
+    """
+    path = archive_index_path(container)
+    if not os.path.isfile(path) or not _is_legacy_archive_index(path):
+        return                      # 没有它（绝大多数容器），或那是归档目录自己的新索引
+    where = rel(root, path)
+    listed: list[str] = []
+    missing: list[str] = []
+    for line in read(path).splitlines():
+        target = l_target_dir(line)
+        if not target:
+            continue
+        listed.append(target)
+        if not os.path.isdir(os.path.join(container, *target.strip("/").split("/"))):
+            missing.append(target)
+
+    skip = {".git", "node_modules", *NON_RECORD_DIRS}
+    stages: dict[str, str] = {}          # 阶段目录 → 该目录里第一个记录文件
+    for dp, dn, fn in os.walk(container):
+        dn[:] = [d for d in dn if d not in skip]
+        for f in fn:
+            path = os.path.join(dp, f)
+            # 判据复用 `is_archived_entry`（它要的是**文件**路径，不是目录）：
+            # 这样年份卷、`lessons/`、`logs/`、容器根都天然被排除，不另写一套口径。
+            if is_archived_entry(container, path):
+                stages.setdefault("/".join(_rel_parts(container, dp)), path)
+    unlisted = [s for s in sorted(stages) if s + "/" not in listed]
+
+    extra = []
+    if missing:
+        extra.append(f"{len(missing)} 个目录在磁盘上不存在（如 `{missing[0]}`）")
+    if unlisted:
+        extra.append(f"{len(unlisted)} 个归档目录没登记（如 `{unlisted[0]}`）")
+    detail = ("；".join(extra) + "。") if extra else ""
+    rep.add("INFO", where,
+            f"遗留的归档索引（{len(listed)} 行）。**归档信息现在在 `archive/README.md`**"
+            f"（一行一个阶段，`archive --stage` 自动维护），这份是重复的旧产物："
+            f"`archive` 自 2026-10-16 起不再更新它，确认新索引齐全后可以删掉。{detail}")
+
+
 def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: bool,
           legacy: str | None = None) -> Report:
     rep = Report(strict)
@@ -2325,6 +2420,10 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
 
     # 目标表（`<容器>/目标.md`，可选）：缺它是正常的，报 0 个问题。三条机械规则见 check_goals。
     check_goals(root, journal, entries, rep)
+
+    # 归档索引：当前那份是 `archive/README.md`（`archive --stage` 维护它的表，`check` 不管
+    # 正文）；这里认的是**遗留**的 `ARCHIVE.md`，只认一认、出 INFO（见 `_check_archive_index`）。
+    _check_archive_index(root, journal, rep)
 
     if os.path.isfile(index):
         idx_text = read(index)
@@ -3593,7 +3692,7 @@ def l_entry_nums(line: str) -> list[int]:
 
 
 def l_entry_span(line: str) -> str:
-    """归档表一行里「时间」格（`2026-10-01 ~ 2026-10-02` / `-`），认不出给空串。"""
+    """归档索引一行里「时间」格（`2026-10-01 ~ 2026-10-02` / `-`），认不出给空串。"""
     cells = [c.strip() for c in line.strip().strip("|").split("|")]
     return cells[2] if len(cells) >= 3 else ""
 
@@ -3605,27 +3704,84 @@ def merge_span(old: str, new_dates: list[str]) -> str:
     return f"{ds[0]} ~ {ds[-1]}" if ds else "-"
 
 
-def _update_archive_index(container: str, stage: str, nums: list[int], dates: list[str]) -> None:
-    """在归档索引（新布局 `<容器>/ARCHIVE.md`，旧布局 `archive/README.md`）里补一行。
+def archive_dir_index_path(container: str) -> str:
+    """归档目录**自己的**索引：`<容器>/archive/README.md`（一行一个阶段）。
 
-    `stage` 可以是多级相对路径（`<主题>/<阶段>`），表里就照它写 —— 一行 = 一个归档目录。
-    同一个目录**再归档一次**时**就地更新**那一行，不追加重复行（否则表会自相矛盾）。
+    与遗留的 `ARCHIVE.md`（见 `archive_index_path`）是两回事：那个是旧表、工具不再写；
+    这个从 2026-10-16 起由 `archive --stage` 维护**表里的行**（正文一个字都不动）。
     """
-    path = archive_index_path(container)
+    return os.path.join(container, ARCHIVE_DIR, "README.md")
+
+
+# 归档索引表头。识别一张已有的表靠它，所以列名不能随手改 ——
+# 改了列名，旧表就认不出来，写入会变成"另起一张表"（两张同时在，人没法读）。
+ARCHIVE_TABLE_HEAD = "| 目录 | 篇号 | 时间 | 内容 | 归档判据 |"
+ARCHIVE_TABLE_ALIGN = "|---|---|---|---|---|"
+# 新表骨架的标题。**不能**用旧表的 `# 归档区`：那个标题正是 `_is_legacy_archive_index`
+# 判定"这是遗留 ARCHIVE.md"的判据，新表用它就会自己把自己认成遗留产物。
+ARCHIVE_INDEX_TITLE = "# `work_log/archive/` —— 已归档记录"
+
+
+def archive_index_rel(stage: str) -> str:
+    """把 `--stage` 的取值换算成**相对 `archive/` 的**路径（表里写的就是这个）。
+
+    `--stage X` 建的目录是 `<容器>/X`，归档后实际落在 `<容器>/archive/X`，
+    所以索引里写的相对路径就是 `X/`。`--stage archive/X` 也接受（等价写法）。
+    返回空串表示"落在 `archive/` 直属层"，表里没有可写的行。
+    """
+    s = (stage or "").replace("\\", "/").strip("/")
+    if s == ARCHIVE_DIR:
+        return ""
+    if s.startswith(ARCHIVE_DIR + "/"):
+        s = s[len(ARCHIVE_DIR) + 1:]
+    return s.strip("/") + "/" if s.strip("/") else ""
+
+
+def _archive_table_rows(lines: list[str]) -> list[int]:
+    """归档索引表的数据行号（认表头那一行，认不出给空表）。
+
+    只认与 `ARCHIVE_TABLE_HEAD` 相同的那行：文件里别处的表格（例如自述里的"里面有什么"）
+    不会被误当成数据行。认不出表头就返回空 —— 调用方据此决定是"另建一张"还是"不动"。
+    """
+    want = [c.strip() for c in ARCHIVE_TABLE_HEAD.strip("|").split("|")]
+    head = None
+    for i, l in enumerate(lines):
+        if not l.lstrip().startswith("|"):
+            continue
+        if [c.strip() for c in l.strip().strip("|").split("|")] == want:
+            head = i
+            break
+    if head is None:
+        return []
+    end = head + 1
+    while end < len(lines) and lines[end].lstrip().startswith("|"):
+        end += 1
+    return list(range(head + 2, end))          # 跳过表头与分隔行
+
+
+def update_archive_index(container: str, stage: str, nums: list[int], dates: list[str]) -> str:
+    """把一次归档写进 `<容器>/archive/README.md` 的表里，返回实际写的路径。
+
+    **只动表里的行**：文件已存在就在表末插一行；同一个阶段分几次归档则**原地更新**那一行
+    （篇号取并集、日期区间取并集）；文件不存在才建一份最小骨架（标题 + 表头 + 第一行）。
+    人写的自述、备注、别的表格一概不碰 —— 这份文件是**人写为主、工具只补行**的。
+    """
+    path = archive_dir_index_path(container)
+    rel_dir = archive_index_rel(stage)
+    if not rel_dir:
+        return path                             # 归档就在 archive/ 直属层：表里没有可写的行
+
     text = read_raw(path) if os.path.exists(path) else ""
     nl = nl_of(text) if text else "\n"
     lines = text.splitlines(keepends=True)
-    if not text:
-        lines = [f"# 归档区{nl}", nl,
-                 f"| 目录 | 篇号 | 时间 | 内容 | 归档判据 |{nl}",
-                 f"|---|---|---|---|---|{nl}"]
-    rel_dir = stage.replace("\\", "/").strip("/") + "/"
+    rows = _archive_table_rows(lines)
     ds = sorted(d for d in dates if d)
-    rows = [i for i, l in enumerate(lines) if l.lstrip().startswith("|")]
-    existing = next((i for i in rows if l_target_dir(lines[i]) == rel_dir), None)
+
+    existing = next((i for i in rows
+                     if l_target_dir(lines[i]).strip("/") == rel_dir.strip("/")), None)
     if existing is not None:
-        # 同一个目录**分几次**归档很常见（先 1–2，后来把 3 也补进去）。
-        # 原地更新必须**并入旧行已记的篇号**，否则表会显示成"只剩最后一批"。
+        # 同一个阶段分几次归档很常见（先 1–2，后来把 3 也补进去）。原地更新必须
+        # **并入旧行已记的篇号与日期**，否则那一行会显示成"只剩最后一批"。
         all_nums = sorted(set([*nums, *l_entry_nums(lines[existing])]))
         lo, hi, count = all_nums[0], all_nums[-1], len(all_nums)
         span = merge_span(l_entry_span(lines[existing]), ds)
@@ -3635,13 +3791,18 @@ def _update_archive_index(container: str, stage: str, nums: list[int], dates: li
         span = f"{ds[0]} ~ {ds[-1]}" if ds else "-"
         entry = (f"| `{rel_dir}` | {min(nums):04d}–{max(nums):04d} | {span} | "
                  f"{len(nums)} 篇 | 阶段收口 |{nl}")
-        if rows:
-            lines.insert(rows[-1] + 1, entry)
+        if not text:
+            lines = [f"{ARCHIVE_INDEX_TITLE}{nl}", nl,
+                     f"{ARCHIVE_TABLE_HEAD}{nl}", f"{ARCHIVE_TABLE_ALIGN}{nl}", entry]
+        elif rows:
+            lines.insert(rows[-1] + 1, entry)   # 追加在表末
         else:
-            if lines and lines[-1].strip():
-                lines.append(nl)
-            lines.append(entry)
+            # 文件在、但认不出我们的表：**不猜、不动**。悄悄另起一张表会留下两张，
+            # 人下次不知道该信哪一张；这里宁可什么都不写（`check` 会提示索引缺行）。
+            return path
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     write_raw(path, "".join(lines))
+    return path
 
 
 def plan_archive_stage(container: str, raw: str) -> tuple[str, str | None]:
@@ -3734,8 +3895,10 @@ def cmd_archive(args: argparse.Namespace) -> int:
     for _, p in picked:
         os.rename(p, os.path.join(target_dir, os.path.basename(p)))
     changed = rewrite_links(bases, moves, dry_run=False)
-    if not args.no_index:
-        _update_archive_index(journal, stage, nums, dates)
+    # 2026-10-16 起：归档索引的落点是**归档目录自己的** `archive/README.md`（一行一个阶段）。
+    # 早先那份 `ARCHIVE.md` 已退场（只写不读的产物）；现在这份是给**人**读的目录索引，
+    # 工具只补行/并行，正文（自述、备注）一个字都不动 —— 见 `update_archive_index`。
+    index_path = update_archive_index(journal, stage, nums, dates)
 
     dead = _dead_links(root, bases)
     print(f"移动 {len(picked)} 篇 → {rel(root, target_dir)}；"
@@ -3745,7 +3908,8 @@ def cmd_archive(args: argparse.Namespace) -> int:
     if dead:
         print("⚠️ 仍有死链：内容都在，检查上面的链接（可用 git 回退）")
         return 1
-    print(f"完成。建议接着跑 `index compact --stage {stage}` 折叠索引行，再跑 `check`。")
+    print(f"完成。索引已更新到 {rel(root, index_path)}；接着跑 `check`"
+          f"（活跃记录的索引行由 `index sync` 维护，归档行由本次自动补）。")
     return 0
 
 
@@ -6507,7 +6671,8 @@ mode 同样只提供**新项目的初始档位**：台账 `## 当前状态` 有 
     p_arch.add_argument("--stage", required=True)
     p_arch.add_argument("--from", dest="from_num", type=int, required=True)
     p_arch.add_argument("--to", dest="to_num", type=int, required=True)
-    p_arch.add_argument("--no-index", action="store_true", help="不更新归档索引（ARCHIVE.md）")
+    # 2026-10-16 起**没有** `--no-index`：归档不再写 `ARCHIVE.md`（只写不读的孤儿产物），
+    # 改为维护 `archive/README.md` 那张表（只补行/并行，正文不动 —— 见 update_archive_index）。
     p_arch.add_argument("--dry-run", action="store_true")
 
     p_split = add("split", cmd_split, "按年分卷（把记录移进 <YYYY>/）")

@@ -14,7 +14,6 @@
     ├── 0001-<slug>.md        ← 过程记录，**就在容器根**（编号式；一篇 = 一个可交付单元）
     ├── YYYY-MM-DD-<slug>.md  ← 过程记录（日期式，同一容器里建议只用一种）
     ├── STATE-HISTORY.md      ← 被替换下来的旧「当前状态」块
-    ├── ARCHIVE.md            ← 归档索引（`archive --stage` 自动补行）
     ├── LEGACY.md             ← 旧记录声明（可选，见「渐进原则」）
     ├── 目标.md               ← 长期目标 → 阶段的两层表（可选，见「目标」；需要时才建）
     ├── .config.json          ← 项目配置文件（可选，见「项目配置文件」；缺它 = 全部内置默认）
@@ -22,7 +21,9 @@
     ├── <stage>/…             ← 归档记录：阶段目录直接建在容器下（短项目就够）
     ├── archive/…             ← 归档层（可选，多主题长项目用它把归档收在一处）
     │   ├── <阶段>/…             两种都行：archive/<阶段>/（一层）
-    │   └── <主题>/<阶段>/…      或 archive/<主题>/<阶段>/（两层，主题可选）
+    │   ├── <主题>/<阶段>/…      或 archive/<主题>/<阶段>/（两层，主题可选）
+    │   ├── README.md            归档索引：一行一个阶段（**人写为主**，`archive --stage` 只补行）
+    │   └── ARCHIVE.md           遗留的旧归档索引（**可选、可删**；见「辅助文档的落点」）
     ├── lessons/              ← 经验层（分册索引 + 分册 + 阶段复盘）
     │   ├── README.md
     │   ├── 01-<topic>.md
@@ -40,8 +41,9 @@
   两种都只是「容器下的一个子目录」，工具对它们没有任何区别对待，选哪种由项目自己定。
   由此推出一条判据（`journal.py` 的 `is_active_entry` / `is_archived_entry` 就是它）：
   **相对容器路径的第一段是 4 位年份 ⇒ 活跃；其余子目录 ⇒ 已归档**。
-  `lessons/`、`logs/` 是容器内的**非记录**目录，`README.md`、`STATE-HISTORY.md`、`ARCHIVE.md`、
-  `LEGACY.md`、`目标.md` 也不是记录——它们各自按文件名与路径排除，绝不能被当成「一个已归档阶段」。
+  `lessons/`、`logs/` 是容器内的**非记录**目录；`README.md`、`STATE-HISTORY.md`、`ARCHIVE.md`、
+  `LEGACY.md`、`目标.md` 也不是记录（**住在 `archive/` 里的 `ARCHIVE.md` / `README.md` 同样不是**，
+  文件名不对形或路径被排除）——它们各自按文件名与路径排除，绝不能被当成「一个已归档阶段」。
   ⚠ 这条判据的代价是：**不要在容器下另建目录来放记录**（草稿也放容器根）。
   容器下的子目录只有这几类——年份卷 `<YYYY>/`、归档阶段 `<stage>/`、可选的归档层 `archive/`、
   以及 `lessons/` `logs/`；在别处塞记录文件会被当成「已归档」。
@@ -55,7 +57,62 @@
   用了归档层 `### archive/工作记录/05-设置页返工/` 用 `--depth 4`（工具会提示"要折得加 `--depth N`"）。
 
 
+### 子目录自述：每个子目录有自己的 `README.md`
+
+容器根台账**不重复子目录里的条目**：根 README 只写一句指针（这个目录装什么、去哪个文件看明细），
+明细住在子目录自己的 `README.md` 里。这样台账的体积不随归档量增长 —— 冷数据不进热面。
+
+| 子目录 | 自己的索引 | 容器根 README 该写什么 |
+|---|---|---|
+| `archive/` | `archive/README.md`（一行一个阶段：目录 / 篇号 / 时间 / 内容 / 归档判据） | 一句指针 + 两条主题线的名字 |
+| `lessons/` | `lessons/README.md`（分册索引） | 一句指针 |
+| `logs/` | `logs/README.md`（按来源分类） | 需要时按需引用，不必常驻 |
+| `memory-cards/`（若用了投影） | `memory-cards/README.md`（导航）+ `INDEX.md`（生成物） | 一句指针 |
+
+**归档明细的落点是 `archive/README.md`，不是容器根**（2026-10-16 起）。它**不是**旧的
+`ARCHIVE.md`：旧表标题是 `# 归档区`、写的是**相对容器根**的路径（`archive/worklog/01-…/`）；
+新索引标题是 `# work_log/archive/ —— 已归档记录`、那一列写的是**相对 `archive/`** 的路径
+（`worklog/01-…/`）。两者混起来会得出全错的读数，所以 `check` 用**标题**区分它们。
+
+这份新索引是**人写为主、工具只补行**：自述、备注、别的表格都随人写，`archive --stage`
+只在表里补/并一行（同一个阶段分几次归档仍是**一行**，篇号与日期区间取并集）；
+文件不存在才建一份最小骨架（标题 + 表头 + 第一行）。人写的那一列（如「归档判据」）
+在工具并入该行时会被重置成默认值 `阶段收口` —— 想留自定义判据，就在归档动作之后写。
+
+
+
+### 辅助文档的落点
+
+两份辅助文档留容器根（状态史、冷存清单）；归档索引早就搬去 `archive/README.md` 了，
+容器根那份 `ARCHIVE.md` 是**遗留产物**：
+
+| 文档 | 落点 | 谁写 | 谁读 |
+|---|---|---|---|
+| 状态历史 | `<容器>/STATE-HISTORY.md`（旧：`archive/STATUS-HISTORY.md`） | `status --roll` | 人 |
+| 冷存清单 | `<容器>/COLD-STORE.md`（旧：`archive/COLD-STORE.md`） | `prune --zip --apply` | 人 |
+| 归档索引 | **`<容器>/archive/README.md`**（一行一个阶段；见上节） | 人 + `archive --stage`（只补行） | 人 |
+| 遗留归档索引 | `<容器>/ARCHIVE.md` 或 `<容器>/archive/ARCHIVE.md`（标题 `# 归档区`） | **没人写了**（见下） | `check` 只为提示 |
+
+沿用既有文件而不是另起一份，是**不把同一段历史劈成两份**（判据在 `journal.py:_aux_path`，
+它只管状态史与冷存清单这两份 —— 归档索引已经不走它了）。
+要换落点，**搬文件**即可（搬到新位置就按新的算）；几种布局都跑得动。
+
+**旧的 `ARCHIVE.md` 已经退场**（2026-10-16）：它是**只写不读**的产物 —— `index compact`
+折归档行读的是 README 索引里的那些小节 + 直接数磁盘篇号（`stage_numbers`），从不读这张表；
+而它记的「目录 / 篇号区间 / 篇数」在 README 索引里**早有一行**（一小节一行）。两份就是双写，
+双写必然漂移：实测 `ops/08-other-plugins/` 被拆成三条主题线之后，旧表那一行没人改，表就成了假的。
+
+所以现在的规矩是：
+
+- **`archive` 不再写它** —— 归档时改为维护 `archive/README.md` 的那张表（只补行、不动正文）；
+- 活跃记录的索引行由 `index sync` 维护，归档小节的折叠由 `index compact --stage X` 负责；
+- 老容器里已有的那份，`check` **只出一条 INFO**（顺便点出「表指空」「目录没登记」两类漂移），
+  **不报 ERROR/WARN** —— 一份可选、可删、与 `archive/README.md` 重复的产物，不该让任何容器变红；
+- 确认 `archive/README.md` 齐全后，**直接删掉它**即可（工具不会再建）。
+
 ### 两种命名约定（工具两种都识别）
+
+
 
 | 约定 | 文件名 | H1 必须写成 | 实测范围 |
 |---|---|---|---|
@@ -232,7 +289,7 @@ python scripts/journal.py mode --why "阶段收口"     # 只补一行原因，�
 - **更正**：新证据推翻旧结论时，**追加** `## 更正` 段（日期 / 原结论 / 新证据 / 现结论），并同步台账与 lessons；
   绝不允许把旧文字直接抹掉。
 - **归档**：阶段收口、索引表停止增长时，把整阶段的记录 move 到 `work_log/<stage>/`；
-  同步改索引链接、写归档索引（`ARCHIVE.md`），并跑一次 `journal.py check`。
+  同步改索引链接、把索引里那一节折成一行（`journal.py index compact --stage …`），并跑一次 `journal.py check`。
 
 ## 日志归位要求
 
@@ -256,7 +313,7 @@ python scripts/journal.py mode --why "阶段收口"     # 只补一行原因，�
 
 | 动作 | 命令 | 说明 |
 |---|---|---|
-| 阶段归档 | `journal.py archive --stage X --from N --to M` | 移动 + 全仓链接重写 + 补 `ARCHIVE.md` + 死链自检 |
+| 阶段归档 | `journal.py archive --stage X --from N --to M` | 移动 + 全仓链接重写 + 死链自检；再 `index compact` 折索引行 |
 | 索引瘦身 | `journal.py index compact` | 已归档小节折叠成一行区间；混合/死链小节自动跳过 |
 | 按年分卷 | `journal.py split --by-year` | 移进 `work_log/<YYYY>/`；`wl/NNNN` 回指不受影响 |
 | 冷存 | `journal.py prune [--zip Z] [--apply]` | 默认只报告；打包后才移出，并写 `COLD-STORE.md` |

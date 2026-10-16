@@ -495,10 +495,10 @@ def cleanup_phase(parent: str) -> None:
        "archive moves the file into <container>/<stage>/", r.stdout)
     idx = read(jidx)
     ok("stageB/0001-alpha.md" in idx, "archive rewrites index link", idx)
-    ok(os.path.exists(os.path.join(tmp, CONTAINER, "ARCHIVE.md")),
-       "archive writes the archive index at the container root")
-    ok(not os.path.isdir(os.path.join(tmp, CONTAINER, "archive")),
-       "no literal archive/ subdirectory is created")
+    ok(not os.path.exists(os.path.join(tmp, CONTAINER, "archive", "ARCHIVE.md")),
+       "archive writes no archive index (只写不读的产物已退场，归档信息归 README 索引)")
+    ok(not os.path.exists(os.path.join(tmp, CONTAINER, "ARCHIVE.md")),
+       "and none at the container root either")
 
     # D) split --by-year
     r = run(tmp, "split", "--by-year")
@@ -590,17 +590,14 @@ def nested_stage_phase(parent: str) -> None:
     ok(os.path.exists(os.path.join(tmp, CONTAINER, "theme-a", "01-first", "0001-a.md")),
        "nested --stage puts records under <theme>/<stage>/", r.stdout)
     ok("theme-a/01-first/0001-a.md" in read(jidx), "nested archive rewrites the index link", read(jidx))
-    atext = read(os.path.join(tmp, CONTAINER, "ARCHIVE.md"))
-    ok("`theme-a/01-first/`" in atext and "0001–0002" in atext,
-       "the archive index records the full relative path", atext)
+    ok(not os.path.exists(os.path.join(tmp, CONTAINER, "archive", "ARCHIVE.md")),
+       "nested archiving writes no archive index either", r.stdout)
 
-    # B) 同一个目录再归档一次：**一行**，且区间求并集（不能变成"只剩最后一批"）
+    # B) 同一个目录再归档一次：仍然不写归档索引（归档信息只在 README 索引里）
     r = run(tmp, "archive", "--stage", "theme-a/01-first", "--from", "3", "--to", "3")
-    atext = read(os.path.join(tmp, CONTAINER, "ARCHIVE.md"))
-    rows = [l for l in atext.splitlines() if l.startswith("| `theme-a/01-first/`")]
-    ok(len(rows) == 1, "re-archiving into the same directory keeps one row", atext)
-    ok("0001–0003" in rows[0] and "3 篇" in rows[0],
-       "that row merges the number range instead of showing only the last batch", rows[0] if rows else "")
+    ok(not os.path.exists(os.path.join(tmp, CONTAINER, "archive", "ARCHIVE.md")),
+       "re-archiving keeps writing no archive index", r.stdout)
+    ok("0003-c.md" in read(jidx), "and the index link for the third record is rewritten", read(jidx))
     r = run(tmp, "check", "--strict", "--quiet")
     ok(r.returncode == 0, "check --strict clean after nested archiving", r.stdout + r.stderr)
 
@@ -654,6 +651,212 @@ def nested_stage_phase(parent: str) -> None:
        "a plain --depth 1 compact still folds ordinary stage sections", dtext)
     ok("[theme-a/01-first/](theme-a/01-first/)" in dtext,
        "a theme directory holding no records of its own is never folded", dtext)
+
+
+
+
+
+def archive_index_check(parent: str) -> None:
+    """遗留的归档索引 `ARCHIVE.md`：只认、只提示，不再写（2026-10-16）。
+
+    这一版判据换过一次方向。初版把它做成**被校验的一等文件**（表里列了磁盘没有 = ERROR），
+    后来量出它是**只写不读**的产物：`index compact` 折归档行读的是 README 索引的小节 +
+    直接数磁盘篇号（`stage_numbers`），从不读这张表；而它记的目录/区间/篇数，README 索引里
+    早有一行。于是让它退场 —— `archive` 不再写它，`check` 只出 INFO 提示它可删。
+
+    这里钉三件事：
+      - 没有它时，`check` 一句都不说（绝大多数容器都该是这样）；
+      - 有它时只报 INFO，**不报** ERROR/WARN（可选产物不该让容器变红），
+        且那条 INFO 要点出「表指空」与「目录没登记」两类漂移；
+      - `archive` 之后两处落点都不该冒出这个文件，已有文件也不被改写。
+    """
+    tmp = os.path.join(parent, "archidx")
+    os.makedirs(os.path.join(tmp, CONTAINER, "archive", "st1"))
+    os.makedirs(os.path.join(tmp, CONTAINER, "archive", "ghost2"))
+    write(os.path.join(tmp, CONTAINER, "README.md"),
+          "# N\n\n## 文件索引\n\n### A. 阶段\n\n| 文件 | 方面 |\n|---|---|\n")
+    write(os.path.join(tmp, CONTAINER, "archive", "st1", "0001-a.md"), entry("0001", "A", "2026-10-01"))
+    write(os.path.join(tmp, CONTAINER, "archive", "ghost2", "0002-b.md"), entry("0002", "B", "2026-10-02"))
+
+    # A) 没有遗留文件时：一句都不说
+    r = run(tmp, "check", "--strict")
+    ok("ARCHIVE.md" not in (r.stdout + r.stderr),
+       "without a legacy index file, check says nothing about it", r.stdout + r.stderr)
+
+    # B) 放一份遗留表（一行指空 + 一个没登记的目录）：只出 INFO
+    atext = ("# 归档区\n\n| 目录 | 篇号 | 时间 | 内容 | 归档判据 |\n|---|---|---|---|---|\n"
+             "| `archive/st1/` | 0001–0001 | 2026-10-01 ~ 2026-10-01 | 1 篇 | 阶段收口 |\n"
+             "| `archive/ghost/` | 0009–0009 | - | 1 篇 | 阶段收口 |\n")
+    write(os.path.join(tmp, CONTAINER, "archive", "ARCHIVE.md"), atext)
+    r = run(tmp, "check", "--strict")
+    out = r.stdout + r.stderr
+    ok(r.returncode == 0, "a legacy index file does not fail --strict", out)
+    ok("[INFO]" in out and "遗留的归档索引" in out, "it is reported as INFO", out)
+    ok("1 个目录在磁盘上不存在" in out and "`archive/ghost/`" in out,
+       "the INFO names the table row pointing nowhere", out)
+    ok("1 个归档目录没登记" in out and "`archive/ghost2`" in out,
+       "the INFO names the unregistered stage directory", out)
+    ok("[ERROR]" not in out and "[WARN]" not in out,
+       "and nothing at ERROR/WARN level (可选产物不该让容器变红)", out)
+
+    # C) 旧落点（容器根）也认；归档**不**更新它、也不新建一份
+    os.remove(os.path.join(tmp, CONTAINER, "archive", "ARCHIVE.md"))
+    write(os.path.join(tmp, CONTAINER, "ARCHIVE.md"), atext)
+    r = run(tmp, "archive", "--stage", "st1", "--from", "1", "--to", "1")
+    ok(os.path.exists(os.path.join(tmp, CONTAINER, "ARCHIVE.md"))
+       and not os.path.exists(os.path.join(tmp, CONTAINER, "archive", "ARCHIVE.md")),
+       "a legacy root ARCHIVE.md stays where it is (never split into two tables)", r.stdout)
+    ok(read(os.path.join(tmp, CONTAINER, "ARCHIVE.md")) == atext,
+       "archiving leaves the legacy table untouched", read(os.path.join(tmp, CONTAINER, "ARCHIVE.md")))
+    # D) 归档目录**自己的**索引（`archive/README.md`）不能被当成旧 `ARCHIVE.md`。
+    #    两张表都带「目录」列，光看列名分不开；区分点是标题 —— 新索引
+    #    `# work_log/archive/ —— 已归档记录`，旧表 `# 归档区`。而且它住在 `archive/` 里，
+    #    正好是旧布局的落点，位置上更分不开。2026-10-16 踩过：不加这个判据，
+    #    `check` 会把新索引的 N 行读成「N 个路径全错 + N 个目录全没登记」，两条读数全是假的。
+    os.remove(os.path.join(tmp, CONTAINER, "ARCHIVE.md"))
+    new_style = ("# work_log/archive/ —— 已归档记录\n\n"
+                 "| 目录 | 篇号 | 时间 | 内容 | 归档判据 |\n|---|---|---|---|---|\n"
+                 "| `st1/` | 0001 | 2026-10-01 | 1 篇 · 探针 | 阶段收口 |\n")
+    write(os.path.join(tmp, CONTAINER, "archive", "README.md"), new_style)
+    r = run(tmp, "check", "--strict")
+    out = r.stdout + r.stderr
+    ok("遗留的归档索引" not in out,
+       "the archive directory's own index is not read as the legacy table", out)
+    ok(r.returncode == 0, "and it does not turn the gate red", out)
+    ok(os.path.isfile(os.path.join(tmp, CONTAINER, "archive", "README.md")),
+       "the new-style index file is left in place", out)
+
+
+
+
+def archive_dir_index_phase(parent: str) -> None:
+    """归档目录**自己的**索引（`<容器>/archive/README.md`）：`archive --stage` 维护它。
+
+    2026-10-16 起归档索引的落点从容器根的 `ARCHIVE.md` 换成这份 —— 一份给**人**读的
+    目录索引（一行一个阶段）。关键约束是「工具只补行，正文一个字都不动」：这份文件
+    人写为主，自述、备注、尾巴都可能有，工具不许整篇重写。这里钉六件事：
+
+      · 新容器首次归档：建骨架（标题 + 表头 + 第一行），别的地方不冒文件；
+      · 文件已存在且有正文：只**追加一行**，正文与既有行原样保留，且追加在表末；
+      · 同一阶段再归档：**原地更新那一行**（篇号取并集、日期区间取并集），不新增行；
+      · 归档到 `archive/` 直属层：表里没有可写的行 —— 不写、不崩、不改动那份文件；
+      · 文件在、但认不出我们的表头：**不猜不动**（悄悄另起一张表会留下两张，人不知道该信哪张）；
+      · 认表头只认同名的行，文件里别处的表格不被当数据行（新骨架的标题也不能用旧表的
+        `# 归档区`——那正是 `_is_legacy_archive_index` 判「这是遗留 ARCHIVE.md」的判据）。
+    """
+    nl = "\n"
+    head = ("| 目录 | 篇号 | 时间 | 内容 | 归档判据 |" + nl
+            + "|---|---|---|---|---|" + nl)
+
+    # 纯函数：`--stage` 的两种写法换算成表里那个相对路径
+    rel = JOURNAL.archive_index_rel
+    ok(rel("archive/probe-s3") == "probe-s3/", "archive_index_rel strips a leading archive/", rel("archive/probe-s3"))
+    ok(rel("probe-s3") == "probe-s3/", "archive_index_rel keeps a bare stage name", rel("probe-s3"))
+    ok(rel("archive/a/b") == "a/b/", "archive_index_rel keeps multi-level stages", rel("archive/a/b"))
+    ok(rel("archive") == "", "archive/ itself has no row (nothing to write)", rel("archive"))
+    ok(rel("") == "", "an empty stage has no row", rel(""))
+
+    def mk(name: str, with_prose: str | None = None) -> str:
+        root = os.path.join(parent, "archdir-" + name)
+        os.makedirs(os.path.join(root, CONTAINER, "lessons"))
+        write(os.path.join(root, CONTAINER, "lessons", "README.md"), "# L\n")
+        write(os.path.join(root, CONTAINER, "README.md"),
+              "# N\n\n## 文件索引\n\n### A. 阶段\n\n| 文件 | 方面 |\n|---|---|\n")
+        if with_prose is not None:
+            write(os.path.join(root, CONTAINER, "archive", "README.md"), with_prose)
+        return root
+
+    def add_entry(root: str, num: int, date: str) -> None:
+        name = f"{num:04d}-a{num}.md"
+        write(os.path.join(root, CONTAINER, name), entry(f"{num:04d}", f"A{num}", date))
+        idx_path = os.path.join(root, CONTAINER, "README.md")
+        rows = [ln for ln in read(idx_path).splitlines() if ln.startswith("| [")]
+        rows.append(f"| [{name}]({name}) | 探针 {num} |")
+        write(idx_path, ("# N\n\n## 文件索引\n\n### A. 阶段\n\n| 文件 | 方面 |\n|---|---|" + nl
+                         + nl.join(rows) + nl))
+
+    # A) 新容器：建骨架，且只落在 archive/ 里（容器根不再冒 ARCHIVE.md）
+    tmp = mk("new")
+    add_entry(tmp, 1, "2026-10-01")
+    r = run(tmp, "archive", "--stage", "archive/st1", "--from", "1", "--to", "1")
+    ok(r.returncode == 0, "archive --stage exits 0 with the new index", r.stdout + r.stderr)
+    p = os.path.join(tmp, CONTAINER, "archive", "README.md")
+    text = read(p)
+    ok("| `st1/` | 0001–0001 | 2026-10-01 ~ 2026-10-01 | 1 篇 |" in text,
+       "the first archive writes one row for the stage", text)
+    ok("目录 | 篇号 | 时间 | 内容 | 归档判据" in text, "the skeleton carries the 5-column head", text)
+    ok(not os.path.exists(os.path.join(tmp, CONTAINER, "ARCHIVE.md")),
+       "no legacy ARCHIVE.md appears at the container root", r.stdout)
+    ok("work_log/archive/README.md" in (r.stdout + r.stderr),
+       "the hint names where the index went", r.stdout)
+    # `check` 不该把这份新索引读成遗留表
+    r = run(tmp, "check", "--strict")
+    ok("遗留的归档索引" not in (r.stdout + r.stderr),
+       "check does not read the new index as the legacy table", r.stdout + r.stderr)
+
+    # B) 文件已存在且有正文：只追加一行，正文与旧行原样保留
+    prose = ("# `work_log/archive/` —— 已归档记录" + nl + nl
+             + "**这里只放告一段落的内容。** 人写的自述，工具不许动。" + nl + nl
+             + head
+             + "| `st0/` | 0001–0001 | 2026-10-01 ~ 2026-10-01 | 1 篇 | 人工 |" + nl + nl
+             + "## 尾注" + nl + nl + "这段也必须在。" + nl)
+    tmp = mk("prose", prose)
+    add_entry(tmp, 2, "2026-10-02")
+    run(tmp, "archive", "--stage", "archive/st2", "--from", "2", "--to", "2")
+    after = read(os.path.join(tmp, CONTAINER, "archive", "README.md"))
+    ok("人写的自述，工具不许动" in after and "这段也必须在" in after,
+       "archiving leaves the hand-written prose alone", after)
+    ok("| `st0/` | 0001–0001 | 2026-10-01 ~ 2026-10-01 | 1 篇 | 人工 |" in after,
+       "and leaves the rows it did not write alone", after)
+    ok(after.index("`st0/`") < after.index("`st2/`"), "the new row is appended below the old", after)
+    ok(after.index("`st2/`") < after.index("## 尾注"),
+       "the new row lands inside the table, not at the end of the file", after)
+
+    # C) 同一阶段再归档：原地更新，篇号与日期都取并集，不新增行
+    add_entry(tmp, 3, "2026-10-03")
+    run(tmp, "archive", "--stage", "archive/st2", "--from", "3", "--to", "3")
+    after = read(os.path.join(tmp, CONTAINER, "archive", "README.md"))
+    rows = [ln for ln in after.splitlines() if ln.startswith("| `st2/`")]
+    ok(len(rows) == 1, "archiving the same stage twice updates its row instead of adding one",
+       "\n".join(rows))
+    if rows:
+        ok("0002–0003" in rows[0] and "2 篇" in rows[0], "the row merges entry numbers and counts", rows[0])
+        ok("2026-10-02 ~ 2026-10-03" in rows[0], "the row merges the date span", rows[0])
+
+    # D) 归档到 archive/ 直属层：表里没有可写的行（不写、不崩、不动那份文件）
+    tmp = mk("flat", prose)
+    add_entry(tmp, 4, "2026-10-04")
+    r = run(tmp, "archive", "--stage", "archive", "--from", "4", "--to", "4")
+    ok(r.returncode == 0 and not r.stderr.strip(),
+       "archiving into archive/ itself is not an error", r.stdout + r.stderr)
+    ok(read(os.path.join(tmp, CONTAINER, "archive", "README.md")) == prose,
+       "and it writes nothing into the index", read(os.path.join(tmp, CONTAINER, "archive", "README.md")))
+
+    # E) 文件在、但没有我们的表头：不猜不动（宁可什么都不写）
+    prose2 = "# 某个自述" + nl + nl + "| 别的表 | 呢 |" + nl + "|---|---|" + nl + "| x | y |" + nl
+    tmp = mk("notable", prose2)
+    add_entry(tmp, 5, "2026-10-05")
+    r = run(tmp, "archive", "--stage", "archive/st5", "--from", "5", "--to", "5")
+    ok(r.returncode == 0 and read(os.path.join(tmp, CONTAINER, "archive", "README.md")) == prose2,
+       "an index without our table is left alone (no second table is started)",
+       read(os.path.join(tmp, CONTAINER, "archive", "README.md")))
+
+    # F) 并入既有行**不丢旧信息**：同一阶段归档两次（第二批是后来的篇号），
+    #    那一行必须是两批的并集，且不碰表里别人写的行。
+    tmp = mk("onerow", prose)
+    add_entry(tmp, 6, "2026-10-06")
+    run(tmp, "archive", "--stage", "archive/st2", "--from", "6", "--to", "6")
+    add_entry(tmp, 7, "2026-10-07")
+    run(tmp, "archive", "--stage", "archive/st2", "--from", "7", "--to", "7")
+    merged = read(os.path.join(tmp, CONTAINER, "archive", "README.md"))
+    ok(merged.count("| `st2/`") == 1, "a stage archived twice still has exactly one row", merged)
+    ok("0006–0007" in merged and "2 篇" in merged,
+       "the row it replaces is merged, not overwritten (0006 + 0007 = 0006–0007 / 2 篇)", merged)
+    ok("2026-10-06 ~ 2026-10-07" in merged, "the merged row spans both dates", merged)
+    ok("| `st0/` | 0001–0001 | 2026-10-01 ~ 2026-10-01 | 1 篇 | 人工 |" in merged,
+       "merging one row leaves its neighbours alone", merged)
+    ok(merged.index("`st0/`") < merged.index("`st2/`") < merged.index("## 尾注"),
+       "and the merged row stays inside the table", merged)
 
 
 def appendix_phase(parent: str) -> None:
@@ -769,8 +972,6 @@ def appendix_phase(parent: str) -> None:
        "memory add 撞上已存在的 id：拒绝", r.stdout + r.stderr)
     ok(read(os.path.join(mem, "01-general.md")) == mem_before,
        "而且一个字节都没动（尤其那条的 cited-by）", read(os.path.join(mem, "01-general.md")))
-
-
 def review2_phase(parent: str) -> None:
     """第二轮审查（`_tmp/worklog-review-2026-10-15.md`）里 CLI 侧的常驻判据（2026-10-15）。
 
@@ -4322,6 +4523,8 @@ def main() -> int:
 
         # 多级归档与 index compact --depth（2026-10-14）
         nested_stage_phase(tmp)
+        archive_index_check(tmp)
+        archive_dir_index_phase(tmp)
 
         # 跨语言解析：英文标签（P1）-----------------------------------------
         english_phase(tmp)

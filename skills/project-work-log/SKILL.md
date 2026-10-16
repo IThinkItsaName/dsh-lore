@@ -43,9 +43,13 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 容器里的其他固定位置：归档记录在 `work_log/<stage>/…`（阶段目录直接建在容器下最省事；
 多主题长项目可以用**归档层** `archive/` 把归档收在一处，写成 `work_log/archive/<主题>/<阶段>/`，
 两种工具同等对待 —— 判据只有「相对容器路径的第一段不是 4 位年份 ⇒ 已归档」）、
-旧状态块在 `work_log/STATE-HISTORY.md`、归档索引在 `work_log/ARCHIVE.md`、
-旧记录声明（可选）在 `work_log/LEGACY.md`、日志与运行产物在 `work_log/logs/<来源>/`。完整布局与
-「日志归位要求」见 [references/conventions.md](references/conventions.md)。
+旧状态块在 `work_log/STATE-HISTORY.md`、
+旧记录声明（可选）在 `work_log/LEGACY.md`、日志与运行产物在 `work_log/logs/<来源>/`。
+归档明细落**归档目录自己的索引** `work_log/archive/README.md`（一行一个阶段，
+`archive --stage` 自动补/并那一行，正文由人写）；归档目录直接建在容器下的项目没有这一层，
+明细就在台账的文件索引里（`index compact --stage X` 折成一行区间）。老容器可能还留着一份
+`ARCHIVE.md`（曾经的归档索引，2026-10-16 起工具不再写它，`check` 只提示一句可删）。
+完整布局与「日志归位要求」见 [references/conventions.md](references/conventions.md)。
 
 > **领域无关**：这套结构不限于编程。三个标签各自认一组同义词：
 >
@@ -156,7 +160,8 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 2. 没有则按 `references/templates.md` 落盘（容器名默认 `work_log/`，可用 `--work-log NAME` 改）：
    - `work_log/README.md`（台账模板）
    - `work_log/lessons/README.md` + `work_log/lessons/01-<topic>.md`（先建 3–5 个与本项目相关的分册）
-   - `work_log/STATE-HISTORY.md`、`work_log/ARCHIVE.md`
+   - `work_log/STATE-HISTORY.md`（`ARCHIVE.md` **不用建**：归档明细归
+    `work_log/archive/README.md`，那个文件在第一次归档时由 `archive --stage` 自动建）
    - 有日志/运行产物的项目同时建 `work_log/logs/<来源>/`（见下「日志归位」）
    - 在项目根 `README.md` 加一行指向 `work_log/README.md`
    - **可选**：`work_log/.config.json` —— 项目配置文件，写默认档位与旧记录清单。
@@ -341,13 +346,13 @@ python scripts/journal.py promote suggest                                   # �
 
 **本技能的核心是约定，脚本只是加速器。** 环境里没有 Python 也能完整使用，只是费手：
 
-1. **建结构**：按 [references/templates.md](references/templates.md) 手工落这四个文件：`work_log/README.md`、`work_log/ARCHIVE.md`、`work_log/STATE-HISTORY.md`、`work_log/lessons/README.md`。（已有旧体系就沿用旧名，见「目录布局」的回退顺序。）
+1. **建结构**：按 [references/templates.md](references/templates.md) 手工落这几个文件：`work_log/README.md`、`work_log/STATE-HISTORY.md`、`work_log/lessons/README.md`。（已有旧体系就沿用旧名，见「目录布局」的回退顺序。`work_log/archive/README.md` 要等第一次归档才需要，见第 5 条。）
    项目配置文件 `work_log/.config.json` 也是手写一个 JSON 就行；**不写就等于全部内置默认**。
 2. **写记录**：按记录模板写入口字段，加一个验证类小节；标题按容器选定的一种约定写
    （编号式 `# NNN · 标题` / 日期式 `# YYYY-MM-DD 标题`）。
 3. **收尾**：把「工作流 C 收尾清单」当人工检查表逐条走；把 `check` / `lint` 的判据（见 [references/commands.md](references/commands.md)）当核对清单。
 4. **检索导航**：用 `grep` / `rg` 代替 `search`，用 `snapshot` 的判据手工汇总最近几篇，用索引表代替 `brief` / `outline`。
-5. **整理**：归档就是"移文件 + 改链接"（容器根 → `<stage>/`，可带主题层 `<主题>/<阶段>/`），手工做时**先全仓 grep 链接再改**——脚本的价值主要就在这里（自动重写 + 死链自检）。
+5. **整理**：归档就是"移文件 + 改链接"（容器根 → `<stage>/`，可带主题层 `<主题>/<阶段>/`），手工做时**先全仓 grep 链接再改**——脚本的价值主要就在这里（自动重写 + 死链自检）。用了归档层 `archive/` 的项目，归档后还在 `archive/README.md` 的表里补/并一行（篇号与日期取并集，同一个阶段只占一行；新容器就按 [references/templates.md](references/templates.md) §3 的骨架建）。
 
 脚本全部只用 Python 标准库，**不需要 `pip install`**；只要 Python 3.9+ 在 PATH 里就能跑
 （更精确的实测范围见下方「环境边界」）。若连命令都不能执行（纯聊天环境），技能退化为一份

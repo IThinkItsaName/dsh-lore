@@ -359,9 +359,18 @@ def parse_lessons(path: str) -> list[dict]:
 OURS_RE = re.compile(r"(?m)^tags:\s*\[\s*dsh-lore\b")
 
 
-def is_our_card(path: str) -> bool:
-    """这个文件是不是本工具投出来的卡（看 frontmatter 的 `tags: [dsh-lore, …]`）。"""
-    return os.path.isfile(path) and bool(OURS_RE.search(read(path)))
+def is_our_card(path: str, text: str | None = None) -> bool:
+    """这个文件是不是本工具投出来的卡（看 frontmatter 的 `tags: [dsh-lore, …]`）。
+
+    `text` 给定时直接拿它判，不再读盘（2026-10-17 轮八的观察）：调用方往往**已经读过**
+    这个文件了（`existing_cards()` 要解析标签、`index_rows()` 要算陈旧），再读一遍是白读。
+    判据本身仍然只有这一处 —— 传文本是为了省一次 I/O，不是为了在别处再写一遍正则。
+    """
+    if text is None:
+        if not os.path.isfile(path):
+            return False
+        text = read(path)
+    return bool(OURS_RE.search(text))
 
 
 def existing_cards(card_dir: str) -> list[dict]:
@@ -382,7 +391,7 @@ def existing_cards(card_dir: str) -> list[dict]:
             p = os.path.join(card_dir, fn)
             body = read(p)
             m = re.search(r"(?m)^id:\s*(\S+)", body)
-            if not OURS_RE.search(body):
+            if not is_our_card(p, body):
                 print(f"[skip] {fn} 的 frontmatter 没有 `tags: [dsh-lore, …]` —— "
                       f"不是这份投影投出来的卡，不参与去重", file=sys.stderr)
                 continue
@@ -738,10 +747,12 @@ def index_rows(card_dir: str, container: str = "", write: bool = False) -> list[
         if not fn.endswith(".pointer.md"):
             continue
         p = os.path.join(card_dir, fn)
-        if not is_our_card(p):
+        if not os.path.isfile(p):
+            continue                      # 目录/断链叫这个名字：既不是卡，也没什么可报的
+        t = read(p)
+        if not is_our_card(p, t):
             skipped.append(fn[: -len(".pointer.md")])
             continue
-        t = read(p)
         source = _fm(t, "source")
         # 只在真给了容器时才核（容器空串 = 调用方只要表格，不做追溯校验）。
         # 卡里写的是 `work_log/0001-x.md`（工作区相对），而 `container` 已经指到容器根，
@@ -808,7 +819,8 @@ def printable_index(rows: list[dict], project: str, domain: str = "") -> str:
         "# 记忆卡索引（memory-cards/INDEX.md）",
         "",
         f"> 自动生成，别手改：`python dsh-lore-card.py <容器> --index-only --write` 重建。",
-        f"> 项目 `{project or '（未标注）'}` · 项目域 `{domain or '（未标注）'}` · 卡 {len(rows)} 张 · 域：{dom_txt}",
+        f"> 项目 `{project or '（未标注）'}` · 项目域 `{domain or '（未标注）'}` · "
+        f"卡 {len(rows)} 张（只算本工具投的） · 域：{dom_txt}",
         "",
         f"- 体量：INDEX 一行 ≈ 150 B，**先读这张表再决定读哪张卡**；一张卡 pointer "
         f"{min((r['bytes'] for r in rows), default=0)}–{max((r['bytes'] for r in rows), default=0)} B，"

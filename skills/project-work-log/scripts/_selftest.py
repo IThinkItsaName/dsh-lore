@@ -4721,6 +4721,10 @@ def card_phase(tmp: str) -> None:
     ok("foreign-dangling" not in idx2 and "foreign-plain" not in idx2,
        "foreign cards stay out of the index rows", idx2[:500])
     ok("wl900-ours-gone" in idx2, "while our own card is listed", idx2[:500])
+    # 表头必须说清这是**谁的**张数（2026-10-17 轮八的观察）：不写清，
+    # 看索引的人会把 `卡 N 张` 当成"目录里有几个文件"，而外来卡恰恰不在表里。
+    ok("卡 1 张（只算本工具投的）" in idx2,
+       "and the header says whose count it is (ours, not the directory's)", idx2[:400])
     ok("source_status: stale" in read(os.path.join(fcards, "wl900-ours-gone.pointer.md")),
        "and our own card with a dangling source is still stamped",
        read(os.path.join(fcards, "wl900-ours-gone.pointer.md"))[:300])

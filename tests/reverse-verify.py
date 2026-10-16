@@ -628,7 +628,7 @@ MUTATIONS: list[tuple] = [
     # 5) 第三条路退回"只看后缀"（H-2b 的原样回退）：`index_rows()` 又不认 tags，
     #    于是 `--index-only --write` 把 `source_status: stale` 写进别人的卡。
     ("card", "索引与陈旧标记又不认自家卡（外来卡被写 stale）",
-     '        if not is_our_card(p):\n'
+     '        if not is_our_card(p, t):\n'
      '            skipped.append(fn[: -len(".pointer.md")])\n'
      '            continue\n',
      '',

@@ -155,8 +155,9 @@ python skills/project-work-log/scripts/journal.py check --strict --lint "<该工
    - 每条写**为什么**，不只写改了什么。理由比改动更容易过期，也更有用。
    - **只追加，不改写历史条目。**
    - 撤回过的结论**留着并写明撤回**，不要抹掉——否则读者会重新踩一次。
-2. **版本号**：`package.json` 的 `version` 与 tag 一致（`v0.5.0` ↔ `0.5.0`）。
-   `tests/audit-versions.mjs` 会检查这件事，所以先同步改再跑门禁。
+2. **版本号**：`package.json` 的 `version` 去掉前缀就是 tag —— `v<x.y.z>` ↔ `<x.y.z>`。
+   **本文不写死版本号**（写了就会过期，这里从前停在 `v0.5.0` 三个版本没人动）；
+   `tests/audit-versions.mjs` 会核对 README / PUBLISHING 里的安装示例与 `package.json` 一致，先同步改再跑门禁。
 3. **`skill-only/README.md` 的版本说明**若有，一并跟上。
 
 ## 打 tag 与推送
@@ -166,9 +167,10 @@ python skills/project-work-log/scripts/journal.py check --strict --lint "<该工
 > 是否需要提权取决于当时的文件策略。
 
 ```bash
-git tag -a v0.5.0 -m "v0.5.0"
+V=x.y.z                      # 用 package.json 里那个版本，别照抄这一行
+git tag -a "v$V" -m "v$V"
 git push origin main
-git push origin v0.5.0
+git push origin "v$V"
 ```
 
 **tag 一旦推送就不要移动**——别人可能已经钉着它安装。

@@ -35,7 +35,10 @@ except Exception:  # pragma: no cover
 CCG_KEYS = ("功能名", "生效条件", "子功能", "执行", "验证方式", "不适用条件")
 CCG_RE = {k: re.compile(rf"(?m)^#\s*{k}") for k in CCG_KEYS}
 
-# 与 journal.py 同口径的近似重复阈值（journal.py:5431 `s >= MEMORY_DUP_THRESHOLD`）
+# 近似重复阈值。journal.py 那份 `MEMORY_DUP_THRESHOLD` 是 0.7 —— 它是**门禁**（报错要拦人），
+# 宁可漏也不误报；这里的 0.72 是**投影器**的判断（同一张卡投两次只是噪音），略宽一点免得把
+# 改了措辞的同一条拆成两张卡。故意不同口径，不是抄漏了。
+# 引用只给常量名与函数名，不写行号：行号会随任何一次编辑漂走，而漂走的注释比没有注释更坏。
 DUP_THRESHOLD = 0.72
 
 _ID_SAFE = re.compile(r"[^a-z0-9-]+")
@@ -66,7 +69,7 @@ def trigrams(text: str) -> set[str]:
 
 
 def similarity(a: str, b: str) -> float:
-    """trigram Dice 系数 —— 与 dsh-lore `journal.py:4909 memory_similarity` 同算法。"""
+    """trigram Dice 系数 —— 与 dsh-lore `journal.py` 的 `memory_similarity` 同算法。"""
     ta, tb = trigrams(a), trigrams(b)
     if not ta or not tb:
         return 0.0
@@ -76,34 +79,64 @@ def similarity(a: str, b: str) -> float:
 ID_PREFIX_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 # 中文标题的音译表：覆盖本仓经验条目里出现频率最高的字，凑不出拉丁 id 的落到稳定短哈希。
 # **不假装能音译所有中文** —— 表外的字进哈希，id 仍然确定、可复现、可互查。
+#
+# ⚠ 一个字只许出现一次。**字典字面量里重复的键不报错，后一个静默顶掉前一个**
+# （2026-10-17 查出 6 个：`复`/`件`/`禁`/`边`/`外`/`后`，每个都有两个值在抢同一个字，
+# 先写的那条一辈子没生效过，读代码的人却以为它在生效）。合并同义项、只留一个值，
+# 下面 `_zh_dup_keys()` 会在导入时把"顶掉"这件事说出来 —— 不抛异常，但不再沉默。
 ZH_MAP = {
-    "客": "client", "端": "side", "半": "side", "边": "side", "静": "silent", "默": "silent",
+    "客": "client", "端": "side", "半": "side", "边": "edge", "静": "silent", "默": "silent",
     "失": "fail", "效": "fail", "错": "err", "误": "err", "不": "no", "会": "will",
     "抛": "throw", "报": "report", "设": "design", "计": "design", "令": "token",
     "牌": "token", "写": "write", "名": "name", "样": "style", "式": "style",
-    "认": "claim", "领": "claim", "宿": "host", "主": "host", "复": "reset",
+    "认": "claim", "领": "claim", "宿": "host", "主": "host", "复": "again",
     "位": "reset", "规": "rule", "则": "rule", "压": "override", "掉": "drop",
     "属": "prop", "性": "prop", "机": "mech", "制": "mech", "省": "save",
-    "得": "save", "反": "reverse", "复": "again", "查": "check", "构": "build",
+    "得": "save", "反": "reverse", "查": "check", "构": "build",
     "建": "build", "步": "step", "骤": "step", "需": "need", "要": "need",
-    "树": "tree", "外": "external", "插": "plugin", "件": "plugin", "导": "export",
-    "出": "export", "装": "install", "改": "modify", "后": "after", "重": "reload",
+    "树": "tree", "外": "exception", "插": "plugin", "件": "file", "导": "export",
+    "出": "export", "装": "install", "改": "modify", "后": "then", "重": "reload",
     "载": "reload", "页": "page", "面": "page", "记": "record", "录": "record",
     "容": "container", "器": "container", "归": "archive", "档": "archive",
     "区": "area", "合": "merge", "并": "merge", "成": "into", "两": "two",
     "个": "two", "一": "one", "条": "one", "库": "store", "存": "store",
     "真": "true", "源": "source", "落": "landing", "点": "spot", "工": "tool",
     "具": "tool", "自": "auto", "动": "auto", "手": "manual", "住": "stop",
-    "禁": "forbid", "止": "forbid", "命": "cmd", "文": "doc", "件": "file",
-    "路": "path", "径": "path", "旧": "old", "新": "new", "名": "name",
+    "禁": "gate", "止": "forbid", "命": "cmd", "文": "doc",
+    "路": "path", "径": "path", "旧": "old", "新": "new",
     "号": "num", "表": "table", "行": "row", "列": "col", "验": "verify",
     "证": "verify", "测": "test", "试": "test", "跑": "run", "过": "pass",
-    "门": "gate", "禁": "gate", "曲": "quirk", "坑": "pitfall", "踩": "hit",
-    "边": "edge", "界": "bound", "极": "limit", "限": "limit", "例": "case",
-    "外": "exception", "先": "first", "后": "then", "时": "when", "候": "when",
+    "门": "gate", "曲": "quirk", "坑": "pitfall", "踩": "hit",
+    "界": "bound", "极": "limit", "限": "limit", "例": "case",
+    "先": "first", "时": "when", "候": "when",
     "因": "cause", "为": "because", "所": "so", "以": "so", "但": "but",
     "而": "and", "且": "and", "或": "or", "者": "or", "与": "and", "和": "and",
 }
+
+
+def _zh_dup_keys(block: str) -> list[str]:
+    """把映射表里**重复的键**找出来（Python 只留最后一个，且一声不吭）。
+
+    判据是"这一行出现了一个已经在表里的键"，所以别的字面量不会被算进来；
+    只扫映射表那一段，不是整份源码。不抛异常：真正该拦的是"同键两个值"，
+    那是上表该修的东西，而这里只是让沉默失效 —— 为一个错别字把整支工具停掉，
+    对投影器的代价比收益大。
+    """
+    seen: set[str] = set()
+    dups: list[str] = []
+    for ln in block.splitlines():
+        for k in re.findall(r'"([^"]+)"\s*:\s*"[^"]*"', ln):
+            if k in seen:
+                dups.append(k)
+            seen.add(k)
+    return dups
+
+
+_ZH_BLOCK = re.search(r"^ZH_MAP = \{(.*?)^\}", open(__file__, encoding="utf-8").read(),
+                      re.S | re.M)
+for _dup in _zh_dup_keys(_ZH_BLOCK.group(1) if _ZH_BLOCK else ""):
+    print(f"[WARN] ZH_MAP 里 {_dup!r} 出现了两次，前一个值被静默丢弃 —— 表该修了",
+          file=sys.stderr)
 
 
 def slugify(title: str, fallback: str) -> str:
@@ -146,11 +179,6 @@ def slugify(title: str, fallback: str) -> str:
 def norm_ws(text: str) -> str:
     """折叠换行与多空格 —— 卡片正文是一段，不该把 markdown 的硬换行带进灵枢。"""
     return " ".join(text.split())
-
-
-def reflow(body: str) -> str:
-    """把一条教训的正文（可能多行、含缩进子项）折成**一段**：行间用空格接，段落感靠标点。"""
-    return norm_ws(body)
 
 
 def first_sentence(text: str, limit: int = 400) -> str:
@@ -388,13 +416,16 @@ def build_cards(lesson: dict, ctx: dict, slug: str) -> tuple[str, str]:
                 # `norm_ws(extra) != norm_ws(head["执行"])`：正文是**原文换行**、head 是
                 # **归一空白**，两者几乎永不相等，所以那个守卫等于没写。
                 n_sum, n_body = norm_ws(head["执行"]), norm_ws(extra_exec)
-                body = reflow(extra_exec)
                 if n_body.startswith(n_sum):
-                    rest = body[len(head["执行"]):].lstrip()
+                    # 切片必须落在**归一后**的字符串上。从前切的是 `n_body`、换算却用
+                    # `len(head["执行"])`（未归一的那个）：正文里有换行或连续空格时两个长度
+                    # 不同，切偏几个字符 —— 恰好把 `…`（正文里表示截断，两边都有）留在开头，
+                    # 于是拿去重判的空串非空，**真重复反而不报**（实测 42 张里 ≥6 张已重复）。
+                    rest = n_body[len(n_sum):].lstrip()
                     if rest:
                         out.append(rest)
                 else:
-                    out.append(body)
+                    out.append(n_body)
             out.append("")
         return "\n".join(out).rstrip() + "\n"
 

@@ -2293,6 +2293,9 @@ def _check_archive_dir_index(container: str, rep: Report) -> None:
         on_disk = sorted({n for n in (name_number(f) for f in os.listdir(stage_dir))
                           if n is not None})
         if not on_disk:
+            # 目录在、可里面一篇**编号式**记录都没有（例如手工搬进去的日期式记录）：
+            # 这一节的两条核对都只数编号式（见上面那段），没有可比的东西 —— 跳过，
+            # 别把"表里写着 3 篇"判成错。
             continue
 
         # ② 篇号格 vs 磁盘编号。**两种写法都要核**：区间（`0071–0076`）与
@@ -2337,9 +2340,14 @@ def _check_archive_dir_index(container: str, rep: Report) -> None:
 
 
 def _nums_txt(ns: list[int]) -> str:
-    """篇号列表 → 人读的写法：连续写区间，有断档写穷举。"""
+    """篇号列表 → 人读的写法：连续写区间，有断档写穷举。
+
+    **写入侧也用这一个**（`update_archive_index`）：两边各写一份，迟早会长出两种写法，
+    而检查侧正是按"篇号格 == 磁盘编号"核的 —— 写法一分叉，工具就会写出自己判红的行。
+    """
     if not ns:
         return "（空）"
+    ns = sorted(set(ns))
     dense = list(range(ns[0], ns[-1] + 1))
     return f"{ns[0]:04d}–{ns[-1]:04d}" if dense == ns else "、".join(f"{n:04d}" for n in ns)
 
@@ -3283,7 +3291,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"ERROR: 索引里没有 `## {K_STATUS}` 块")
         return 1
 
-    # 台账里**只能有一个**状态块（`check` 会因此报 ERROR）。这里先挡一道：块多于一个时
+    # 台账里**只能有一个**状态块（`check` 会因此报 ERROR）。写分支先挡一道：块多于一个时
     # 不猜该动哪块 —— `find_labeled_section` 取的是**第一个**，于是在"新块加在前面"的
     # 常见写法下，`--roll` 会把**旧块**搬走、原地留个空骨架，跑两次就把两块真状态都搬没了，
     # 而每条命令都报成功（2026-10-16 实测踩到）。要改就先把旧块手工移进状态历史。
@@ -3292,7 +3300,12 @@ def cmd_status(args: argparse.Namespace) -> int:
     _head = re.compile(rf"^#{{2,3}}[ \t]*(?:{_any(L_STATUS)})[ \t]*"
                        rf"(?:[（(][^）)\r\n]*[）)])?[ \t]*$")
     heads = [i for i, l in enumerate(lines) if _head.match(l.rstrip("\r\n"))]
-    if len(heads) > 1:
+    # 守卫**只挡写分支**（2026-10-17 修）：从前它在读之前无条件 return 1，于是
+    # `status`（不带参数，纯打印）在多状态块的台账上连状态块都不显示 —— 而"看状态"
+    # 恰恰是发现"怎么会有两个块"的第一步，越需要它越不给看。多看一个块没有代价：
+    # `find_labeled_section` 取第一个，打印出来的就是**第一块**，命令不改任何文件。
+    # 写分支（`--roll` / `--set` / `--date`）照旧挡住：那两个真的会挑错块动手。
+    if len(heads) > 1 and (args.roll or args.set or args.date):
         print(f"ERROR: 索引里有 {len(heads)} 个「{K_STATUS}」块（只能有一个）。"
               f"先把旧块移进 `{rel(root, status_history_path(journal))}` 再改 —— "
               f"留着多个块时，本命令分不清该动哪一块，宁可不动。")
@@ -3802,7 +3815,8 @@ def l_entry_nums(line: str) -> list[int]:
 
     ⚠ **别拿它的长度当篇数**：区间是**展开**的，编号不连续时 `len()` 等于"跨度"而不是
     "篇数"。2026-10-16 真实归档踩过：`0071–0076` ∪ `0103` ∪ `0104` 展开成 34 个编号，
-    报出「34 篇」（实际 8 篇）。篇数按"两批各自的篇数相加"算，见 `update_archive_index`。
+    报出「34 篇」（实际 8 篇）。现在写入侧**不并入旧格里的编号**了，篇号与篇数都按磁盘重算
+    （见 `update_archive_index`），所以这条坑只对"读旧行的值"成立。
     """
     cells = [c.strip() for c in line.strip().strip("|").split("|")]
     if len(cells) < 2:
@@ -3917,16 +3931,37 @@ def update_archive_index(container: str, stage: str, nums: list[int],
     """把一次归档写进 `<容器>/archive/README.md` 的表里；**返回真正写了的路径**，没写给 None。
 
     **只动表里的行**：文件已存在就在表末插一行；同一个阶段分几次归档则**原地更新**那一行
-    （篇号取并集、日期区间取并集）；文件不存在才建一份最小骨架（标题 + 表头 + 第一行）。
+    （篇号与日期取并集）；文件不存在才建一份最小骨架（标题 + 表头 + 第一行）。
     人写的自述、备注、别的表格一概不碰 —— 这份文件是**人写为主、工具只补行**的。
 
     返回值必须区分"写了"与"没写"（2026-10-17 修）：从前三种没写的情形也返回路径，
     调用方无条件打印「完成。索引已更新到 …」—— 人以为记上了，其实表里没有那一行。
+
+    **篇号与篇数一律以磁盘为准**（2026-10-17 修，`nums` 与 `dates` 只用来**建**新文件时的
+    最小骨架）：调用点就在 `os.rename` 之后，要写的那批已经在目标目录里，所以
+    "目录里现在有几篇编号式记录"就是唯一口径 —— 与检查侧（`_check_archive_dir_index`
+    的 `name_number()` 扫描）逐字同源，两边不可能对不上。从前这里拿调用方传进来的
+    `nums`（**选中**的那一批）与旧行里的编号相加当篇数，有两个后果：
+
+      - 旧行写着区间（`0071–0076`）时 `l_entry_nums()` 展开成跨度，篇数算成"跨度 + 本批"
+        （真实踩过：报 34 篇，磁盘 8 篇）；
+      - `nums` 只是本次选中，磁盘上同目录里别的记录（手工搬进去的、上一次归档的）看不见，
+        于是写出一行**与磁盘不符**的数字 —— 而新检查正是照磁盘核，工具自己在给自己判红。
     """
     path = archive_dir_index_path(container)
     rel_dir = archive_index_rel(stage)
     if not rel_dir:
         return None                             # 直属层 / 平铺布局：表里没有可写的行
+
+    target_dir = os.path.join(container, ARCHIVE_DIR, rel_dir.strip("/"))
+    on_disk = sorted(n for n in (name_number(f) for f in os.listdir(target_dir))
+                     if n is not None) if os.path.isdir(target_dir) else []
+
+    if not on_disk:
+        # 目标目录里**一篇编号式记录都没有**：目录不存在、只放了日期式记录、或者里面是空的。
+        # 三种情形写不出一个真的篇号，数字只能编 —— 那不写，把 None 交给调用方去说实话。
+        return None
+    entry_nums = _nums_txt(on_disk)
 
     text = read_raw(path) if os.path.exists(path) else ""
     nl = nl_of(text) if text else "\n"
@@ -3937,34 +3972,22 @@ def update_archive_index(container: str, stage: str, nums: list[int],
     existing = next((i for i in rows
                      if l_target_dir(lines[i]).strip("/") == rel_dir.strip("/")), None)
     if existing is not None:
-        # 同一个阶段分几次归档很常见（先 1–2，后来把 3 也补进去）。原地更新必须
-        # **并入旧行已记的篇号、日期与判据**，否则那一行会显示成"只剩最后一批"。
-        old_nums = l_entry_nums(lines[existing])
-        merged = sorted(set([*nums, *old_nums]))
-        # 篇号格：编号连续就写区间（常见情形），**有断档就写穷举** ——
-        # 否则 `0071–0076、0103` 会被读成 `0071–0103`，把没归档的号也算进去。
-        dense = list(range(merged[0], merged[-1] + 1))
-        entry_nums = (f"{merged[0]:04d}–{merged[-1]:04d}" if dense == merged
-                      else "、".join(f"{n:04d}" for n in merged))
-        # 篇数 = 两批各自的篇数相加。**不能**用 `len(merged)`：区间展开后它等于"跨度"
-        # （真实踩过：0071–0076 ∪ 0103 ∪ 0104 报 34 篇，实际 8 篇）。也不能去读旧行
-        # 「内容」格里那个数字 —— 那一列人写为主，格式不保证。
-        count = len(old_nums) + len(nums)
+        # 同一个阶段分几次归档很常见（先 1–2，后来把 3 也补进去）。原地更新并入旧行的
+        # 日期与判据，否则那一行会显示成"只剩最后一批"。**篇号格不并入旧值**：按磁盘重算
+        # 比"旧格 ∪ 本批"更准 —— 旧格本身可能就是错的（比如手工搬走了一篇），
+        # 而并入错误只会让错误累积。
         span = merge_span(l_entry_span(lines[existing]), ds)
         # 「归档判据」是人写的一列（如 `按插件拆主题线（0079/0080）`）：合并时**保留**
         # 原值。空着才给默认值 —— 工具没有理由丢掉人写的东西。
         verdict = l_cell(lines[existing], 4) or "阶段收口"
         lines[existing] = (f"| `{rel_dir}` | {entry_nums} | {span} | "
-                           f"{count} 篇 | {verdict} |{nl}")
+                           f"{len(on_disk)} 篇 | {verdict} |{nl}")
     else:
+        # 与合并路径同一套判据（`_nums_txt`）：**有断档就写穷举**。只归档 1 与 3 时写
+        # `0001–0003` 会让新检查立刻 WARN（它按磁盘核对），等于工具自己写一条自己判红的行。
         span = f"{ds[0]} ~ {ds[-1]}" if ds else "-"
-        # 与合并路径同一套判据：**有断档就写穷举**。只归档 1 与 3 时写 `0001–0003`
-        # 会让新检查立刻 WARN（它按磁盘核对），等于工具自己写一条自己判红的行。
-        dense = list(range(min(nums), max(nums) + 1))
-        entry_nums = (f"{min(nums):04d}–{max(nums):04d}" if dense == sorted(set(nums))
-                      else "、".join(f"{n:04d}" for n in sorted(set(nums))))
         entry = (f"| `{rel_dir}` | {entry_nums} | {span} | "
-                 f"{len(set(nums))} 篇 | 阶段收口 |{nl}")
+                 f"{len(on_disk)} 篇 | 阶段收口 |{nl}")
         if not text:
             lines = [f"{ARCHIVE_INDEX_TITLE}{nl}", nl,
                      f"{ARCHIVE_TABLE_HEAD}{nl}", f"{ARCHIVE_TABLE_ALIGN}{nl}", entry]

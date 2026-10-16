@@ -52,7 +52,7 @@
 
 ```bash
 dsh plugin --profile <profile> add dsh-lore                # 按包名装（推荐：装 registry 上的发布版）
-dsh plugin --profile <profile> add dsh-lore@0.8.1          # 固定到某个版本
+dsh plugin --profile <profile> add dsh-lore@v0.8.1        # 固定到某个版本（tag 形态，`audit-versions` 会核对）
 dsh plugin --profile <profile> add /绝对/路径/<checkout>   # 从本地装 —— 见下面那条警告
 ```
 
@@ -63,7 +63,7 @@ dsh plugin --profile <profile> add /绝对/路径/<checkout>   # 从本地装 �
 
 > ⚠ **自带技能的包必须自己打开 `skill-filesystem`**：那一行关着时，技能注册表活着但技能到不了 `skill` 工具 ——
 > 往 `~/.dsh/skills`、`.dsh/skills` 放多少份都没用。本包在 `cordis.patch.yml` 里按 id override 打开它。
-> **技能查不到怎么排查**（有个默认关闭的诊断开关）：见 [`SETTINGS.md`](SETTINGS.md) §诊断。
+> **技能查不到怎么排查**（有个默认关闭的诊断开关）：见 [`SETTINGS.md`](SETTINGS.md) §「已知配置键」的 `verbose` 与 `DSH_WORKLOG_TRACE`。
 
 **pi**（只拿得到技能层）：
 

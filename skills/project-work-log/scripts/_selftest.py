@@ -911,16 +911,30 @@ def archive_dir_index_phase(parent: str) -> None:
     ok(merged.index("`st0/`") < merged.index("`st2/`") < merged.index("## 尾注"),
        "and the merged row stays inside the table", merged)
 
-    # G) 合并**断档**的篇号：`0071–0076` 收过一批，再归档 `0103`、`0104`（编号不连续）。
-    #    旧实现拿"区间展开后的集合长度"当篇数（跨度为 34，于是报「34 篇」），篇号格还会
-    #    写成 `0071–0104`，把没归档的号也算进去 —— 真实归档首跑就是这么暴露的。
-    #    ⚠ 夹具别只用连续编号：连续时跨度恰好等于个数，这个 bug 结构上测不出来。
+    # G) 篇号与篇数**按磁盘重算**，且断档写穷举（2026-10-17 改口径）。
+    #    这一段的历史：旧实现拿"区间展开后的集合长度"当篇数（跨度为 34，报「34 篇」），
+    #    篇号格还会写成 `0071–0104`，把没归档的号也算进去 —— 真实归档首跑就是这么暴露的；
+    #    之后的修法是"两批各自的篇数相加、篇号取并集"，但那样仍有两个洞（本次修掉）：
+    #      · 旧行写着区间时 `l_entry_nums()` 展开成**跨度**，加法仍以跨度为基；
+    #      · 调用方传进来的 `nums` 只是**本次选中**的那批，同目录里别的记录（手工搬进去的、
+    #        上次归档的）它看不见 —— 于是写出一行与磁盘不符的数字，而检查正照磁盘核。
+    #    现在的口径只有一句：**目标目录里现在有几篇编号式记录**（`name_number()` 扫盘），
+    #    与检查侧同一个函数、同一份判据；`nums`/`dates` 只在建新文件时用来起骨架。
+    #    ⚠ 夹具别只用连续编号：连续时跨度恰好等于个数，这两个洞结构上都测不出来。
     gap = mk("gaprow", prose)
     gap_index = os.path.join(gap, CONTAINER, "archive", "README.md")
     write(gap_index, read(gap_index).replace(
         "| `st0/` | 0001–0001 | 2026-10-01 ~ 2026-10-01 | 1 篇 | 人工 |",
         "| `ops/lore-tooling/` | 0071–0076 | 2026-10-12 ~ 2026-10-14 | 6 篇 · 自家工具 "
         "| 按插件拆主题线（`0079`/`0080`） |"))
+    # **直接摆盘**，不走 `archive --from 71 --to 76`：`add_entry()` 只能加比现有行更大的
+    # 篇号，而这里要的正是"同目录里还有 71–76 这六篇"这个事实。写出六篇，让磁盘说真话。
+    # ⚠ 只摆这六篇：`0103` / `0104` 要**真的走一遍 archive**（它们是本次选中的那批），
+    # 提前摆进目录的话磁盘就成 10 篇了 —— 这个夹具要验的是"选中 2 篇、而目录里共 8 篇"。
+    stage_dir = os.path.join(gap, CONTAINER, "archive", "ops", "lore-tooling")
+    os.makedirs(stage_dir, exist_ok=True)
+    for n in (71, 72, 73, 74, 75, 76):
+        write(os.path.join(stage_dir, f"{n:04d}-gap{n}.md"), entry(f"{n:04d}", f"G{n}", "2026-10-16"))
     for n in (103, 104):
         add_entry(gap, n, "2026-10-16")
         run(gap, "archive", "--stage", "archive/ops/lore-tooling",
@@ -928,8 +942,37 @@ def archive_dir_index_phase(parent: str) -> None:
     got = read(gap_index)
     row = next((l for l in got.splitlines() if "lore-tooling" in l), "")
     ok("0071、0072、0073、0074、0075、0076、0103、0104" in row,
-       "a sparse merge lists every entry (no range swallowing the gap)", row)
-    ok("| 8 篇" in row, "and the count is 6+1+1 = 8, not the span 34", row)
+       "a sparse row lists every entry (no range swallowing the gap)", row)
+    ok("| 8 篇" in row, "and the count is the 8 records on disk, not the span 34", row)
+    ok("0071–0104" not in row, "nor is the numbers cell collapsed into one range", row)
+    # 判据要能从**行本身**看出来：把这行的篇号格解回编号，个数必须等于磁盘篇数。
+    # 旧实现在这里给 34（区间展开成跨度）—— 逐字比"8 篇"会漏掉这一半。
+    ok(len(JOURNAL.l_entry_nums(row)) == 8,
+       "the numbers cell parses back to exactly the 8 records on disk",
+       f"{len(JOURNAL.l_entry_nums(row))} 个编号：{row}")
+
+    # H) **写在册数之内的那一批**：同目录磁盘上另有记录、而本次没选中它们
+    #    （手工搬进去的、上一轮归档的）。写入侧从前只看得见"本次选中"的那几个号，
+    #    于是把这一行改写成 2 篇，而磁盘上是 10 篇 —— 它自己写下一行让 `check` 判红的记录。
+    #    判据：数字必须跟着**磁盘**走（10），不跟本次选中的走（2）。
+    tmp = mk("diskdrift", prose)
+    dd_index = os.path.join(tmp, CONTAINER, "archive", "README.md")
+    dd_dir = os.path.join(tmp, CONTAINER, "archive", "st9")
+    os.makedirs(dd_dir, exist_ok=True)
+    for n in (1, 2, 3, 4, 5, 6, 7, 8):          # 已经在册、但本次不会选中
+        write(os.path.join(dd_dir, f"{n:04d}-old{n}.md"), entry(f"{n:04d}", f"O{n}", "2026-10-01"))
+    for n in (9, 10):                            # 本次要归档的
+        add_entry(tmp, n, "2026-10-02")
+    run(tmp, "archive", "--stage", "archive/st9", "--from", "9", "--to", "10")
+    dd = read(dd_index)
+    ddrow = next((l for l in dd.splitlines() if "`st9/`" in l), "")
+    ok("| 10 篇" in ddrow,
+       "the count follows what is on disk, not just the batch that was picked", ddrow)
+    ok("0001–0010" in ddrow, "and the numbers cell covers the whole directory", ddrow)
+    r = run(tmp, "check", "--strict")
+    ok("标着" not in (r.stdout + r.stderr) and "篇号格" not in (r.stdout + r.stderr),
+       "the row the tool just wrote is not one check would flag", r.stdout + r.stderr)
+
     ok("按插件拆主题线" in row,
        "the human-written 归档判据 cell survives the merge (not reset to the default)", row)
     ok(got.count("lore-tooling") == 1, "the sparse stage still occupies exactly one row", got)
@@ -938,7 +981,8 @@ def archive_dir_index_phase(parent: str) -> None:
 
 
 def status_blocks_phase(parent: str) -> None:
-    """台账里**两个**「当前状态」块时，`status --roll` / `--set` 不许动（2026-10-16）。
+    """台账里**两个**「当前状态」块时，写命令（`status --roll` / `--set`）不许动（2026-10-16）；
+    只读的 `status` 照常打印（2026-10-17 补 —— 守卫从前连读一起挡了）。
 
     真实踩坑：给台账加了一块新的「当前状态（第二轮）」之后，台账里就有了两个块。
     `status --roll` 按"第一个块"操作 —— 把**老的那块**搬进历史、原地留一个**空骨架**；
@@ -972,6 +1016,19 @@ def status_blocks_phase(parent: str) -> None:
     ok(read(idx) == before_text, "and neither of them touched the ledger", read(idx))
     ok(not os.path.exists(os.path.join(root, CONTAINER, "STATE-HISTORY.md")),
        "nor did they start a state-history file")
+
+    # ③ 但**只读**的那条路不许一起挡（2026-10-17 修）：`status` 不带参数只打印，
+    # 而"怎么会有两个块"第一步正是想看看到底是哪两块。从前守卫在读之前无条件退 1，
+    # 于是最需要这条命令的那个人看不到任何东西。判据三条：退 0、印出来的是**第一块**、
+    # 文件一个字节没动（已由上面 after 那次读取证明，这里再钉一次"就是没写"）。
+    r3 = run(root, "status")
+    ok(r3.returncode == 0,
+       "two status blocks: the read-only `status` still prints instead of refusing",
+       r3.stdout + r3.stderr)
+    ok("阶段 / 版本：旧" in r3.stdout,
+       "and it prints the first block (which is the one find_labeled_section picks)",
+       r3.stdout)
+    ok(read(idx) == before_text, "reading status does not write the ledger", read(idx))
 
 
 def appendix_phase(parent: str) -> None:
@@ -4434,6 +4491,36 @@ def card_phase(tmp: str) -> None:
     spec.loader.exec_module(mod)
     ok(not any("dsh-memory" in n for n in sys.modules),
        "the card tool imports nothing from the Lingshu plugin (runs standalone)")
+
+    # ── 音译表与 slug（2026-10-17 补）────────────────────────────────────────
+    #
+    # 走的是 `card_phase`，不是内联在 `main()` 里：`tests/reverse-verify.py` 的变异
+    # 只能打到 `*_phase` 函数（见那份脚本里 `PHASES` 上方的注释）—— 内联的断言
+    # 变异永远等不到它变红，等于没测。这里离"投影器"最近，就放这儿。
+    #
+    # 为什么值得三条断言：`ZH_MAP` 是**手写**的字表，而 Python 对字典字面量里
+    # 重复的键**不报错**，后一个静默顶掉前一个。2026-10-17 查表时发现 7 个字被写了
+    # 两遍（其中 6 个两个值不同）—— 先写的那条一辈子没生效过，读代码的人却以为它在生效。
+    # 表本身已修成一字一值；这里钉住"不再长回来"，并顺带钉住旧值仍能推出同一个 slug。
+    ok(len(mod.ZH_MAP) == 125,
+       "the transliteration table has no shadowed duplicate keys", str(len(mod.ZH_MAP)))
+    bad_vals = {k: v for k, v in mod.ZH_MAP.items()
+                if not v or not v.isascii() or not v.islower() or not v.isalpha()}
+    ok(not bad_vals, "every transliteration value is a plain lowercase ascii word", repr(bad_vals)[:200])
+    ok(mod._zh_dup_keys('"边": "side", "边": "edge",') == ["边"],
+       "the duplicate-key detector still fires on a table that repeats a key")
+    ok(mod._zh_dup_keys('"边": "edge", "后": "then",') == [],
+       "the detector stays quiet on a clean table")
+    # 曾经被顶掉的那 6 个字，取值必须与**旧表实际生效**的那个一致：`slugify` 是 id 的来源，
+    # 值一变，已经投出去的卡 id 就换了人（`wl/209` 那类回指会指到别的卡）。
+    keep = {"复": "again", "件": "file", "禁": "gate", "边": "edge", "外": "exception", "后": "then"}
+    moved = {k: (mod.ZH_MAP.get(k), v) for k, v in keep.items() if mod.ZH_MAP.get(k) != v}
+    ok(not moved, "consolidating the table kept the value that used to win", repr(moved)[:200])
+    ok(mod.slugify("复位之后的边件", "wl0001") == "wl0001-again-reset-then-edge-file",
+       "the slug of a title using the merged characters is unchanged",
+       mod.slugify("复位之后的边件", "wl0001"))
+    ok(mod.slugify("…前导省略号不该让首段判重失效…", "wl0001").startswith("wl0001-"),
+       "a title starting with an ellipsis still yields a prefixed slug")
 
 
 def main() -> int:

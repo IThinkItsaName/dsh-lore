@@ -60,6 +60,11 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 日志与运行产物在 `work_log/logs/<来源>/`。完整布局与「日志归位要求」见
 [references/conventions.md](references/conventions.md)。
 
+> ⚠ **本变体的归档口径停在 2026-10-16（主版本已改，此处故意不同）**：带脚本那版把
+> `ARCHIVE.md` 退场了（归档明细改由可选的 `archive/README.md` 承载），本变体没有脚本、
+> 全靠人手工补行，所以**继续用容器根那份 `ARCHIVE.md` 当归档索引，也不要求建 `archive/` 一层**。
+> 本文件与 `references/` 里凡出现 `ARCHIVE.md` 的地方都按这个口径读；两版**不要混用判据**。
+
 > **领域无关**：这套结构不限于编程。三个标签各自认一组同义词，词表还可以自己扩：
 >
 > - **迭代**：`迭代 / 变更集 / 批次 / 阶段 / 版本 / 里程碑`（英文 `Iteration / Milestone`）

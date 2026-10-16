@@ -22,7 +22,7 @@
 
 | | |
 |---|---|
-| 落点 | `<容器>/目标.md`（与 `README.md` / `ARCHIVE.md` / `LEGACY.md` 同级） |
+| 落点 | `<容器>/目标.md`（与 `README.md` / `LEGACY.md` 同级；旧归档索引 `ARCHIVE.md` 2026-10-16 起已退场） |
 | 创建 | **需要时才建。** 没有它是正常的，`check` 不报任何东西 |
 | 谁写 | 人或 agent 手工维护 —— **不是**台账的替代品 |
 
@@ -92,18 +92,18 @@
 排除机制本来就是**通用规则**，不是写死的文件名列表：
 
 ```python
-def is_record_name(name):        # journal.py:616
+def is_record_name(name):        # journal.py 里唯一一份「什么算记录」
     return bool(DATE_NAME_RE.match(name) or NUM_FILE_RE.match(name))
 ```
 
 `目标.md` 不匹配编号式/日期式 → 自动返回 `False` → 不被当记录、不做半解析。
 **不用改任何常量。**
 
-索引覆盖检查也安全（`journal.py:1512`）：
+索引覆盖检查也安全（`journal.py` 的 `check` 里 `has_index_section` 那一段）：
 
 ```python
 if has_index_section:
-    for rec in recs:            # 只遍历真记录
+    for rec in recs:            # recs 只装真记录（is_record_name 筛过）
         if is_active_entry(...) and entry_link(...) not in read(index):
             rep.add("WARN", ...)
 ```

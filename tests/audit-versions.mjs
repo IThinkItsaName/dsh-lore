@@ -29,6 +29,7 @@ const version = String(pkg.version ?? '')
 const changelog = read('CHANGELOG.md')
 const readme = read('README.md')
 const publishing = read('PUBLISHING.md')
+const releasing = read('RELEASING.md')
 
 /* ---- 1. the manifest version is a well-formed release ---- */
 ok(/^\d+\.\d+\.\d+$/.test(version), 'package.json declares a semver release version', version)
@@ -65,9 +66,12 @@ if (sections.length > 0) {
      `${unreleasedLink} — a stale base silently compares the wrong range`)
 }
 
-/* ---- 6. pinned install examples must not lag behind ---- */
+/* ---- 6. pinned install examples must not lag behind ----
+   RELEASING.md is scanned too: it used to carry a worktop example frozen at `v0.5.0`,
+   and a release guide showing a stale tag is exactly the shape of drift this file
+   exists to catch. It now uses `v$x.y.z` placeholders, which this regex ignores. */
 const pinned = new Set()
-for (const [file, text] of [['README.md', readme], ['PUBLISHING.md', publishing]]) {
+for (const [file, text] of [['README.md', readme], ['PUBLISHING.md', publishing], ['RELEASING.md', releasing]]) {
   for (const m of text.matchAll(/@v(\d+\.\d+\.\d+)/g)) pinned.add(`${file}:${m[1]}`)
 }
 ok(pinned.size > 0, 'found at least one pinned install example', [...pinned].join(', '))

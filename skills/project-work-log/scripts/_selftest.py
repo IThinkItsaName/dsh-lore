@@ -4522,6 +4522,29 @@ def card_phase(tmp: str) -> None:
     ok(mod.slugify("…前导省略号不该让首段判重失效…", "wl0001").startswith("wl0001-"),
        "a title starting with an ellipsis still yields a prefixed slug")
 
+    # ── 别把别人的 pointer 当自家卡（2026-10-17 补）────────────────────────────
+    #
+    # `*.pointer.md` 这个后缀不是本工具专有的：`memory-cards/` 里可能有别的工具投的卡
+    # （灵枢插件自己也投）。从前一律当自家卡收进去 —— 外部卡会参与三道去重、还会在
+    # slug 撞名时被当成冲突。判据换成"frontmatter 里有没有本工具写的那行标签"。
+    # 这里放一张**外部卡**进卡目录，再跑一遍投影，钉三件事：不崩、不被当自家卡
+    # （不会出现在复用统计里）、**一个字节都不被改**。
+    foreign = os.path.join(cont, "memory-cards", "foreign.pointer.md")
+    foreign_body = ("---\nid: foreign\nlayer: knowledge\ntags: [other-tool]\n---\n\n"
+                    "# 功能名\n别的工具写的卡\n")
+    write(foreign, foreign_body)
+    r8 = run(croot, CONTAINER, "--all", "--write", "--project", "selftest-project", tool=tool)
+    ok(r8.returncode == 0, "a foreign pointer in the card dir does not break the run",
+       r8.stdout + r8.stderr)
+    ok(read(foreign) == foreign_body,
+       "and the run does not rewrite somebody else's card", read(foreign)[:200])
+    ok("foreign" not in r8.stdout.replace("foreign.pointer.md", ""),
+       "nor does it count as one of ours (only the skip notice may name it)",
+       r8.stdout[-400:])
+    # 自家卡照旧认得出来：上面那张是外部卡，而这一轮仍应把自己的卡当"已有卡"。
+    ok(mod.existing_cards(os.path.join(cont, "memory-cards")) != [],
+       "our own cards are still collected", str(len(mod.existing_cards(os.path.join(cont, "memory-cards")))))
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="journal.py 自测")

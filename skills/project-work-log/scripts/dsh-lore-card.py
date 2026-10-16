@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -59,6 +60,28 @@ LESSON_POINTER_RE = re.compile(r"lessons/|经验层|`wl/\d+`")
 def read(path: str) -> str:
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         return fh.read()
+
+
+def write_atomic(path: str, text: str) -> None:
+    """先写同目录临时文件再 `os.replace`（同卷上是原子的）。
+
+    2026-10-17 补：这里从前一律 `open(path, "w")` —— 它先把目标截成 0 字节，
+    中途断电/被 kill 就留下一份**残缺的卡或 INDEX**。投影器的产物可以重建，
+    但"读到半份 INDEX"会让人以为卡真的少了（INDEX 是导航，断了比没有更坏）。
+    `journal.py` 的 `write_raw()` 早就是这个写法（还带非 UTF-8 拒写与权限位保留）；
+    卡的正文是工具自己生成的 UTF-8，那两条在这里用不上，所以只搬原子那半。
+    """
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def trigrams(text: str) -> set[str]:
@@ -312,6 +335,15 @@ def parse_lessons(path: str) -> list[dict]:
 
 # ── 去重面：已有卡 + lessons 条目 ───────────────────────────────────────
 def existing_cards(card_dir: str) -> list[dict]:
+    """`memory-cards/` 里**本工具投出来的**卡（`.pointer.md`）。
+
+    ⚠ `*.pointer.md` 这个后缀不是本工具专有的：`memory-cards/` 里可能有别的工具写的
+    pointer（灵枢插件自己也投卡）。从前一律当自家卡收进去，于是外部卡会参与三道去重，
+    还会在"slug 撞名"时被当成冲突 —— 而它没有本工具写的那行标签。
+    判据是**本工具写在 frontmatter 里的那一行**（`tags: [dsh-lore, …]`）：认它，
+    没有就当外人，只报一行、不进去重面（2026-10-17 修）。不按文件名判是因为
+    slug 的形制两边可能一样；不按 `id:` 判是因为两边都有 `id:`。
+    """
     if not os.path.isdir(card_dir):
         return []
     out = []
@@ -320,6 +352,10 @@ def existing_cards(card_dir: str) -> list[dict]:
             p = os.path.join(card_dir, fn)
             body = read(p)
             m = re.search(r"(?m)^id:\s*(\S+)", body)
+            if not re.search(r"(?m)^tags:\s*\[\s*dsh-lore\b", body):
+                print(f"[skip] {fn} 的 frontmatter 没有 `tags: [dsh-lore, …]` —— "
+                      f"不是这份投影投出来的卡，不参与去重", file=sys.stderr)
+                continue
             t = re.search(r"(?m)^#\s*功能名\s*\n(.+)$", body)
             out.append({"id": m.group(1) if m else fn[:-11], "path": p, "text": body,
                         "title": t.group(1).strip() if t else ""})
@@ -653,8 +689,7 @@ def index_rows(card_dir: str, container: str = "", write: bool = False) -> list[
 
 def _mark_stale(path: str, text: str) -> None:
     """把 `source_status: stale` 插进 frontmatter（只在真正允许写盘时调用）。"""
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(re.sub(r"(?m)^(source:.*)$", r"\1\nsource_status: stale", text, count=1))
+    write_atomic(path, re.sub(r"(?m)^(source:.*)$", r"\1\nsource_status: stale", text, count=1))
 
 
 def printable_index(rows: list[dict], project: str, domain: str = "") -> str:
@@ -698,8 +733,7 @@ def write_index_file(path: str, rows: list[dict], project: str, domain: str = ""
         return False
     if write:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(body)
+        write_atomic(path, body)
     return True
 
 
@@ -741,9 +775,9 @@ def write_manifest(card_dir: str, container: str, domain: str, rows: list[dict])
         "cards": [{"id": r["id"], "pointer": r["path"], "bytes": r["bytes"],
                    "stale": bool(r["stale"])} for r in rows],
     }
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-        fh.write("\n")
+    buf = io.StringIO()
+    json.dump(data, buf, ensure_ascii=False, indent=2)
+    write_atomic(path, buf.getvalue() + "\n")
     return path
 
 
@@ -984,8 +1018,7 @@ def main(argv: list[str]) -> int:
             print(full)
         if args.write:
             for fn, body in ((f"{slug}.pointer.md", pointer), (f"{slug}.full.md", full)):
-                with open(os.path.join(card_dir, fn), "w", encoding="utf-8", newline="\n") as fh:
-                    fh.write(body)
+                write_atomic(os.path.join(card_dir, fn), body)
             print(f"→ 已写 {card_dir}\\{slug}.pointer.md / .full.md")
         print()
 

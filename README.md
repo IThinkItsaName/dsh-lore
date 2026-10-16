@@ -152,7 +152,7 @@ python <skill>/scripts/journal.py memory search "样式"   # 子串匹配，不�
 ├── package.json / cordis.patch.yml        # 三份声明 / DSH 补丁
 ├── lib/{index.js,client.js} / locale/     # 宿主半边（provider、注入、工具）/ 浏览器半边（卡片）/ 词典
 ├── docs/                                  # **设计权威**：plugin / worklog / memory / settings / goals spec
-├── skills/project-work-log/               # 主技能：SKILL.md + references/ + scripts/{journal.py,_selftest.py,_measure.py}
+├── skills/project-work-log/               # 主技能：SKILL.md + references/ + scripts/{journal.py,_selftest.py,_measure.py,dsh-lore-card.py}
 ├── skills/{reliability-guidelines,client-require-whitelist}/
 ├── skill-only/ → dist/skill-only/         # 第二条发行线：无脚本的纯文档变体（源 → 构建产物）
 ├── tests/                                 # 常驻回归防线：16 支 .mjs + reverse-verify.py

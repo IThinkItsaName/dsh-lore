@@ -40,8 +40,9 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 - 一个容器内**建议只用一种**（混用会让排序与索引变乱）；混用不报错，只提示一句。
 - 引用地址不引入短锚点编号：文件名/编号已经唯一自明。
 
-容器里的其他固定位置：归档记录在 `work_log/<stage>/…`（阶段目录直接建在容器下，
-**没有** `archive/` 一层；长期容器可用 `--stage <主题>/<阶段>` 再加一层主题）、
+容器里的其他固定位置：归档记录在 `work_log/<stage>/…`（阶段目录直接建在容器下最省事；
+多主题长项目可以用**归档层** `archive/` 把归档收在一处，写成 `work_log/archive/<主题>/<阶段>/`，
+两种工具同等对待 —— 判据只有「相对容器路径的第一段不是 4 位年份 ⇒ 已归档」）、
 旧状态块在 `work_log/STATE-HISTORY.md`、归档索引在 `work_log/ARCHIVE.md`、
 旧记录声明（可选）在 `work_log/LEGACY.md`、日志与运行产物在 `work_log/logs/<来源>/`。完整布局与
 「日志归位要求」见 [references/conventions.md](references/conventions.md)。
@@ -69,6 +70,25 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 - 要"总结经验/整理踩坑/做复盘/归档旧东西"。
 - 接手一个已有 `work_log/`、`journal/`、`work-log/`、`lessons/`、`docs/` 记录体系的项目，要按既有约定续写
   （旧名 `journal/`、`work-log/` 与顶层 `lessons/` 都能被识别，**只读取、不迁移**）。
+- **长项目开工时由模型主动建议**——判据与问法见下「开工先问一句（要不要用这套）」。
+
+## 开工先问一句（要不要用这套）
+
+**这道闸是给模型的，不是给用户的**：新项目开工时先判一次，够格就**问一次**，别默认建、也别默认不建。
+判据是**收益侧**的——"项目长不长"不作数（体系本来就可以中途补建）：
+
+| 信号 | 说明 |
+|---|---|
+| 跨会话 / 跨周 | 会话清空后会丢结论的活 |
+| 有会被回指的决策 | 后面必然要问"当初为什么这么定" |
+| 结论要带证据 | 得给得出命令、数字、对照，而不是"我记得" |
+| 已有踩过的坑 | 需要"症状 → 根因 → 做法"能复用 |
+
+- **满足两条及以上就问**；一条不满足就**不提**（省一轮交互）。
+- **负触发**（直接不提）：单次问答、一次性脚本、探索性原型（本来就要丢）、两小时内能收的活。
+- **问法固定一次，用选项问**：① 建全套（过程 + 台账 + 经验）② 先不建，需要时中途再立
+  ③ 只建经验层（`lessons/`，不要过程记录）。
+- **时机**：只在"准备开工"那一刻问，得到答复再往下走；**不要干到一半才回头问**。
 
 ## 铁律（先看这 8 条）
 
@@ -128,6 +148,9 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 
 ## 工作流 A · 初始化（项目第一次用）
 
+0. **先判一次要不要用**：按「开工先问一句」的四条信号判断——满足两条及以上就问**一次**
+   （建全套 / 先不建 / 只要经验层），得到答复再往下走；一条都不满足就别提，直接干正事。
+   **用户已有明确要求（"建个工作日志"）就不用问**——那是他的决定，不是待议项。
 1. 先查已有体系：`ls` 项目根，找 `work_log/` `journal/` `work-log/` `lessons/` `docs/` 以及根 `README.md` / `CLAUDE.md` / `AGENTS.md` 里的记录约定。
    **已有体系就沿用它的命名与编号，不新建平行目录。**
 2. 没有则按 `references/templates.md` 落盘（容器名默认 `work_log/`，可用 `--work-log NAME` 改）：
@@ -206,8 +229,9 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 ```bash
 python scripts/journal.py archive --stage 02-research --from 27 --to 45   # 搬 + 全仓链接重写 + 死链自检
 python scripts/journal.py archive --stage 研究/01-采样 --from 46 --to 52   # 多级：可加一层主题
+python scripts/journal.py archive --stage archive/工作记录/05-返工 --from 77 --to 84   # 收进归档层 archive/
 python scripts/journal.py index compact --stage 02-research               # 已归档小节折叠成一行区间
-python scripts/journal.py index compact --depth 2                         # 多级时：先折阶段层，再 --depth 1 折主题层
+python scripts/journal.py index compact --depth 2                         # 折多级小节：深度 = 路径段数 + 1
 python scripts/journal.py retro --from 27 --to 45 --out /tmp/retro.md     # 阶段复盘骨架
 ```
 
@@ -275,8 +299,9 @@ python scripts/journal.py append 42 --section 更正 --text "…" --bullet
 # —— 整理与清理：只搬不删，全部支持 --dry-run ——
 python scripts/journal.py archive --stage 02-research --from 27 --to 45   # 归档 + 链接重写 + 死链自检
 python scripts/journal.py archive --stage 研究/01-采样 --from 46 --to 52   # 多级归档（加一层主题）
+python scripts/journal.py archive --stage archive/工作记录/05-返工 --from 77 --to 84   # 或者收进归档层 archive/
 python scripts/journal.py index compact --stage 02-research               # 索引瘦身（已归档小节→一行）
-python scripts/journal.py index compact --depth 2                         # 多级：折阶段层（再默认折主题层）
+python scripts/journal.py index compact --depth 2                         # 折多级小节（深度 = 路径段数 + 1）
 python scripts/journal.py split --by-year --dry-run                       # 按年分卷（超长期，编号式）
 python scripts/journal.py prune                                           # 冷存候选（只报告）
 

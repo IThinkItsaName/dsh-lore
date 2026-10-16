@@ -283,9 +283,10 @@ results: list[tuple[bool, str]] = []
 skipped: list[str] = []
 
 
-def run(root: str, *argv: str) -> subprocess.CompletedProcess:
-    # 项目根默认取 cwd；journal/ 与 lessons/ 名字走默认解析
-    return subprocess.run([sys.executable, TOOL, *argv],
+def run(root: str, *argv: str, tool: str = TOOL) -> subprocess.CompletedProcess:
+    # 项目根默认取 cwd；journal/ 与 lessons/ 名字走默认解析。
+    # `tool=` 是给同目录的其它脚本（如 dsh-lore-card.py）用的：它们共用同一套夹具与调用约定。
+    return subprocess.run([sys.executable, tool, *argv],
                           cwd=root, capture_output=True, text=True, encoding="utf-8")
 
 
@@ -3817,6 +3818,308 @@ def numbering_phase(parent: str) -> None:
        "兜底记录名仍然是记录（NUM_FILE_RE 认它）", fb)
 
 
+# ── 记忆卡投影（dsh-lore-card.py）────────────────────────────────────────
+# 这一相要守的是三条**设计不变量**，不是"命令能跑"：
+#   ① 卡不许比它替代的真源更贵（体量闸）；② 复跑幂等（零新增、索引字节不变）；
+#   ③ 卡带 `domain:` / `condition_space`（给灵枢条件桶路），但**不依赖**灵枢——
+#      这个工具在没装灵枢的机器上必须照样跑得完。
+CARD_QUOTE = "本条结论已进 lessons，可复用。"
+
+
+def card_record(no: str, title: str, bar: str, second: str) -> str:
+    return (f"# {no} · {title}\n\n"
+            f"日期：2026-10-16\n迭代：{int(no)}\n触发：自测夹具\n范围：卡投影相\n结论：{bar}\n\n"
+            f"---\n\n## 一、背景\n\n自测夹具造的记录。\n\n"
+            f"## 二、核心教训\n\n- **{bar}**：{second}\n\n"
+            f"## 三、验证\n\n- 命令：`python -B scripts/_selftest.py`\n- 结果：见本相断言\n"
+            f"- 未覆盖：无\n\n## 四、遗留与下一轮\n\n- 无。\n")
+
+
+def card_record_with_bulk(no: str, title: str, bar: str, second: str) -> str:
+    """和 `card_record` 同一篇，只是**原文够厚**（> 两卡之和）。
+
+    为什么需要一厚一薄两种：体量闸有两条腿——「真源 < `--min-source`」和
+    「两卡 ≥ 真源」。薄记录只能触发前者；要触发后者（卡比真源还贵）得让真源够厚，
+    否则测出来的永远是那条 400 B 的底线，`--min-source` 一改断言就假绿。
+    """
+    filler = "".join(
+        f"\n第 {i} 段：这一节是夹具的正文，用来把真源撑到远远超过两卡之和，"
+        f"让体量闸走到「卡比真源还大」那条分支上，而不是只测 400 B 的底线。\n"
+        for i in range(1, 31))
+    return (f"# {no} · {title}\n\n"
+            f"日期：2026-10-16\n迭代：{int(no)}\n触发：自测夹具\n范围：卡投影相\n结论：{bar}\n\n"
+            f"---\n\n## 一、背景\n{filler}\n"
+            f"## 二、核心教训\n\n- **{bar}**：{second}\n\n"
+            f"## 三、验证\n\n- 命令：`python -B scripts/_selftest.py`\n- 结果：见本相断言\n"
+            f"- 未覆盖：无\n\n## 四、遗留与下一轮\n\n- 无。\n")
+
+
+def card_record_mid(no: str, title: str, bar: str, second: str) -> str:
+    """第三档：**够出卡又够薄**（`--min-source` < 真源 < 两卡之和）。
+
+    为什么需要这一档（2026-10-16 连踩三次）：
+      · 只有「厚」「薄」两种时，凡是指向薄记录的**分册条目**都会被体量闸整条丢掉
+        （分册的条目也按 `wl/NNNN` 去量那篇记录），于是依赖这些卡的断言验的是空集；
+      · 但也不能直接把薄记录加厚——`0002-short` 的存在意义就是**卡在 400 B 线以下**，
+        加厚等于把「真源太短 → 不出卡」那条断言废掉；
+      · 这一档的尺寸被两个下上界夹着：下限是 `--min-source` 默认 400 B，
+        上限是「两张卡」——而卡里有 id/tags/source 这些**跟正文无关的固定开销**，
+        实测两卡约 2.2–2.6 KB，所以真源得写到 3 KB 上下才过闸。
+    """
+    filler = "".join(
+        f"\n第 {i} 段：这一节是夹具的正文，用来把真源撑到**超过两卡之和**，"
+        f"但又要明显薄于 `0001-long`，这样「同册不同出处」两档都测得着；"
+        f"体量闸量的是两卡/真源的比值，不是字面长度，所以这一段必须写够。\n"
+        for i in range(1, 13))
+    return (f"# {no} · {title}\n\n"
+            f"日期：2026-10-16\n迭代：{int(no)}\n触发：自测夹具\n范围：卡投影相\n结论：{bar}\n\n"
+            f"---\n\n## 一、背景\n{filler}\n"
+            f"## 二、核心教训\n\n- **{bar}**：{second}\n\n"
+            f"## 三、验证\n\n- 命令：`python -B scripts/_selftest.py`\n- 结果：见本相断言\n"
+            f"- 未覆盖：无\n\n## 四、遗留与下一轮\n\n- 无。\n")
+
+
+def card_phase(tmp: str) -> None:
+    """记忆卡投影：体量闸 / 幂等 / 索引 / 归属 / 独立性（不需要灵枢在）。"""
+    croot = os.path.join(tmp, "cards")
+    cont = os.path.join(croot, CONTAINER)
+    write(os.path.join(cont, "0001-long.md"), card_record_with_bulk(
+        "0001", "长记录", "长记录这条结论够长，够产出一张卡。",
+        "正文足够长，说明白根因、做法、验证方式，让它成为一条可复用结论，不是半句话。"))
+    # 真源 < 400 B（--min-source 默认 400）：读原文更省，闸门该拦在**出卡之前**。
+    write(os.path.join(cont, "0002-short.md"), card_record(
+        "0002", "极短", "极短记录", "一句话，但得长到能被当成一条教训抽出来，否则它根本走不到体量闸。"))
+    # 第三档：够出卡但很薄。给 `lessons/03-cite.md` 当出处用 —— 那边要验的是
+    # 「同册不同出处」「出处指得到」「源被删后那张卡才 stale」，
+    # 拿 `0001-long` 当出处会让这些卡跟着它一起变 stale，反而验不出「只有该 stale 的 stale」。
+    write(os.path.join(cont, "0003-mid.md"), card_record_mid(
+        "0003", "中等", "够出卡但很薄的那档。", "一句话结论，凑不出第二句。"))
+    write(os.path.join(cont, "lessons", "README.md"), LESSONS_INDEX)
+    # 另一册：出处指向**本容器里那篇长记录**，验「出处指得到」这一档；
+    # 它的源记录在下面会被删掉，用来验「源没了 → 卡要标 stale」。
+    # 两个坑都踩过：① 文件名必须是 `NN-*.md` —— 平铺的 `lessons/*.md` 会被**记录路**
+    # 先当成一篇记录吃掉（那正是 `outline` 要排除的形态），走不到分册路；
+    # ② 分册自己也得过体量闸（`--min-source` 默认 400 B），太短的话卡根本不生成，
+    # 于是那条断言验的是**空集**——看着绿，其实什么都没验。
+    write(os.path.join(cont, "lessons", "02-aging.md"),
+          "# 经验手册 · 02-aging\n\n"
+          "- **出处指得到时才谈得上追溯**：卡的 `source` 必须落在本容器里那篇记录上，"
+          "指不到就别写成一个看着像真的路径。（`wl/0001`；本条结论已进 lessons，可复用。）\n"
+          "- **追踪链要能被验证**：一篇记录被删掉之后，指向它的卡应当变成可发现的旧账，"
+          "而不是继续显示得像新鲜结论。（`wl/0001`；本条结论已进 lessons，可复用。）\n"
+          "- **追溯的成本要压住**：读者顺着卡找原文只该多花一两次读取，"
+          "所以指针卡不给第二真源、只给一条路径。（`wl/0001`；本条结论已进 lessons，可复用。）\n")
+    write(os.path.join(cont, "lessons", "01-topic.md"),
+          "# 经验手册 · 01-topic\n\n" + "".join(
+              f"- **{t}**：{b}（`{s}`；{CARD_QUOTE}）\n"
+              for t, b, s in [
+                  ("有效收件箱的命名约定", "有效收件箱必须用固定前缀，否则扫描会把夹具自己吞进来。", "wl/0001"),
+                  ("离线工具的退出码语义", "离线工具用退出码 2 表示用法错误，用 1 表示内容不合格，两者不许混。", "wl/0001"),
+                  ("索引是生成物", "索引一律由脚本重建，手写的那份必然与正文分叉。", "wl/0001"),
+                  ("断言要断到整句", "子串比对会放过语义错误，断言要断到整条语句。", "wl/0001"),
+                  ("退出码先定后写", "先把退出码的语义定下来再写实现，否则下游分不清两类失败。", "wl/0001"),
+                  ("空目录不是错误", "空目录是合法输入，报错会把首次运行变成故障。", "wl/0001"),
+                  ("日志先归位再落盘", "任何产出先想好归位目录，否则工作区根会一点一点被堆满。", "wl/0001"),
+                  ("先记录后动手", "方案类改动先把要解决什么写下来，再动手实现。", "wl/0001"),
+                  ("复跑必须幂等", "凡生成物都要能复跑，且第二次不产生任何新文件。", "wl/0001"),
+                  ("真源必须可追", "每条结论都要留得下出处，指不到出处的结论不要沉淀。", "wl/0001"),
+                  ("边界要显式写", "不适用条件必须显式声明，拿遗留事项充数会把检索面污染。", "wl/0001"),
+                  ("体量也是判据", "记录若比它替代的上下文更贵，就不该存在。", "wl/0001"),
+                  ("引用要能落地", "引用写成别人点得开的路径，别写只有自己懂的短号。", "wl/0001"),
+                  ("临时产物的寿命", "临时目录里的东西跑完就该清掉，别让它长成第二份真源。", "wl/0001"),
+              ]))
+
+    # 再一册：出处指向**另一篇短记录**（`wl/0002`），与 02-aging 指向的不是同一篇。
+    # 为什么要在第一轮投影**之前**落盘：晚落盘的话第一轮看不到它，
+    # 第二轮才把它投影出来 → 「复跑幂等」那条断言会以"卡变多了"的形式假红
+    # （2026-10-16 真踩过：18 vs 21）。夹具的规则是**投影开始前把料备齐**。
+    #
+    # 每条正文都要长过 400 B：分册的**条目**也按它自己指的 `wl/NNNN` 去量那篇记录
+    # （见上面的 ①/②），出处指向 `0002-short`（370 B）的话这三条会被体量闸整条
+    # 丢掉，于是「此刻没有 stale」那条断言验的是空集——卡根本没生成，看着绿其实
+    # 什么都没验（2026-10-16 踩过两次）。所以这里指 `0003-mid`，
+    # 顺带把「同册不同出处」这条分支坐实。
+    write(os.path.join(cont, "lessons", "03-cite.md"),
+          "# 经验手册 · 03-cite\n\n"
+          "- **出处要指得着**：卡的 `source` 必须落在本容器里真实存在的那篇记录上，"
+          "指不到就别写成一个看着像真的路径，宁可如实标 unknown，让人一眼看出这条"
+          "追溯链是断的。（`wl/0003`；本条结论已进 lessons，可复用。）\n"
+          "- **出处要指得准**：一册里不同条目的出处可以不同，别把整册的落点当成"
+          "每条结论的出处，那样追溯会指到整本书而不是那一页，等于没指。"
+          "（`wl/0003`；本条结论已进 lessons，可复用。）\n"
+          "- **引用是双向承诺**：写下一条引用就等于承诺那篇记录还在，"
+          "记录被归档时指向它的卡应当能被查出来，而不是继续显示得像一条新鲜结论。"
+          "（`wl/0003`；本条结论已进 lessons，可复用。）\n")
+
+    tool = os.path.join(HERE, "dsh-lore-card.py")
+    ok(os.path.isfile(tool), "dsh-lore-card.py ships next to journal.py", tool)
+
+    if os.path.isdir(os.path.join(cont, "memory-cards")):
+        shutil.rmtree(os.path.join(cont, "memory-cards"), ignore_errors=True)
+
+    r = run(croot, CONTAINER, "--all", "--write", "--project", "selftest-project", tool=tool)
+    with open(os.path.join(os.path.dirname(tmp), "cardphase-run1.txt"), "w",
+              encoding="utf-8", newline="\n") as fh:
+        fh.write(r.stdout + "\n[stderr]\n" + r.stderr)
+    ok(r.returncode == 0, "card projection exits 0", r.stdout + r.stderr)
+    ok("DROP" in r.stdout,
+       "the size gate drops what costs more than the source it replaces", r.stdout)
+    ok("0002-short" not in r.stdout,
+       "the too-short record is never projected", r.stdout)
+
+    cards = os.path.join(cont, "memory-cards")
+    ptrs = sorted(f for f in os.listdir(cards) if f.endswith(".pointer.md")) if os.path.isdir(cards) else []
+    fulls = sorted(f for f in os.listdir(cards) if f.endswith(".full.md")) if os.path.isdir(cards) else []
+    ok(len(ptrs) >= 8, "cards are projected from records and lessons", f"{len(ptrs)} pointers")
+    ok(len(ptrs) == len(fulls), "every card has both the pointer and the full copy",
+       f"{len(ptrs)} vs {len(fulls)}")
+    ok(all(os.path.getsize(os.path.join(cards, f)) > 300 for f in ptrs),
+       "cards are not empty stubs")
+    ok(not any(p.startswith("wl0002") for p in ptrs),
+       "no card slug derives from the too-short record", " ".join(ptrs)[:200])
+
+    body = read(os.path.join(cards, ptrs[0])) if ptrs else ""
+    ok("domain:selftest-project" in body and "condition_space" in body,
+       "cards carry the domain tag and condition_space (for the Lingshu bucket path)", body[:200])
+    ok("边界未在来源里显式声明" in body,
+       "an undeclared boundary is reported honestly instead of being faked", body[:200])
+
+    idx = os.path.join(cards, "INDEX.md")
+    idx1 = read(idx)
+    ok(bool(idx1) and "| id | 域 | 功能名 |" in idx1, "INDEX.md is rebuilt with the one-line-per-card table")
+    ok(idx1.count("\n| `") == len(ptrs), "INDEX has exactly one row per card",
+       f"rows={idx1.count(chr(10) + '| `')} cards={len(ptrs)}")
+    if "源未找到" in idx1:
+        # 断了才把整份 INDEX 落盘，方便直接翻（断言详情会被截断，看不着全貌）。
+        with open(os.path.join(os.path.dirname(tmp), "cardphase-index.txt"), "w",
+                  encoding="utf-8", newline="\n") as fh:
+            fh.write(idx1)
+    stale_detail = "全文见 cardphase-index.txt"
+    ok("源未找到" not in idx1,
+       "nothing is stale while every source record is still there", stale_detail)
+    # "表头不许漏卡正文"要断在**整行**上：正文里某个短语本身可能就出现在表头文档里
+    # （「边界未在来源里显式声明」就是这样 —— 表头在**说明**这件事，不是泄漏）。
+    head_block = idx1.split("| id |")[0]
+    ok(not any(ln.startswith("| `") for ln in head_block.splitlines()),
+       "the index header carries no card rows (bodies stay in the table only)")
+
+    r2 = run(croot, CONTAINER, "--all", "--write", "--project", "selftest-project", tool=tool)
+    ptrs2 = sorted(f for f in os.listdir(cards) if f.endswith(".pointer.md"))
+    ok(r2.returncode == 0 and len(ptrs2) == len(ptrs),
+       "re-running is idempotent: no duplicate cards", f"{len(ptrs2)} vs {len(ptrs)}")
+    ok(read(idx) == idx1, "re-running leaves INDEX.md byte-identical")
+    ok("已重建" not in r2.stdout or "无变化未写" in r2.stdout,
+       "the index rebuild reports 'no change' on the second run", r2.stdout)
+
+    r3 = run(croot, CONTAINER, "--index-only", "--write", tool=tool)
+    ok(r3.returncode == 0 and "无变化" in r3.stdout,
+       "--index-only rebuilds nothing when the index is already current", r3.stdout)
+    # 只重建表格**不该**把表头（项目 / 项目域）退回按容器路径推的名字：
+    # 两种模式轮流写会让同一个索引来回翻脸，每次都"已重建"，幂等就没了
+    # （2026-10-16 真踩过：`--index-only` 把 `fixture-worklog` 改写成容器名）。
+    ok(read(idx) == idx1,
+       "--index-only keeps the project and domain recorded in the header", read(idx)[:160])
+
+    # 源记录没了 → 指向它的卡必须变成可发现的旧账（`source_status: stale` + INDEX 标记）。
+    # 这一步只重建索引、不重投影：重投影会把 lost 的源退化成"分册当源"再判一次体量，
+    # 反而不一定留得下那张卡；而"卡还在、源没了"正是读者真会遇到的局面。
+    # 源记录没了 → 指向它的卡必须变成可发现的旧账（`source_status: stale` + INDEX 标记）。
+    # 这一步只重建索引、不重投影：重投影会把 lost 的源退化成"分册当源"再判一次体量，
+    # 反而不一定留得下那张卡；而"卡还在、源没了"正是读者真会遇到的局面。
+    # 用改名而不是删除：删掉会让记录路在**下一次**扫描里少一篇，干扰后续断言；
+    # 改名等价于"这篇没了"，但夹具的其余部分原封不动。
+    os.rename(os.path.join(cont, "0001-long.md"),
+              os.path.join(cont, "0001-long.md.archived"))
+    r4 = run(croot, CONTAINER, "--index-only", "--write", tool=tool)
+    idx4 = read(idx)
+    ok(r4.returncode == 0 and "已重建" in r4.stdout,
+       "the index is rebuilt once a source record disappears", r4.stdout)
+    ok("源未找到" in idx4,
+       "the disappeared source is flagged stale in the index", idx4[:200])
+    ok(any("source_status: stale" in read(os.path.join(cards, f)) for f in ptrs),
+       "the card itself carries source_status: stale")
+    r5 = run(croot, CONTAINER, "--index-only", "--write", tool=tool)
+    ok("无变化" in r5.stdout and read(idx) == idx4,
+       "a stale index is stable too: rebuilding it again changes nothing", r5.stdout)
+
+    # 另一种断链：**出处编号写错**（`wl/9999` 在本容器里不存在）。
+    # 它和上面"源记录被改名"是两种不同形态 —— 那个是"本来有、后来没了"，
+    # 这个是"一开始就指不到"；后者不该让整轮投影报错，只该让那张卡带上 stale。
+    # 之所以另开一个容器：它必然产生 stale，混进 card 容器会把
+    # 「此刻没有 stale」（第一轮）与「第二遍字节相同」（复跑）两条断言一起推红。
+    chain = os.path.join(croot, "chain")
+    chcont = os.path.join(chain, CONTAINER)
+    write(os.path.join(chcont, "lessons", "01-broken.md"),
+          "# 经验手册 · 01-broken\n\n"
+          + "".join(f"\n第 {i} 段：夹具正文，把真源撑过两卡之和，免得被体量闸先拦掉。\n"
+                   for i in range(1, 13))
+          + "- **出处写错就该露馅**：指向容器里不存在的编号，卡必须是可发现的旧账，"
+            "而不是继续装作出处齐全。（`wl/9999`；本条结论已进 lessons，可复用。）\n"
+          + "- **断链不影响同册其他条目**：一册里一条指出处写错，不该牵连别的条目，"
+            "别的条目该照常出卡。（`wl/0001`；本条结论已进 lessons，可复用。）\n")
+    write(os.path.join(chcont, "0001-long.md"), card_record_with_bulk(
+        "0001", "长记录", "长记录这条结论够长，够产出一张卡。",
+        "正文足够长，说明白根因、做法、验证方式，让它成为一条可复用结论，不是半句话。"))
+    r6 = run(chain, CONTAINER, "--all", "--write", "--project", "chain-project", tool=tool)
+    ok(r6.returncode == 0, "a broken citation does not fail the whole run", r6.stdout + r6.stderr)
+    idx6 = read(os.path.join(chcont, "memory-cards", "INDEX.md"))
+    ok("[源未找到]" in idx6,
+       "a citation pointing nowhere lands in the index as stale", idx6[idx6.find("| id |"):][:400])
+    # 只数**表格行**里的标记：表头还有一行「N 张的源记录不在本容器（`[源未找到]`）」的
+    # 汇总，把那行算进来会得到 count=2，断言就永远红（2026-10-16 踩过）。
+    stale_rows = [ln for ln in idx6.splitlines()
+                  if ln.startswith("| `") and "[源未找到]" in ln]
+    ok(len(stale_rows) == 1,
+       "only the broken citation is stale, its siblings are not",
+       f"stale_rows={len(stale_rows)}")
+
+    # 头部元信息是**硬换行**写的：`结论：`/`范围：` 横跨两三行是真实记录的常态
+    # （`0077`/`0078` 缩进两格、`0097` 顶格）。只取第一行会把整句切在逗号上，
+    # 真实数据上表现为卡名退化成 `wl0077-worklog`、`# 执行` 只剩半句
+    # （2026-10-16 在真容器上量到并修）。这里两种续行形态各验一遍。
+    wrap = os.path.join(croot, "wrap")
+    wpcont = os.path.join(wrap, CONTAINER)
+    # 真源也得够厚，否则体量闸先把它拦掉（两卡之和 ≈2 KB），断言就成了空集。
+    write(os.path.join(wpcont, "0001-wrapped.md"),
+          "# 0001 · 换行夹具\n\n"
+          "日期：2026-10-16\n迭代：1\n触发：自测夹具\n"
+          "范围：第一段写到一半，\n  缩进两格的续行接上后半句。\n"
+          "结论：结论也会横跨两行，\n顶格续行接着把话说完，收在句号上。\n\n"
+          "---\n\n## 一、背景\n"
+          + "".join(f"\n第 {i} 段：这一节是夹具的正文，用来把真源撑到**超过两卡之和**；"
+                   f"体量闸量的是两卡/真源的比值，不是字面长度，所以这一段必须写够。\n"
+                   for i in range(1, 13))
+          + "\n## 二、核心教训\n\n"
+            "- **换行要接回去**：元信息的值是硬换行写的，只读第一行会把句子切在半截。\n\n"
+            "## 三、验证\n\n- 命令：`python -B scripts/_selftest.py`\n- 结果：见本相断言\n")
+    r7 = run(wrap, CONTAINER, "--all", "--write", "--project", "wrap-project", tool=tool)
+    ok(r7.returncode == 0, "the wrapped-metadata fixture projects", r7.stdout + r7.stderr)
+    idx7 = read(os.path.join(wpcont, "memory-cards", "INDEX.md"))
+    # `范围：` 那两行是**缩进**续行（`0078` 的形态），它进卡片的「生效条件」栏。
+    # 断言用**合并后的完整值**，这样"切在逗号上"也会被抓到（子串只看后半句会假绿）。
+    ok("范围：第一段写到一半， 缩进两格的续行接上后半句。" in idx7,
+       "an indented continuation line is joined onto its key", idx7[idx7.find("| id |"):][:300])
+    # `结论：` 那两行是**顶格**续行（`0097` 的形态）。它只在"记录没有任何 bullet 教训"
+    # 时才会被当成那张卡，所以端到端验不到；这里直接量 `parse_record` 的合并结果
+    # （2026-10-16：一开始只断言 INDEX，假红了一次 —— 卡片走的是 bullet 路，
+    #  `结论` 根本不进卡）。
+    card_mod = importlib.util.module_from_spec(
+        importlib.util.spec_from_file_location("card_mod_wrap", tool))
+    importlib.util.spec_from_file_location("card_mod_wrap", tool).loader.exec_module(card_mod)
+    meta7 = card_mod.parse_record(os.path.join(wpcont, "0001-wrapped.md"))["meta"]
+    ok(meta7.get("结论") == "结论也会横跨两行， 顶格续行接着把话说完，收在句号上。",
+       "a flush-left continuation line is joined too", repr(meta7.get("结论"))[:200])
+    ok(meta7.get("范围") == "第一段写到一半， 缩进两格的续行接上后半句。",
+       "the indented continuation is joined exactly once", repr(meta7.get("范围"))[:200])
+
+    # 独立性：这个工具只许用标准库，不许 import 灵枢（插件名 @furongjun1999/dsh-memory）。
+    spec = importlib.util.spec_from_file_location("card_selftest_subject", tool)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    ok(not any("dsh-memory" in n for n in sys.modules),
+       "the card tool imports nothing from the Lingshu plugin (runs standalone)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="journal.py 自测")
     ap.add_argument("--root", default=None,
@@ -4058,6 +4361,9 @@ def main() -> int:
 
         # 全局记忆（跨工作区：分档 / 清单 / 收集 / 索引 / 门禁 / 收敛 / 信箱 / 升格）--
         memory_phase(tmp)
+
+        # 记忆卡投影（体量闸 / 幂等 / 索引 / 归属 / 不依赖灵枢）----------------
+        card_phase(tmp)
 
         # CRLF fidelity ----------------------------------------------------
         index_path = os.path.join(tmp, CONTAINER, "README.md")

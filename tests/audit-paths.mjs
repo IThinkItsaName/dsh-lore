@@ -47,7 +47,8 @@ ok(files.length > 5, 'found the skill files to audit', `${files.length} files`)
  * nothing read it (审查报告 F15).
  *
  * The list is the **mirror** (this harness reads `PKG`), i.e. what `_package.py` copies out:
- * `SKILL.md` + every `references/*.md` + the three runtime scripts. `_package.py` itself is a
+ * `SKILL.md` + every `references/*.md` + the runtime scripts (journal.py、_selftest.py、
+ * _measure.py、dsh-lore-card.py —— 产卡器也是运行时件，它随技能一起发布)。`_package.py` 是
  * build tool and must NOT be shipped — that is the second assertion below.
  */
 const SKILL_FILES = [
@@ -59,6 +60,7 @@ const SKILL_FILES = [
   'references/templates.md',
   'scripts/_measure.py',
   'scripts/_selftest.py',
+  'scripts/dsh-lore-card.py',
   'scripts/journal.py',
 ]
 const found = files.map((f) => relative(SKILL, f).split(sep).join('/')).sort()
@@ -162,7 +164,11 @@ const ONLY_MENTION = /若环境里有 Python，可用配套的 `journal\.py` 工
 
 let onlyText = new Map()
 if (existsSync(ONLY_SRC)) {
-  onlyText = new Map(onlyFound.map((rel) => [rel, lf(readFileSync(join(ONLY_SRC, rel), 'utf8'))]))
+  // 只读声明的三件：`ONLY_SRC` 是 `skill-only/project-work-log/` 这棵**技能子树**，
+  // 它自己那些文件才是变体内容。同一父目录下还躺着 `skill-only/README.md` ——
+  // 那是给人看的交付说明（`RELEASING.md` 要求随版本维护），不是变体的一部分，
+  // 所以这里不 walk 整棵树，按 `ONLY_FILES` 逐个点名。
+  onlyText = new Map(ONLY_FILES.map((rel) => [rel, lf(readFileSync(join(ONLY_SRC, rel), 'utf8'))]))
 }
 
 let onlyMentions = 0

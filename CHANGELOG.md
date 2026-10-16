@@ -8,6 +8,26 @@
 
 ## [未发布]
 
+### 新增：`archive/` 正式成为可选「归档层」+ 记忆卡投影器 `dsh-lore-card.py`
+
+- **`archive/` 不再是"文档里说没有"的那一层**。工具一直支持（`--stage` 收任意多级相对路径），
+  但五处文档写死了「阶段目录直接建在容器下，**没有** archive/ 一层」，于是用了这一层的项目
+  （本工作区的 `work_log/` 就是：`archive/worklog/<阶段>/`、`archive/ops/<主题>/`）看文档像"偏离"。
+  现在口径统一为：**归档目录两种写法等价** —— 平铺 `<stage>/` 或收进 `archive/`（一层
+  `archive/<阶段>/`、两层 `archive/<主题>/<阶段>/`），判据只有「相对容器路径的第一段不是 4 位年份 ⇒ 已归档」。
+  改的是措辞不是行为：`journal.py`、`archive`、`check`、`index` 一行代码都没动。
+  （`references/conventions.md`、`references/templates.md`、`references/analysis.md`、
+  `references/commands.md`、`SKILL.md`、`scripts/journal.py` 头部布局说明）
+- 顺带把 `index compact --depth N` 的口径写准：N = **路径段数 + 1**（标题里 `/` 恰好 N−1 个），
+  所以 `### archive/工作记录/05-返工/` 要 `--depth 4`（工具本来就提示"要折得加 `--depth N`"，
+  旧文档只说"先折阶段再折主题"，按它做会折不动）。
+- **新增 `scripts/dsh-lore-card.py`**（随技能发布，纯标准库、只读、零网络）：把 `work_log/` 里的
+  记录与 `lessons/` 分册**投影成记忆卡**（六要素：功能名 / 生效条件 / 子功能 / 执行 / 验证方式 /
+  不适用条件），瘦卡进检索面、全卡保正文，配 `INDEX.md` 与 `.projection-manifest.json`，
+  整目录可一次性删除重建（每张卡头部有自述注释）。带三道去重、两道体量闸
+  （真源 < `--min-source` 不出卡；两卡合计 ≥ 真源则该条丢弃），**不 import 任何插件**。
+  `_package.py` 的 `skill-only` 排除它、主技能包含它。
+
 ### 变更：测试 harness 不再随镜像发两份
 
 - 发出去的包里**少了一份重复的 24 文件测试 harness**：从前它在作者工作区的 `logs/tests/`

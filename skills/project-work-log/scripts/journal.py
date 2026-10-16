@@ -2237,6 +2237,62 @@ def _check_links(root: str, path: str, rep: Report) -> None:
             rep.add("ERROR", where, f"死链：{target}")
 
 
+def _check_archive_dir_index(container: str, rep: Report) -> None:
+    """查 `<容器>/archive/README.md` 那张表与磁盘是否自洽（只出 WARN）。
+
+    写入侧（`update_archive_index`）2026-10-16 修过两个 bug：篇数算成"跨度"、判据格被重置。
+    修好之后**已经写坏的行**还留在文件里，而人不会再去数一遍 —— 这道检查就替人数：
+    ① 「内容」格开头的篇数 vs 磁盘实际篇数；② 篇号格写了区间、但磁盘编号并不连续。
+    报 **WARN**；`--strict` 照惯例把它抬成 ERROR（真数据不一致不该在严判下藏起来）。
+    两种情形重新归档同一阶段即可自动修好，所以默认档位不该让容器变红。
+    """
+    path = archive_dir_index_path(container)
+    if not os.path.isfile(path):
+        return                                  # 没装归档层：一个字都不说
+
+    lines = read(path).splitlines(keepends=True)
+    rows = _archive_table_rows(lines)
+    if not rows:
+        return                                  # 没有我们的表 / 认不出表头：不猜
+
+    arch_root = os.path.join(container, ARCHIVE_DIR)
+    for i in rows:
+        line = lines[i]
+        # 这个局部名**不能**叫 `rel`：模块里有个 `rel()` 函数（算相对路径），
+        # 同名会把它遮住（第一版就这么写的，`rel(container, path)` 直接
+        # `TypeError: 'str' object is not callable`）。
+        stage_rel = l_target_dir(line).strip("/")
+        if not stage_rel:
+            continue
+        stage_dir = os.path.join(arch_root, *stage_rel.split("/"))
+        if not os.path.isdir(stage_dir):
+            continue                            # 目录不在：那是另一条检查的事
+
+        on_disk = sorted({int(m.group(1)) for m in
+                          (NUM_NAME_RE.match(f) for f in os.listdir(stage_dir))
+                          if m})
+        if not on_disk:
+            continue
+
+        # ② 篇号格写区间、磁盘编号却不连续 → 区间把没归档的号也算进去了
+        cell = l_cell(line, 1)
+        cell_nums = l_entry_nums(line)
+        rng = re.fullmatch(r"\s*(\d{1,4})\s*[–—~]\s*(\d{1,4})\s*", cell)
+        if rng and cell_nums != on_disk:
+            rep.add("WARN", f"{rel(container, path)}:{i + 1}",
+                    f"`{stage_rel}/` 的篇号格写的是区间 `{cell.strip()}`"
+                    f"（展开 {len(cell_nums)} 个），但磁盘上是 {len(on_disk)} 篇、编号不连续"
+                    f"（{on_disk[0]:04d}、{on_disk[-1]:04d} 之间有空档）。"
+                    f"区间会把没归档的号也算进去 —— 重新归档同一阶段即可自动写成穷举。")
+
+        # ① 「内容」格开头的篇数 vs 实际篇数
+        m_cnt = re.match(r"\s*(\d+)\s*篇", l_cell(line, 3))
+        if m_cnt and int(m_cnt.group(1)) != len(on_disk):
+            rep.add("WARN", f"{rel(container, path)}:{i + 1}",
+                    f"`{stage_rel}/` 标着 {m_cnt.group(1)} 篇，磁盘上是 {len(on_disk)} 篇"
+                    f"（差 {abs(int(m_cnt.group(1)) - len(on_disk))}）。")
+
+
 def _check_archive_index(root: str, container: str, rep: Report) -> None:
     """认一认那份**遗留的** `ARCHIVE.md`（归档索引），只出 INFO。
 
@@ -2424,6 +2480,9 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
     # 归档索引：当前那份是 `archive/README.md`（`archive --stage` 维护它的表，`check` 不管
     # 正文）；这里认的是**遗留**的 `ARCHIVE.md`，只认一认、出 INFO（见 `_check_archive_index`）。
     _check_archive_index(root, journal, rep)
+    # 当前那份归档索引（`archive/README.md`）的表 vs 磁盘：只出 WARN，
+    # 专治「写入侧 bug 留下的坏行」（真实归档首跑写出过「34 篇」，实际 8 篇）。
+    _check_archive_dir_index(journal, rep)
 
     if os.path.isfile(index):
         idx_text = read(index)
@@ -3173,6 +3232,21 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"ERROR: 索引里没有 `## {K_STATUS}` 块")
         return 1
 
+    # 台账里**只能有一个**状态块（`check` 会因此报 ERROR）。这里先挡一道：块多于一个时
+    # 不猜该动哪块 —— `find_labeled_section` 取的是**第一个**，于是在"新块加在前面"的
+    # 常见写法下，`--roll` 会把**旧块**搬走、原地留个空骨架，跑两次就把两块真状态都搬没了，
+    # 而每条命令都报成功（2026-10-16 实测踩到）。要改就先把旧块手工移进状态历史。
+    # 逐行匹配才拿得到行号，所以这里不用模块级的 `STATUS_HEAD_RE`（带 `re.M`，
+    # 且 `#{{2,3}}` 想要的是整段）。`L_STATUS` 是**别名元组**，用 `_any()` 拼 alternation。
+    _head = re.compile(rf"^#{{2,3}}[ \t]*(?:{_any(L_STATUS)})[ \t]*"
+                       rf"(?:[（(][^）)\r\n]*[）)])?[ \t]*$")
+    heads = [i for i, l in enumerate(lines) if _head.match(l.rstrip("\r\n"))]
+    if len(heads) > 1:
+        print(f"ERROR: 索引里有 {len(heads)} 个「{K_STATUS}」块（只能有一个）。"
+              f"先把旧块移进 `{rel(root, status_history_path(journal))}` 再改 —— "
+              f"留着多个块时，本命令分不清该动哪一块，宁可不动。")
+        return 1
+
     if args.roll:
         head_line = lines[span[0]].rstrip("\r\n")
         hist = status_history_path(journal)
@@ -3672,7 +3746,12 @@ def l_target_dir(line: str) -> str:
 def l_entry_nums(line: str) -> list[int]:
     """归档表一行里「篇号」格已记的编号（`0001–0003` / `0007` / `-`），认不出给空表。
 
-    注意 `0001–0003` 是**区间**，要展开成三个编号 —— 这行值是用来求并集的。
+    注意 `0001–0003` 是**区间**，要展开成三个编号 —— 这行值是给**显示**用的
+    （合并时求并集、再折回区间）。
+
+    ⚠ **别拿它的长度当篇数**：区间是**展开**的，编号不连续时 `len()` 等于"跨度"而不是
+    "篇数"。2026-10-16 真实归档踩过：`0071–0076` ∪ `0103` ∪ `0104` 展开成 34 个编号，
+    报出「34 篇」（实际 8 篇）。篇数按"两批各自的篇数相加"算，见 `update_archive_index`。
     """
     cells = [c.strip() for c in line.strip().strip("|").split("|")]
     if len(cells) < 2:
@@ -3689,6 +3768,12 @@ def l_entry_nums(line: str) -> list[int]:
         if re.fullmatch(r"\d{1,4}", token):
             got.append(int(token))
     return got
+
+
+def l_cell(line: str, idx: int) -> str:
+    """归档表一行里第 `idx` 格（0 = 目录格），越界给空串。"""
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    return cells[idx] if 0 <= idx < len(cells) else ""
 
 
 def l_entry_span(line: str) -> str:
@@ -3781,12 +3866,24 @@ def update_archive_index(container: str, stage: str, nums: list[int], dates: lis
                      if l_target_dir(lines[i]).strip("/") == rel_dir.strip("/")), None)
     if existing is not None:
         # 同一个阶段分几次归档很常见（先 1–2，后来把 3 也补进去）。原地更新必须
-        # **并入旧行已记的篇号与日期**，否则那一行会显示成"只剩最后一批"。
-        all_nums = sorted(set([*nums, *l_entry_nums(lines[existing])]))
-        lo, hi, count = all_nums[0], all_nums[-1], len(all_nums)
+        # **并入旧行已记的篇号、日期与判据**，否则那一行会显示成"只剩最后一批"。
+        old_nums = l_entry_nums(lines[existing])
+        merged = sorted(set([*nums, *old_nums]))
+        # 篇号格：编号连续就写区间（常见情形），**有断档就写穷举** ——
+        # 否则 `0071–0076、0103` 会被读成 `0071–0103`，把没归档的号也算进去。
+        dense = list(range(merged[0], merged[-1] + 1))
+        entry_nums = (f"{merged[0]:04d}–{merged[-1]:04d}" if dense == merged
+                      else "、".join(f"{n:04d}" for n in merged))
+        # 篇数 = 两批各自的篇数相加。**不能**用 `len(merged)`：区间展开后它等于"跨度"
+        # （真实踩过：0071–0076 ∪ 0103 ∪ 0104 报 34 篇，实际 8 篇）。也不能去读旧行
+        # 「内容」格里那个数字 —— 那一列人写为主，格式不保证。
+        count = len(old_nums) + len(nums)
         span = merge_span(l_entry_span(lines[existing]), ds)
-        lines[existing] = (f"| `{rel_dir}` | {lo:04d}–{hi:04d} | {span} | "
-                           f"{count} 篇 | 阶段收口 |{nl}")
+        # 「归档判据」是人写的一列（如 `按插件拆主题线（0079/0080）`）：合并时**保留**
+        # 原值。空着才给默认值 —— 工具没有理由丢掉人写的东西。
+        verdict = l_cell(lines[existing], 4) or "阶段收口"
+        lines[existing] = (f"| `{rel_dir}` | {entry_nums} | {span} | "
+                           f"{count} 篇 | {verdict} |{nl}")
     else:
         span = f"{ds[0]} ~ {ds[-1]}" if ds else "-"
         entry = (f"| `{rel_dir}` | {min(nums):04d}–{max(nums):04d} | {span} | "

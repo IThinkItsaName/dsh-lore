@@ -858,6 +858,68 @@ def archive_dir_index_phase(parent: str) -> None:
     ok(merged.index("`st0/`") < merged.index("`st2/`") < merged.index("## 尾注"),
        "and the merged row stays inside the table", merged)
 
+    # G) 合并**断档**的篇号：`0071–0076` 收过一批，再归档 `0103`、`0104`（编号不连续）。
+    #    旧实现拿"区间展开后的集合长度"当篇数（跨度为 34，于是报「34 篇」），篇号格还会
+    #    写成 `0071–0104`，把没归档的号也算进去 —— 真实归档首跑就是这么暴露的。
+    #    ⚠ 夹具别只用连续编号：连续时跨度恰好等于个数，这个 bug 结构上测不出来。
+    gap = mk("gaprow", prose)
+    gap_index = os.path.join(gap, CONTAINER, "archive", "README.md")
+    write(gap_index, read(gap_index).replace(
+        "| `st0/` | 0001–0001 | 2026-10-01 ~ 2026-10-01 | 1 篇 | 人工 |",
+        "| `ops/lore-tooling/` | 0071–0076 | 2026-10-12 ~ 2026-10-14 | 6 篇 · 自家工具 "
+        "| 按插件拆主题线（`0079`/`0080`） |"))
+    for n in (103, 104):
+        add_entry(gap, n, "2026-10-16")
+        run(gap, "archive", "--stage", "archive/ops/lore-tooling",
+            "--from", str(n), "--to", str(n))
+    got = read(gap_index)
+    row = next((l for l in got.splitlines() if "lore-tooling" in l), "")
+    ok("0071、0072、0073、0074、0075、0076、0103、0104" in row,
+       "a sparse merge lists every entry (no range swallowing the gap)", row)
+    ok("| 8 篇" in row, "and the count is 6+1+1 = 8, not the span 34", row)
+    ok("按插件拆主题线" in row,
+       "the human-written 归档判据 cell survives the merge (not reset to the default)", row)
+    ok(got.count("lore-tooling") == 1, "the sparse stage still occupies exactly one row", got)
+    ok("人写的自述，工具不许动" in got and "这段也必须在" in got,
+       "and the prose around the table is still untouched", got)
+
+
+def status_blocks_phase(parent: str) -> None:
+    """台账里**两个**「当前状态」块时，`status --roll` / `--set` 不许动（2026-10-16）。
+
+    真实踩坑：给台账加了一块新的「当前状态（第二轮）」之后，台账里就有了两个块。
+    `status --roll` 按"第一个块"操作 —— 把**老的那块**搬进历史、原地留一个**空骨架**；
+    再跑一次又把刚写的空骨架搬一遍。两次跑完两块真状态都不见了，台账里只剩空模板，
+    而每条命令都报成功。`check` 会拦住这个状态（ERROR：只能有一个状态块），
+    但**入口**不该把容器推进去 —— 所以两条路都先拒、并指名那块旧块该去哪。
+    """
+    root = os.path.join(parent, "statusblocks")
+    os.makedirs(os.path.join(root, CONTAINER, "lessons"))
+    write(os.path.join(root, CONTAINER, "lessons", "README.md"), "# L\n")
+    idx = os.path.join(root, CONTAINER, "README.md")
+
+    # ① 只有一个块：命令照常工作（别把正常路径一起挡了）
+    write(idx, "# N\n\n## 文件索引\n\n| 文件 | 方面 |\n|---|---|\n\n"
+               "## 当前状态（2026-10-01）\n\n- 阶段 / 版本：旧\n")
+    r = run(root, "status", "--roll", "--dry-run")
+    ok(r.returncode == 0, "one status block: --roll still works", r.stdout + r.stderr)
+
+    # ② 两个块：两条路都拒，且**不动文件**
+    two = ("# N\n\n## 文件索引\n\n| 文件 | 方面 |\n|---|---|\n\n"
+           "## 当前状态（2026-10-01）\n\n- 阶段 / 版本：旧\n\n"
+           "## 当前状态（2026-10-02）\n\n- 阶段 / 版本：新\n")
+    write(idx, two)
+    before_text = read(idx)
+    r = run(root, "status", "--roll")
+    ok(r.returncode != 0 and "2 个" in (r.stdout + r.stderr),
+       "two status blocks: --roll refuses instead of cycling them", r.stdout + r.stderr)
+    r2 = run(root, "status", "--set", "阶段=测试")
+    ok(r2.returncode != 0 and "2 个" in (r2.stdout + r2.stderr),
+       "two status blocks: --set refuses too", r2.stdout + r2.stderr)
+    ok(read(idx) == before_text, "and neither of them touched the ledger", read(idx))
+    ok(not os.path.exists(os.path.join(root, CONTAINER, "STATE-HISTORY.md")),
+       "nor did they start a state-history file")
+
 
 def appendix_phase(parent: str) -> None:
     """审查报告 §附录那几条的常驻判据（2026-10-15）。
@@ -4525,6 +4587,7 @@ def main() -> int:
         nested_stage_phase(tmp)
         archive_index_check(tmp)
         archive_dir_index_phase(tmp)
+        status_blocks_phase(tmp)
 
         # 跨语言解析：英文标签（P1）-----------------------------------------
         english_phase(tmp)

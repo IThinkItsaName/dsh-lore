@@ -32,8 +32,10 @@ DUP_THRESHOLD = 0.72
 
 _ID_SAFE = re.compile(r"[^a-z0-9-]+")
 # lessons 条目：`- **标题**：正文…` / `- **标题**：正文` 之后可有 2 空格缩进的子项
+# （有些条目写成 `- **id**\n  applies-to: …` 的字段块，不存在于 lessons 正文，留作兼容）
 LESSON_RE = re.compile(r"^- \*\*(?P<title>[^*]+)\*\*[：:]\s*(?P<body>.*)$")
-# 有些条目写成 `- **id**\n  applies-to: …` 的字段块（不存在于 lessons 正文，留作兼容）
+# 归档层目录名。`--include-archive` 扫的就是它下面（见 `all_records`）。
+ARCHIVE_DIR = "archive"
 SOURCE_REF_RE = re.compile(r"`(wl/\d+|wl-\d+|manual:[a-z]+)`")
 # 只有这些小节里的话才是「教训」；「遗留 / 下一轮 / 待办」是**未做的事**，不是结论
 LESSON_SECTION_RE = re.compile(r"(教训|经验|结论|可复用|踩(到|过)的?坑|why|为什么)")
@@ -358,8 +360,21 @@ def build_cards(lesson: dict, ctx: dict, slug: str) -> tuple[str, str]:
         for k in CCG_KEYS:
             out.append(f"# {k}")
             out.append(head[k])
-            if k == "执行" and extra_exec and norm_ws(extra_exec) != norm_ws(head["执行"]):
-                out.append(reflow(extra_exec))
+            if k == "执行" and extra_exec:
+                # 整卡里「执行」要一次说完，但**别再重复开头那一段**：
+                # `head["执行"]` 是正文的 `first_sentence(body, 200)`，通常是正文的**前缀**。
+                # 直接追加整段会变成「片段 + 全句」，前 200 字符逐字出现两遍
+                # —— 实测 41 张 full 卡里 27 张如此。判据不能写成
+                # `norm_ws(extra) != norm_ws(head["执行"])`：正文是**原文换行**、head 是
+                # **归一空白**，两者几乎永不相等，所以那个守卫等于没写。
+                n_sum, n_body = norm_ws(head["执行"]), norm_ws(extra_exec)
+                body = reflow(extra_exec)
+                if n_body.startswith(n_sum):
+                    rest = body[len(head["执行"]):].lstrip()
+                    if rest:
+                        out.append(rest)
+                else:
+                    out.append(body)
             out.append("")
         return "\n".join(out).rstrip() + "\n"
 
@@ -477,13 +492,26 @@ def lessons_units(container: str, lp: str, domain: str) -> list[tuple[dict, dict
     return out
 
 
-def all_records(container: str) -> list[str]:
-    """容器**顶层**的编号式记录（归档到子目录的不算：那是历史，不重投影）。"""
+def all_records(container: str, include_archive: bool = False) -> list[str]:
+    """容器**顶层**的编号式记录（归档到子目录的不算：那是历史，不重投影）。
+
+    `include_archive=True` 时连 `archive/` 下的记录一起收（按路径排序）。
+    2026-10-16 加：已归档记录的卡本来是**孤儿** —— 源搬进 `archive/` 之后生成器
+    再也够不着，`--all` 跑一遍它们一张都不会更新（实测 41 张逐字节没变），
+    删掉就永久消失。要重建那批卡（例如修了投影格式想全量重投影）就得开这个开关。
+    """
     out = []
     for fn in sorted(os.listdir(container)):
         p = os.path.join(container, fn)
         if os.path.isfile(p) and re.match(r"^\d{2,4}-.+\.md$", fn):
             out.append(p)
+    if include_archive:
+        arch = os.path.join(container, ARCHIVE_DIR)
+        for dirpath, dirnames, filenames in os.walk(arch):
+            dirnames[:] = sorted(d for d in dirnames if d not in (".git", "node_modules"))
+            for fn in sorted(filenames):
+                if re.match(r"^\d{2,4}-.+\.md$", fn):
+                    out.append(os.path.join(dirpath, fn))
     return out
 
 
@@ -669,6 +697,10 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--lessons", help="lessons 分册文件名，如 01-插件与宿主契约.md")
     ap.add_argument("--all", action="store_true",
                     help="容器里所有编号式记录 + lessons/ 下所有分册（INDEX 重建与全量预检走这条）")
+    ap.add_argument("--include-archive", action="store_true",
+                    help="连同 `archive/` 里的**已归档**记录一起扫（默认不扫：历史不重投影。"
+                         "但已归档记录的卡一旦删掉就再也生不出来 —— 要重建那批卡时加这个。"
+                         "只影响 `--all`）")
     ap.add_argument("--quiet", action="store_true", help="只打索引行与统计，不打两份卡正文")
     ap.add_argument("--min-source", type=int, default=400, metavar="B",
                     help="真源小于这么多字节就不出卡（原文更省）；默认 400")
@@ -710,7 +742,7 @@ def main(argv: list[str]) -> int:
     # 收集待投影的「一条教训」
     units: list[tuple[dict, dict]] = []   # (lesson, ctx)
     if args.all:
-        for rp in all_records(container):
+        for rp in all_records(container, include_archive=args.include_archive):
             got = rec_units(rp, args.domain)
             if not got:
                 # **不能静默跳过**（2026-10-16 修）：一篇被跳过却一声不吭的记录，

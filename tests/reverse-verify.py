@@ -634,6 +634,25 @@ MUTATIONS: list[tuple] = [
      '',
      "a foreign card with a dangling source is not stamped stale",
      CARD_SRC),
+
+    # 6) 兄弟路径的守卫又拆掉（轮九的原样回退）：一个叫 `*.pointer.md` 的**目录**
+    #    就能让 `--all --write` 抛 PermissionError、整次投影中止、stdout 为空。
+    ("card", "同名目录又让整次投影中止（少一道 isfile 守卫）",
+     '            if not os.path.isfile(p):\n'
+     '                continue\n'
+     '            body = read(p)',
+     '            body = read(p)',
+     "a directory named like a card does not abort the whole projection",
+     CARD_SRC),
+
+    # 7) 另一侧的同名守卫也拆掉（与上一条**对称**：两条路各钉一条，
+    #    免得下次又只修一边 —— 轮八修 `index_rows()` 时正是漏了 `existing_cards()`）。
+    ("card", "索引那条路的同名守卫也拆掉（整目录被读成卡）",
+     '        if not os.path.isfile(p):\n'
+     '            continue                      # 目录/断链叫这个名字：既不是卡，也没什么可报的\n',
+     '',
+     "nor does the index path list it",
+     CARD_SRC),
 ]
 
 

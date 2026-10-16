@@ -4731,6 +4731,22 @@ def card_phase(tmp: str) -> None:
     ok("不收录进 INDEX" in r12.stderr,
        "the skip goes to stderr, same channel as existing_cards()", r12.stderr[-400:])
 
+    # ── 同名目录不许让整次投影中止（2026-10-17 轮九）──────────────────────────
+    #
+    # 轮八给 `index_rows()` 加了 `isfile` 守卫，**兄弟路径没跟上**：一个叫
+    # `zz-weird.pointer.md` 的**目录**（断链同理）会让 `existing_cards()` 的 `read()`
+    # 抛 `PermissionError` —— 整次投影中止、rc=1、**stdout 为空**：用户看到的是一条裸栈，
+    # 而不是"这张跳过了"。两个入口现在各钉一条。
+    os.makedirs(os.path.join(fcards, "zz-weird.pointer.md"))
+    r13 = run(fidx, CONTAINER, "--all", "--write", "--project", "selftest-project", tool=tool)
+    ok(r13.returncode == 0, "a directory named like a card does not abort the whole projection",
+       (r13.stdout + r13.stderr)[-500:])
+    ok("Traceback" not in r13.stderr, "and it does not surface as a bare traceback",
+       r13.stderr[-300:])
+    r14 = run(fidx, CONTAINER, "--index-only", "--write", "--project", "selftest-project", tool=tool)
+    ok(r14.returncode == 0 and "zz-weird" not in read(os.path.join(fcards, "INDEX.md")),
+       "nor does the index path list it", read(os.path.join(fcards, "INDEX.md"))[:400])
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="journal.py 自测")

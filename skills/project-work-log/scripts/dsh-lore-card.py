@@ -389,6 +389,12 @@ def existing_cards(card_dir: str) -> list[dict]:
     for fn in sorted(os.listdir(card_dir)):
         if fn.endswith(".pointer.md"):
             p = os.path.join(card_dir, fn)
+            # 目录（或断链）叫这个名字时**不是卡**（2026-10-17 轮九）：与 `index_rows()`
+            # 的同一道守卫对称。从前这里没有它，而 `read()` 打在目录上会抛
+            # `PermissionError`（Windows）—— 于是**整次投影中止**、rc=1、stdout 为空，
+            # 用户看到的是一条裸栈，而不是"这张跳过了"。一个同名目录就能造成这个后果。
+            if not os.path.isfile(p):
+                continue
             body = read(p)
             m = re.search(r"(?m)^id:\s*(\S+)", body)
             if not is_our_card(p, body):

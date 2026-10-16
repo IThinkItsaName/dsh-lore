@@ -76,6 +76,21 @@ export const HERE = dirname(fileURLToPath(import.meta.url))
  */
 export const HOST_SOURCE_ROOT = installHostSpecifierResolver()
 
+/**
+ * The `@deepseek-ai` directory inside the reference tree, or `null` when it is absent.
+ *
+ * Same probe as the resolver above, exported so a harness that wants to read a file out of the
+ * reference tree does not have to re-derive the depth by hand. Re-deriving it is exactly how
+ * `audit-ranks.mjs` ended up with a path that resolved one level too high: it built the path
+ * from `PKG`, but `PKG` is the package root in one layout and `<pkg>/…` in the other, so a
+ * `../../../` that is right for one is wrong for the other — and a wrong path here does not
+ * fail, it **skips**, which reads as green.
+ */
+export const REF_SOURCE_DIR = [
+  resolve(HERE, '..', '..', 'dsh-ref', 'source', '@deepseek-ai'),
+  resolve(HERE, '..', '..', '..', 'dsh-ref', 'source', '@deepseek-ai'),
+].find((dir) => existsSync(dir)) ?? null
+
 function isPackageDir(dir) {
   const manifest = join(dir, 'package.json')
   if (!existsSync(manifest) || !existsSync(join(dir, 'cordis.patch.yml'))) return false

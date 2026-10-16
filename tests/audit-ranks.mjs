@@ -13,8 +13,9 @@
 //
 //   node tests/audit-ranks.mjs
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { ok, skip, report, problems } from './_report.mjs'
-import { PKG } from './_pkg.mjs'
+import { PKG, REF_SOURCE_DIR } from './_pkg.mjs'
 
 
 const src = readFileSync(`${PKG}/lib/index.js`, 'utf8')
@@ -22,12 +23,17 @@ const src = readFileSync(`${PKG}/lib/index.js`, 'utf8')
 const rank = Number(/const PROVIDER_RANK = (\d+)/.exec(src)?.[1])
 ok(Number.isFinite(rank), 'read PROVIDER_RANK from the entry', String(rank))
 
-/* The registry's own runtime rank — the value a same-layer register() would use. */
+/* The registry's own runtime rank — the value a same-layer register() would use.
+ *
+ * The reference-tree path comes from `_pkg.mjs` on purpose. Deriving it here from `PKG` with a
+ * fixed `../../../` was wrong in one of the two layouts the harness runs in, and a wrong path
+ * does not fail — it lands in the `catch` and skips, so this gate spent rounds reporting
+ * "SKIPPED" while looking like part of a green chain. `REF_SOURCE_DIR` probes both layouts. */
 let runtimeRank
 let registryPath = ''
 for (const candidate of [
   process.env.DSH_SKILL_SRC ?? '',
-  `${PKG}/../../../dsh-ref/source/@deepseek-ai/dsh-skill/lib/index.js`,
+  REF_SOURCE_DIR === null ? '' : join(REF_SOURCE_DIR, 'dsh-skill', 'lib', 'index.js'),
 ].filter(Boolean)) {
   try {
     const text = readFileSync(candidate, 'utf8')

@@ -337,7 +337,7 @@ python scripts/journal.py promote suggest                                   # �
 > 本工作区的 `发布.md` 点名（那是唯一获准被读的文件，也是双向白名单）。
 > 机制、条目格式、来源分档与生命周期见 [references/memory.md](references/memory.md)。
 
-自测：`python scripts/_selftest.py`（临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全 + 新/旧布局 + 精细度档位 + 两种命名 + 渐进原则 + snapshot + 项目配置文件 + 目标表 + 全局记忆；**断言数以脚本实际输出为准**，全绿即通过）。
+自测：`python -B scripts/_selftest.py`（`-B` 别省：脚本住在包里，不加会在包内留下 `__pycache__`；临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全 + 新/旧布局 + 精细度档位 + 两种命名 + 渐进原则 + snapshot + 项目配置文件 + 目标表 + 全局记忆；**断言数以脚本实际输出为准**，全绿即通过）。
 
 > 典型接手动作：`brief` → `snapshot` → `search` → `show` → 需要细节才 `read` 那一个文件。
 > 典型收尾动作：`new --insert` → 补正文 → `status` → `lesson add` → `check --strict --lint`（两道门禁一起跑；为什么默认不合并见 [references/commands.md](references/commands.md)）。

@@ -2252,10 +2252,16 @@ def _check_archive_dir_index(container: str, rep: Report) -> None:
 
     lines = read(path).splitlines(keepends=True)
     rows = _archive_table_rows(lines)
-    if not rows:
-        return                                  # 没有我们的表 / 认不出表头：不猜
+    # **表头认不出**才收工（没我们的表：不猜）。反过来，表头认得出但**一行数据都没有**
+    # 时必须继续 —— 那正是"磁盘上有归档目录、表里一条都没登记"的样子，而反向核对
+    # 恰恰是唯一能抓到它的检查（2026-10-17 修：从前这里 `if not rows: return`，
+    # 于是空表把反向核对一起短路掉了，整个阶段的记录漏登记也一声不吭）。
+    if not _archive_table_head_line(lines):
+        return
+    legacy = _is_legacy_archive_index(path)      # 决定「目录」列按哪个口径解释
 
     arch_root = os.path.join(container, ARCHIVE_DIR)
+    seen: set[str] = set()
     for i in rows:
         line = lines[i]
         # 这个局部名**不能**叫 `rel`：模块里有个 `rel()` 函数（算相对路径），
@@ -2264,26 +2270,41 @@ def _check_archive_dir_index(container: str, rep: Report) -> None:
         stage_rel = l_target_dir(line).strip("/")
         if not stage_rel:
             continue
-        stage_dir = os.path.join(arch_root, *stage_rel.split("/"))
+        seen.add(stage_rel)
+        # 目录按**表里的口径**解释：新索引写相对 `archive/` 的路径（`worklog/01-x/`），
+        # 遗留表 `# 归档区` 写相对**容器根**的路径（`archive/worklog/01-x/`）。
+        # 两种口径混着解会得出全错的读数 —— 判据是标题（见 `_is_legacy_archive_index`）。
+        if legacy:
+            stage_dir = os.path.join(container, *stage_rel.split("/"))
+        else:
+            stage_dir = os.path.join(arch_root, *stage_rel.split("/"))
         if not os.path.isdir(stage_dir):
             continue                            # 目录不在：那是另一条检查的事
 
-        on_disk = sorted({int(m.group(1)) for m in
-                          (NUM_NAME_RE.match(f) for f in os.listdir(stage_dir))
-                          if m})
+        # 篇号一律走模块唯一口径 `name_number()`。**不能**拿 `NUM_NAME_RE` 自己匹配：
+        # 它会把日期式记录 `2026-09-01-a.md` 读成「编号 2026」，`set()` 一去重恒为 1 ——
+        # 于是在一个**正确**的容器上报「标着 3 篇，磁盘上是 1 篇」，`--strict` 直接判红
+        # （2026-10-17 修）。`name_number()` 已经先判日期式再认编号式（见它的注释）。
+        #
+        # 日期式记录**不参与**这一节的两条核对：写入侧的数字（篇号区间、`N 篇`）只数
+        # **编号式**记录 —— 日期式文件没有篇号，`archive` 也搬不动它们（`find_entries`
+        # 只认编号式）。硬把日期式算进"磁盘上有几篇"，就会把一篇好端端的表判红，
+        # 而那正是这道检查最该避免的事（它存在的意义是抓**真的**漂移）。
+        on_disk = sorted({n for n in (name_number(f) for f in os.listdir(stage_dir))
+                          if n is not None})
         if not on_disk:
             continue
 
-        # ② 篇号格写区间、磁盘编号却不连续 → 区间把没归档的号也算进去了
+        # ② 篇号格 vs 磁盘编号。**两种写法都要核**：区间（`0071–0076`）与
+        # 穷举（`0071、0072、0103`）。从前只在区间形态下比，而工具自己遇到断档时
+        # 写的正是穷举 —— 恰好在最需要核对的那种行上放行（2026-10-17 修）。
         cell = l_cell(line, 1)
         cell_nums = l_entry_nums(line)
-        rng = re.fullmatch(r"\s*(\d{1,4})\s*[–—~]\s*(\d{1,4})\s*", cell)
-        if rng and cell_nums != on_disk:
+        if cell_nums and cell_nums != on_disk:
             rep.add("WARN", f"{rel(container, path)}:{i + 1}",
-                    f"`{stage_rel}/` 的篇号格写的是区间 `{cell.strip()}`"
-                    f"（展开 {len(cell_nums)} 个），但磁盘上是 {len(on_disk)} 篇、编号不连续"
-                    f"（{on_disk[0]:04d}、{on_disk[-1]:04d} 之间有空档）。"
-                    f"区间会把没归档的号也算进去 —— 重新归档同一阶段即可自动写成穷举。")
+                    f"`{stage_rel}/` 的篇号格写的是 `{cell.strip()}`（{_nums_txt(cell_nums)}），"
+                    f"磁盘上是 {len(on_disk)} 篇：{_nums_txt(on_disk)}。"
+                    f"两处对不上 —— 重新归档同一阶段可按磁盘重算这一行。")
 
         # ① 「内容」格开头的篇数 vs 实际篇数
         m_cnt = re.match(r"\s*(\d+)\s*篇", l_cell(line, 3))
@@ -2291,6 +2312,36 @@ def _check_archive_dir_index(container: str, rep: Report) -> None:
             rep.add("WARN", f"{rel(container, path)}:{i + 1}",
                     f"`{stage_rel}/` 标着 {m_cnt.group(1)} 篇，磁盘上是 {len(on_disk)} 篇"
                     f"（差 {abs(int(m_cnt.group(1)) - len(on_disk))}）。")
+
+    # ③ **反向核对**：磁盘上有归档目录、表里却没有它这一行（2026-10-17 补）。
+    # 上面两条都是"表 → 磁盘"，只查得到"表写错了"；一个**整个漏掉**的阶段两条都不响，
+    # 而漏行恰恰是最常见的漂移（`0104` 之后 `ops/lore-tooling/` 就漏过一次）。
+    # 判据：`archive/` 下的每一层子目录，要么自己在表里，要么它的**某一级祖先**在表里
+    # （表可以只登记到 `worklog/` 这一层，不必逐个阶段列）。
+    if not legacy and os.path.isdir(arch_root):
+        for dirpath, dirnames, filenames in os.walk(arch_root):
+            if dirpath == arch_root:
+                continue
+            dirnames.sort()
+            rel_dir = os.path.relpath(dirpath, arch_root).replace("\\", "/")
+            parts = rel_dir.split("/")
+            if any("/".join(parts[:k]) in seen for k in range(1, len(parts) + 1)):
+                continue
+            has_records = any(name_number(f) is not None or DATE_NAME_RE.match(f)
+                              for f in filenames)
+            if has_records:
+                rep.add("WARN", f"{rel(container, path)}",
+                        f"`archive/{rel_dir}/` 里有记录，表里却没有这一行"
+                        f"（表里现有：{'、'.join(sorted(seen)) or '（空）'}）。"
+                        f"重新归档同一阶段即可补上，或手工加一行。")
+
+
+def _nums_txt(ns: list[int]) -> str:
+    """篇号列表 → 人读的写法：连续写区间，有断档写穷举。"""
+    if not ns:
+        return "（空）"
+    dense = list(range(ns[0], ns[-1] + 1))
+    return f"{ns[0]:04d}–{ns[-1]:04d}" if dense == ns else "、".join(f"{n:04d}" for n in ns)
 
 
 def _check_archive_index(root: str, container: str, rep: Report) -> None:
@@ -3810,51 +3861,72 @@ ARCHIVE_INDEX_TITLE = "# `work_log/archive/` —— 已归档记录"
 def archive_index_rel(stage: str) -> str:
     """把 `--stage` 的取值换算成**相对 `archive/` 的**路径（表里写的就是这个）。
 
-    `--stage X` 建的目录是 `<容器>/X`，归档后实际落在 `<容器>/archive/X`，
-    所以索引里写的相对路径就是 `X/`。`--stage archive/X` 也接受（等价写法）。
-    返回空串表示"落在 `archive/` 直属层"，表里没有可写的行。
+    `--stage archive/X` 搬完落在 `<容器>/archive/X`（`cmd_archive` 的 `target_dir`
+    就是 `<容器>/<stage>`），所以表里写 `X/`。
+
+    **返回空串 = 表里没有可写的行**：`--stage X`（不带 `archive/` 前缀）落的是
+    `<容器>/X` —— 那是**平铺布局**，`archive/` 下根本没有这个目录。给它写一行
+    `| `X/` |` 会指向一个不存在的目录（表按相对 `archive/` 解释），而检查侧只能静默
+    跳过，等于写了一条永远没人核的行（2026-10-17 修）。这种布局该用 `index compact`
+    折索引，不归这张表管。`--stage archive` 也一样（落在 `archive/` 直属层，没有子目录名）。
     """
     s = (stage or "").replace("\\", "/").strip("/")
-    if s == ARCHIVE_DIR:
+    if not s.startswith(ARCHIVE_DIR + "/"):
         return ""
-    if s.startswith(ARCHIVE_DIR + "/"):
-        s = s[len(ARCHIVE_DIR) + 1:]
-    return s.strip("/") + "/" if s.strip("/") else ""
+    s = s[len(ARCHIVE_DIR) + 1:].strip("/")
+    return s + "/" if s else ""
+
+
+def _archive_table_head_line(lines: list[str]) -> int | None:
+    """归档索引表**表头**的行号；认不出给 None。
+
+    与 `_archive_table_rows` 共用同一套判据（列名逐个相同 + 紧跟分隔行），
+    差别只在"表头在不在"与"有几行数据"是两件事：反向核对（磁盘有目录、表里没行）
+    必须在**表头在、数据行为零**时照样跑得起来。
+    """
+    want = [c.strip() for c in ARCHIVE_TABLE_HEAD.strip("|").split("|")]
+    for i, l in enumerate(lines):
+        if not l.lstrip().startswith("|"):
+            continue
+        if [c.strip() for c in l.strip().strip("|").split("|")] == want:
+            if i + 1 < len(lines) and _is_table_sep(_split_table_row(lines[i + 1])):
+                return i
+            return None                         # 表头在、分隔行缺：不是一张能认的表
+    return None
 
 
 def _archive_table_rows(lines: list[str]) -> list[int]:
     """归档索引表的数据行号（认表头那一行，认不出给空表）。
 
     只认与 `ARCHIVE_TABLE_HEAD` 相同的那行：文件里别处的表格（例如自述里的"里面有什么"）
-    不会被误当成数据行。认不出表头就返回空 —— 调用方据此决定是"另建一张"还是"不动"。
+    不会被误当成数据行。**表头后必须紧跟分隔行**（`|---|---|…`）—— 少了它就不是一张能认的表，
+    返回空表，让调用方别写（2026-10-17 修：从前是位置式跳过一行，缺分隔行时会把首行吃掉，
+    旧行看不见、表末多出重复行，而任何检查都看不见）。
     """
-    want = [c.strip() for c in ARCHIVE_TABLE_HEAD.strip("|").split("|")]
-    head = None
-    for i, l in enumerate(lines):
-        if not l.lstrip().startswith("|"):
-            continue
-        if [c.strip() for c in l.strip().strip("|").split("|")] == want:
-            head = i
-            break
+    head = _archive_table_head_line(lines)
     if head is None:
         return []
-    end = head + 1
+    end = head + 2
     while end < len(lines) and lines[end].lstrip().startswith("|"):
         end += 1
     return list(range(head + 2, end))          # 跳过表头与分隔行
 
 
-def update_archive_index(container: str, stage: str, nums: list[int], dates: list[str]) -> str:
-    """把一次归档写进 `<容器>/archive/README.md` 的表里，返回实际写的路径。
+def update_archive_index(container: str, stage: str, nums: list[int],
+                         dates: list[str]) -> str | None:
+    """把一次归档写进 `<容器>/archive/README.md` 的表里；**返回真正写了的路径**，没写给 None。
 
     **只动表里的行**：文件已存在就在表末插一行；同一个阶段分几次归档则**原地更新**那一行
     （篇号取并集、日期区间取并集）；文件不存在才建一份最小骨架（标题 + 表头 + 第一行）。
     人写的自述、备注、别的表格一概不碰 —— 这份文件是**人写为主、工具只补行**的。
+
+    返回值必须区分"写了"与"没写"（2026-10-17 修）：从前三种没写的情形也返回路径，
+    调用方无条件打印「完成。索引已更新到 …」—— 人以为记上了，其实表里没有那一行。
     """
     path = archive_dir_index_path(container)
     rel_dir = archive_index_rel(stage)
     if not rel_dir:
-        return path                             # 归档就在 archive/ 直属层：表里没有可写的行
+        return None                             # 直属层 / 平铺布局：表里没有可写的行
 
     text = read_raw(path) if os.path.exists(path) else ""
     nl = nl_of(text) if text else "\n"
@@ -3886,17 +3958,23 @@ def update_archive_index(container: str, stage: str, nums: list[int], dates: lis
                            f"{count} 篇 | {verdict} |{nl}")
     else:
         span = f"{ds[0]} ~ {ds[-1]}" if ds else "-"
-        entry = (f"| `{rel_dir}` | {min(nums):04d}–{max(nums):04d} | {span} | "
-                 f"{len(nums)} 篇 | 阶段收口 |{nl}")
+        # 与合并路径同一套判据：**有断档就写穷举**。只归档 1 与 3 时写 `0001–0003`
+        # 会让新检查立刻 WARN（它按磁盘核对），等于工具自己写一条自己判红的行。
+        dense = list(range(min(nums), max(nums) + 1))
+        entry_nums = (f"{min(nums):04d}–{max(nums):04d}" if dense == sorted(set(nums))
+                      else "、".join(f"{n:04d}" for n in sorted(set(nums))))
+        entry = (f"| `{rel_dir}` | {entry_nums} | {span} | "
+                 f"{len(set(nums))} 篇 | 阶段收口 |{nl}")
         if not text:
             lines = [f"{ARCHIVE_INDEX_TITLE}{nl}", nl,
                      f"{ARCHIVE_TABLE_HEAD}{nl}", f"{ARCHIVE_TABLE_ALIGN}{nl}", entry]
         elif rows:
             lines.insert(rows[-1] + 1, entry)   # 追加在表末
         else:
-            # 文件在、但认不出我们的表：**不猜、不动**。悄悄另起一张表会留下两张，
-            # 人下次不知道该信哪一张；这里宁可什么都不写（`check` 会提示索引缺行）。
-            return path
+            # 文件在、但认不出我们的表（或表头后缺分隔行）：**不猜、不动**。悄悄另起一张表
+            # 会留下两张，人下次不知道该信哪一张；这里什么都不写，并把 None 交给调用方 ——
+            # 它必须**别报成功**（2026-10-17 修：从前这里返回路径，CLI 照报「索引已更新到」）。
+            return None
     os.makedirs(os.path.dirname(path), exist_ok=True)
     write_raw(path, "".join(lines))
     return path
@@ -4005,8 +4083,15 @@ def cmd_archive(args: argparse.Namespace) -> int:
     if dead:
         print("⚠️ 仍有死链：内容都在，检查上面的链接（可用 git 回退）")
         return 1
-    print(f"完成。索引已更新到 {rel(root, index_path)}；接着跑 `check`"
-          f"（活跃记录的索引行由 `index sync` 维护，归档行由本次自动补）。")
+    # 索引没写成时**不能报成功**（2026-10-17 修）：平铺布局 / 直属层 / 认不出表都是
+    # "不写"的正常情形，从前一律打印「索引已更新到 …」，人以为记上了、表里却没有那一行。
+    if index_path:
+        print(f"完成。索引已更新到 {rel(root, index_path)}；接着跑 `check`"
+              f"（活跃记录的索引行由 `index sync` 维护，归档行由本次自动补）。")
+    else:
+        print(f"完成（移动 {len(picked)} 篇）。**索引没写**："
+              f"`{rel(root, target_dir)}` 不在 `archive/` 下、或 `{ARCHIVE_DIR}/README.md` "
+              f"里的表认不出 —— 前者用 `index compact` 折索引，后者先修好那张表再重跑。")
     return 0
 
 

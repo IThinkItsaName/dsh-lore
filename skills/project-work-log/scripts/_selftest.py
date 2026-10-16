@@ -18,6 +18,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import locale
 import os
 import re
 import secrets
@@ -283,11 +284,39 @@ results: list[tuple[bool, str]] = []
 skipped: list[str] = []
 
 
+def decode_output(raw) -> str:
+    """把子进程输出解成人看的样子。
+
+    **不能**直接 `text=True, encoding="utf-8"`：被测命令可能按本机编码（Windows 上是 GBK）输出，
+    硬按 UTF-8 解会在**读线程**里抛 UnicodeDecodeError —— 而 `subprocess.run` 不把它抛给调用方，
+    只是把 `.stdout` 留成 `None`，于是"解码失败"会在很远的地方以
+    `TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'` 的形式爆出来
+    （2026-10-17 实测：cp936 控制台下 card_phase 必崩，三个新相位一条也跑不到）。
+    所以：捕**字节**，按 UTF-8 严格试、退回本机编码容错替换，与 `journal.py` 的 `decode()` 同口径。
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode(locale.getpreferredencoding(False), errors="replace")
+
+
 def run(root: str, *argv: str, tool: str = TOOL) -> subprocess.CompletedProcess:
     # 项目根默认取 cwd；journal/ 与 lessons/ 名字走默认解析。
     # `tool=` 是给同目录的其它脚本（如 dsh-lore-card.py）用的：它们共用同一套夹具与调用约定。
-    return subprocess.run([sys.executable, tool, *argv],
-                          cwd=root, capture_output=True, text=True, encoding="utf-8")
+    # 捕字节而不是 text=True（见 `decode_output` 的注释），再把两份输出换成 str 交回调用方，
+    # 这样 `r.stdout + r.stderr` 这类拼接永远是 str —— 不给 None 流进断言留缝。
+    r = subprocess.run([sys.executable, tool, *argv],
+                       cwd=root, capture_output=True, text=False)
+    r.stdout = decode_output(r.stdout)
+    r.stderr = decode_output(r.stderr)
+    if r.stdout is None or r.stderr is None:      # 理论上不可达；真到了要立刻炸，别静默
+        raise RuntimeError("子进程输出解码失败（%s）：stdout=%r stderr=%r"
+                           % (" ".join(argv), r.stdout, r.stderr))
+    return r
 
 
 def make_tmp(prefix: str) -> str:
@@ -716,7 +745,11 @@ def archive_index_check(parent: str) -> None:
     os.remove(os.path.join(tmp, CONTAINER, "ARCHIVE.md"))
     new_style = ("# work_log/archive/ —— 已归档记录\n\n"
                  "| 目录 | 篇号 | 时间 | 内容 | 归档判据 |\n|---|---|---|---|---|\n"
-                 "| `st1/` | 0001 | 2026-10-01 | 1 篇 · 探针 | 阶段收口 |\n")
+                 "| `st1/` | 0001 | 2026-10-01 | 1 篇 · 探针 | 阶段收口 |\n"
+                 # `ghost2/` 也登记上：这一段要验的是"新索引不被认成遗留表"，
+                 # 留着一个真漏行会让**另一条**检查（反向核对）如实报红，两件事混在一起。
+                 # 漏行本身另有断言专门验（见下面 D2）。
+                 "| `ghost2/` | 0002 | 2026-10-02 | 1 篇 · 探针 | 阶段收口 |\n")
     write(os.path.join(tmp, CONTAINER, "archive", "README.md"), new_style)
     r = run(tmp, "check", "--strict")
     out = r.stdout + r.stderr
@@ -725,6 +758,23 @@ def archive_index_check(parent: str) -> None:
     ok(r.returncode == 0, "and it does not turn the gate red", out)
     ok(os.path.isfile(os.path.join(tmp, CONTAINER, "archive", "README.md")),
        "the new-style index file is left in place", out)
+
+    # D2) **反向核对**：磁盘上有归档目录、表里却没有它这一行（2026-10-17 补）。
+    #     上面两条只查"表 → 磁盘"，整个阶段漏登记时它们都不响 —— 而漏行是最常见的漂移。
+    write(os.path.join(tmp, CONTAINER, "archive", "README.md"),
+          new_style.replace("| `ghost2/` | 0002 | 2026-10-02 | 1 篇 · 探针 | 阶段收口 |\n", ""))
+    r = run(tmp, "check", "--strict")
+    out = r.stdout + r.stderr
+    ok(r.returncode != 0 and "却没有这一行" in out and "ghost2" in out,
+       "a stage directory with no row in the table is reported (reverse check)", out)
+    # 表头在、**数据行为零**也不能短路反向核对（空表正是"全漏登记"的样子）
+    write(os.path.join(tmp, CONTAINER, "archive", "README.md"),
+          "# work_log/archive/ —— 已归档记录\n\n"
+          "| 目录 | 篇号 | 时间 | 内容 | 归档判据 |\n|---|---|---|---|---|\n")
+    r = run(tmp, "check", "--strict")
+    out = r.stdout + r.stderr
+    ok("却没有这一行" in out and r.returncode != 0,
+       "an empty table still gets the reverse check (not short-circuited)", out)
 
 
 
@@ -751,7 +801,10 @@ def archive_dir_index_phase(parent: str) -> None:
     # 纯函数：`--stage` 的两种写法换算成表里那个相对路径
     rel = JOURNAL.archive_index_rel
     ok(rel("archive/probe-s3") == "probe-s3/", "archive_index_rel strips a leading archive/", rel("archive/probe-s3"))
-    ok(rel("probe-s3") == "probe-s3/", "archive_index_rel keeps a bare stage name", rel("probe-s3"))
+    # **平铺布局没有可写的行**（2026-10-17）：`--stage probe-s3` 落的是 `<容器>/probe-s3`，
+    # `archive/` 下没有这个目录 —— 写一行 `| `probe-s3/` |` 会指向不存在的目录，
+    # 而检查侧只能静默跳过（表按相对 `archive/` 解释），于是留下一条永远没人核的行。
+    ok(rel("probe-s3") == "", "a bare stage name has no row (flat layout, not under archive/)", rel("probe-s3"))
     ok(rel("archive/a/b") == "a/b/", "archive_index_rel keeps multi-level stages", rel("archive/a/b"))
     ok(rel("archive") == "", "archive/ itself has no row (nothing to write)", rel("archive"))
     ok(rel("") == "", "an empty stage has no row", rel(""))
@@ -2697,8 +2750,10 @@ def run_env(root: str, env: dict, *argv: str) -> subprocess.CompletedProcess:
     """带环境变量跑一次。全局记忆的隔离钩子（`DSH_WORKLOG_MEMORY`）靠它验。"""
     e = dict(os.environ)
     e.update(env)
-    return subprocess.run([sys.executable, TOOL, *argv],
-                          cwd=root, capture_output=True, text=True, encoding="utf-8", env=e)
+    r = subprocess.run([sys.executable, TOOL, *argv],
+                       cwd=root, capture_output=True, text=False, env=e)
+    r.stdout, r.stderr = decode_output(r.stdout), decode_output(r.stderr)
+    return r
 
 
 # ---- 全局记忆（跨工作区）---------------------------------------------------
@@ -3864,8 +3919,7 @@ def numbering_phase(parent: str) -> None:
     write(os.path.join(con, CONTAINER, "README.md"), INDEX)
     procs = [subprocess.Popen(
         [sys.executable, TOOL, "new", "--root", con, "--title", f"race {i}"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        encoding="utf-8", errors="replace", cwd=HERE)
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=HERE)
         for i in range(6)]
     outs = []
     for p in procs:
@@ -3874,7 +3928,7 @@ def numbering_phase(parent: str) -> None:
         except subprocess.TimeoutExpired:
             p.kill()
             o, e = p.communicate()
-        outs.append((p.returncode, o, e))
+        outs.append((p.returncode, decode_output(o), decode_output(e)))
     made = sorted(f for f in os.listdir(os.path.join(con, CONTAINER))
                   if f != "README.md")
     ok(all(rc == 0 for rc, _, _ in outs) and len(made) == 6,
@@ -3911,8 +3965,7 @@ def numbering_phase(parent: str) -> None:
     procs = [subprocess.Popen(
         [sys.executable, TOOL, "inbox", "take", items[i], "--into-record", "same title",
          "--memory", take_mem, "--root", take_con],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        encoding="utf-8", errors="replace", cwd=HERE)
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=HERE)
         for i in range(len(items))]
     outs2 = []
     for p in procs:
@@ -3921,7 +3974,7 @@ def numbering_phase(parent: str) -> None:
         except subprocess.TimeoutExpired:
             p.kill()
             o, e = p.communicate()
-        outs2.append((p.returncode, o, e))
+        outs2.append((p.returncode, decode_output(o), decode_output(e)))
     made2 = sorted(f for f in os.listdir(os.path.join(take_con, CONTAINER))
                    if f != "README.md")
     ok(all(rc == 0 for rc, _, _ in outs2) and len(made2) == 6,

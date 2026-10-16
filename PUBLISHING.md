@@ -107,7 +107,9 @@ python ../../.pi/skills/project-work-log/scripts/_package.py --check
 
 # 包内路径下也能跑通（验证相对路径没有写死）
 # 断言条数故意不写在这里 —— 它每加一条断言就过期一次（见 RELEASING.md 的检查点 4）
-python skills/project-work-log/scripts/_selftest.py
+# `-B` 不能省：脚本住在包里，Python 会把 __pycache__ 生成在**包内**（实测 498 KB 派生文件），
+# 而 `_package.py --check` 把副本里的 __pycache__ 当漂移 —— "跑过自测"会把下一道门禁弄红。
+python -B skills/project-work-log/scripts/_selftest.py
 
 # 插件清单自洽：dsh.bundle.patch 指向的文件存在、补丁是合法 YAML、入口能解析出技能 frontmatter
 node -e "const p=require('./package.json'); const f=require('fs'); \

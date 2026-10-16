@@ -23,6 +23,14 @@ import re
 import sys
 from datetime import datetime
 
+try:  # Windows 控制台默认码页可能不是 UTF-8（cp936）。必须自己钉住，理由见 journal.py:104：
+    # 调用方（如 _selftest.py 的 run()）多按 UTF-8 解子进程输出；本脚本不钉，输出就是 GBK 字节，
+    # 读线程解码失败后 stdout 会变成 None，把**调用方的断言**炸成 TypeError —— 症状离病根很远。
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
+except Exception:  # pragma: no cover
+    pass
+
 # ── 六要素（与灵枢 policy.json 的 required 同口径：行首 `# 要素名`，不要求冒号） ──
 CCG_KEYS = ("功能名", "生效条件", "子功能", "执行", "验证方式", "不适用条件")
 CCG_RE = {k: re.compile(rf"(?m)^#\s*{k}") for k in CCG_KEYS}
@@ -290,19 +298,31 @@ def existing_cards(card_dir: str) -> list[dict]:
     return out
 
 
-def record_source(container: str, no: str) -> tuple[str, bool]:
-    """`wl/0002` → 容器里那份记录的真实相对路径（记录可能已归档到子目录）。
+def record_rel(container: str, no: str) -> tuple[str, bool]:
+    """`wl/0002` → 记录**相对容器**的真实路径（记录可能已归档到子目录），找不到给 (`0002-unknown.md`, False)。
 
-    找不到就**如实标 unknown**，不编一个看起来像真的路径 —— 卡里的 source 是给人查的。
+    返回的是**相对容器**的路径，这是本文件里唯一的口径：它既能拼回真路径
+    （`os.path.join(container, *rel.split("/"))`），也能显示（`display_source()` 加前缀）。
+    **别**在这里返回显示用路径 —— `work_log/x.md` 在本机只是碰巧能当相对路径用，
+    换个 cwd 就 FileNotFoundError，或者更糟：撞上**另一个容器**里的同名文件（2026-10-17 实测）。
     """
     for dirpath, dirnames, filenames in os.walk(container):
         dirnames[:] = [d for d in dirnames
                        if d not in ("memory-cards", "logs", "lessons", ".git")]
         for fn in filenames:
             if fn.startswith(f"{no}-") and fn.endswith(".md"):
-                rel = os.path.relpath(os.path.join(dirpath, fn), container).replace("\\", "/")
-                return f"work_log/{rel}", True
-    return f"work_log/{no}-unknown.md", False
+                return os.path.relpath(os.path.join(dirpath, fn), container).replace("\\", "/"), True
+    return f"{no}-unknown.md", False
+
+
+def display_source(rel: str) -> str:
+    """容器相对路径 → 卡里/索引里给人看的 `work_log/…` 形态。**只用于显示。**"""
+    return f"work_log/{rel}" if rel else ""
+
+
+def abs_in(container: str, rel: str) -> str:
+    """容器相对路径 → 绝对路径（读正文、量体量一律走它，不靠 cwd）。"""
+    return os.path.join(container, *rel.split("/")) if rel else ""
 
 
 # ── 产卡 ────────────────────────────────────────────────────────────────
@@ -432,15 +452,24 @@ def ccg_check(text: str) -> list[str]:
 
 
 # ── 主流程 ──────────────────────────────────────────────────────────────
-def rec_units(full_path: str, domain: str) -> list[tuple[dict, dict]]:
-    """一篇记录 → 待投影的「一条教训」列表。`--rec` 与 `--all` 共用这一条路径。"""
+def rec_units(full_path: str, domain: str, container: str = "") -> list[tuple[dict, dict]]:
+    """一篇记录 → 待投影的「一条教训」列表。`--rec` 与 `--all` 共用这一条路径。
+
+    `container` 给了就用**容器相对**路径当 source（与 `record_rel` 同一口径）；
+    不给只能退回文件名 —— 那种 source 只在"记录就住在容器根"时才对得上。
+    """
     rec = parse_record(full_path)
     vheads = [h for h, _ in rec["sections"] if h.startswith(("四、验证", "验证"))]
-    ctx0 = {"domain": domain, "source": f"work_log/{rec['name']}",
+    if container:
+        rel = os.path.relpath(full_path, container).replace("\\", "/")
+    else:
+        rel = rec["name"]
+    shown = display_source(rel)
+    ctx0 = {"domain": domain, "source": shown,
             "applies_to": rec["meta"].get("主题", ""),
             "scope": rec["meta"].get("范围", ""),
             "boundary": rec["boundary"],
-            "verify_anchor": (f"来源记录 `work_log/{rec['name']}` 的"
+            "verify_anchor": (f"来源记录 `{shown}` 的"
                               f"「{vheads[0] if vheads else '验证'}」小节：给出复现步骤与实测结果"),
             # 「真源」= 这张卡替代掉的那份文档（体量闸的尺子就是它）。记录投影用记录本身。
             "src_bytes": os.path.getsize(full_path),
@@ -457,21 +486,23 @@ def lessons_units(container: str, lp: str, domain: str) -> list[tuple[dict, dict
         # 真源 = 条目自己指的 `wl/NNNN` 那篇记录；指向不明/记录不在容器里，
         # 就退回**它所在的分册**（那才是这条经验真正的落点）。体量闸量的是这个。
         if len(set(refs)) == 1:
-            src, found = record_source(container, refs[0])
-            cite = f"work_log/{os.path.basename(src)}"
+            rel, found = record_rel(container, refs[0])
+            cite = display_source(os.path.basename(rel))
             note = "" if found else "（记录未在本容器找到，可能已归档到别的工作区）"
             if note:
                 cite += note
-            src_bytes = os.path.getsize(src) if found else 0
+            src = display_source(rel)
+            src_bytes = os.path.getsize(abs_in(container, rel)) if found else 0
             status = "ok" if found else "stale"
         elif refs:
             # 多条出处：**取第一条当主源**，别退回"分册"——分册是落点，不是这篇结论的出处；
             # 拿它当 source，读者会顺手去看整册，指认反而更糊。其余出处留在 cited_by 里。
-            src, found = record_source(container, refs[0])
-            cite = f"work_log/{os.path.basename(src)}"
+            rel, found = record_rel(container, refs[0])
+            cite = display_source(os.path.basename(rel))
             if not found:
                 cite += "（记录未在本容器找到，可能已归档到别的工作区）"
-            src_bytes = os.path.getsize(src) if found else 0
+            src = display_source(rel)
+            src_bytes = os.path.getsize(abs_in(container, rel)) if found else 0
             status = "ok" if found else "stale"
         else:
             src = f"lessons/{os.path.basename(lp)}"
@@ -531,14 +562,15 @@ def _clip(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
-def index_rows(card_dir: str, container: str = "") -> list[dict]:
+def index_rows(card_dir: str, container: str = "", write: bool = False) -> list[dict]:
     """扫已落盘的瘦卡 → INDEX 的行。确定性：同样的卡目录 → 逐字节同样的表。
 
-    `container` 给定时**当场核一遍源记录还在不在**（2026-10-16 加）：
-    卡的 frontmatter 里那句 `source_status: stale` 是**投影那一刻**的判断，之后源记录
-    被删/被归档，卡不会自己变旧 —— 于是 INDEX 会一直谎报「全部卡的源记录都在本容器内」。
-    索引是读者唯一的入口，这地方必须说实话：所以这里重算，并且**把结论写回卡**，
-    让「卡旧了」这件事本身可被发现（`.full.md` 也跟着改，两者是同一张卡的两份）。
+    两件事与 cwd 无关，也都**只在真的允许写盘时**才落盘（`write`）：
+      · `container` 给定时当场核源记录还在不在（不在就把 `source_status: stale` 补进卡里）；
+      · 卡里写的是**工作区相对**路径（`work_log/0001-x.md`），核的时候把 `work_log/` 前缀剥掉，
+        再 `join(container, …)` —— 前缀是**固定的那一个**，不是拿容器 basename 去凑。
+
+    `write=False` 时只**报告**（返回行里带 `stale_now`），一个字节都不改：只读语义得住。
     """
     rows: list[dict] = []
     if not os.path.isdir(card_dir):
@@ -550,27 +582,23 @@ def index_rows(card_dir: str, container: str = "") -> list[dict]:
         t = read(p)
         source = _fm(t, "source")
         # 只在真给了容器时才核（容器空串 = 调用方只要表格，不做追溯校验）。
-        # 注意路径形态：卡里写的是**工作区相对**路径（`work_log/0001-x.md`），
-        # 而 `container` 已经指到容器根了 —— 直接 join 会得到 `…\work_log\work_log\…`，
-        # 于是每张卡都被判成 stale（2026-10-16 真踩过）。先把容器名那一段剥掉再核。
+        # 卡里写的是 `work_log/0001-x.md`（工作区相对），而 `container` 已经指到容器根，
+        # 直接 join 会得到 `…\work_log\work_log\…`，于是每张卡都被判成 stale（2026-10-16 真踩过）。
+        # 修法是把**固定的 `work_log/` 前缀**剥掉 —— 早先拿容器 basename 去剥，
+        # 容器不叫 work_log 时前缀剥不掉，卡就"出生即 stale"（2026-10-17 实测）。
         missing = False
         if container and source:
             rel = source
-            head = os.path.basename(os.path.abspath(container.rstrip("/\\")))
-            if rel == head or rel.startswith(head + "/"):
-                rel = rel[len(head) + 1:]
+            if rel.startswith("work_log/"):
+                rel = rel[len("work_log/"):]
             missing = not os.path.exists(os.path.join(container, *rel.split("/")))
         if missing and "source_status: stale" not in t:
-            t = re.sub(r"(?m)^(source:.*)$", r"\1\nsource_status: stale", t, count=1)
-            with open(p, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write(t)
-            full = os.path.join(card_dir, fn[: -len(".pointer.md")] + ".full.md")
-            if os.path.isfile(full):
-                ft = read(full)
-                if "source_status: stale" not in ft:
-                    with open(full, "w", encoding="utf-8", newline="\n") as fh:
-                        fh.write(re.sub(r"(?m)^(source:.*)$", r"\1\nsource_status: stale",
-                                        ft, count=1))
+            if write:
+                _mark_stale(p, t)
+                full = os.path.join(card_dir, fn[: -len(".pointer.md")] + ".full.md")
+                if os.path.isfile(full) and "source_status: stale" not in read(full):
+                    _mark_stale(full, read(full))
+                t = read(p)          # 改写后再读，后面解析标签用的是盘上那份
         tags = _fm(t, "tags")
         m = re.search(r"domain:([^,\]]+)", tags)
         napp = _ccg_line(t, "不适用条件")
@@ -581,13 +609,21 @@ def index_rows(card_dir: str, container: str = "") -> list[dict]:
             "exec": _ccg_line(t, "执行"),
             "cond": _ccg_line(t, "生效条件"),
             "source": source,
-            "stale": "source_status: stale" in t,
+            "stale": ("source_status: stale" in t),
+            "stale_now": missing,
+            "napp": napp,
             "bytes": os.path.getsize(p),
             "no_boundary": bool(re.search(r"边界未在来源里显式声明", napp)),
             "path": fn,
         })
     rows.sort(key=lambda r: (r["domain"], r["id"]))
     return rows
+
+
+def _mark_stale(path: str, text: str) -> None:
+    """把 `source_status: stale` 插进 frontmatter（只在真正允许写盘时调用）。"""
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(re.sub(r"(?m)^(source:.*)$", r"\1\nsource_status: stale", text, count=1))
 
 
 def printable_index(rows: list[dict], project: str, domain: str = "") -> str:
@@ -731,11 +767,21 @@ def main(argv: list[str]) -> int:
     project = project or domain
 
     if args.index_only:
-        rows = index_rows(card_dir, container)
+        # `write` 透传进去（2026-10-17 修 H3）：不给 `--write` 时这条命令**一个字节都不改** ——
+        # 从前陈旧标记是无条件写盘的，于是 `--index-only` 会改写卡、却又不写 INDEX.md，
+        # 还打印"已重建"：只读语义破了，盘上留下"卡说 stale、索引说新鲜"的持久不一致。
+        rows = index_rows(card_dir, container, write=args.write)
         wrote = write_index_file(index_path, rows, project, domain, write=args.write)
+        stale_now = [r for r in rows if r.get("stale_now")]
         print(f"容器：{container}")
         print(printable_index(rows, project, domain).rstrip())
-        print(f"\n{'已重建' if wrote else '无变化（未写盘）'}：{index_path}")
+        if stale_now:
+            print(f"\n注意：{len(stale_now)} 张卡的源记录不在本容器"
+                  f"（{'、'.join(r['id'] for r in stale_now[:5])}"
+                  f"{'…' if len(stale_now) > 5 else ''}）"
+                  f"{'，已把 source_status: stale 写回卡' if args.write else '；加 --write 才写回卡'}")
+        print(f"\n{'已重建' if wrote else ('无变化（写了，内容没变）' if args.write else '未写盘（没给 --write）')}"
+              f"：{index_path}")
         return 0
     cards = existing_cards(card_dir)
 
@@ -743,7 +789,7 @@ def main(argv: list[str]) -> int:
     units: list[tuple[dict, dict]] = []   # (lesson, ctx)
     if args.all:
         for rp in all_records(container, include_archive=args.include_archive):
-            got = rec_units(rp, args.domain)
+            got = rec_units(rp, args.domain, container)
             if not got:
                 # **不能静默跳过**（2026-10-16 修）：一篇被跳过却一声不吭的记录，
                 # 在汇总里只表现为"条数比预期少"，读者会以为它没被算进来源，
@@ -769,7 +815,7 @@ def main(argv: list[str]) -> int:
                 return 1
             rec_path = hits[0]
         full_path = rec_path if os.path.isabs(rec_path) else os.path.join(container, rec_path)
-        units = rec_units(full_path, args.domain)
+        units = rec_units(full_path, args.domain, container)
         if not units:
             print(f"（记录 `{os.path.basename(full_path)}` 没有可投影的教训：需要结论性小节里"
                   f"以句号收尾的完整 bullet；遗留/待办不算）")
@@ -921,7 +967,7 @@ def main(argv: list[str]) -> int:
         print(f"  · DROP {d}")
     print("（dry-run：什么都没写。加 --write 才落盘）" if not args.write else f"卡目录：{card_dir}")
     if args.write:
-        rows = index_rows(card_dir, container)
+        rows = index_rows(card_dir, container, write=True)
         wrote = write_index_file(index_path, rows, project, domain, write=True)
         # 只在这一轮**真的动过盘**时才重写清单：纯复用的一轮不该动 git 里的文件。
         if wrote or any_new:

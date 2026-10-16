@@ -65,8 +65,11 @@ python scripts/journal.py check --strict --root <项目根>        # 顶层命�
 
 ```bash
 python scripts/journal.py --help          # 命令总览
-python scripts/_selftest.py               # 自测：临时工程跑通全部命令（含非编程场景、整理能力、英文标签、数据安全）
+python -B scripts/_selftest.py            # 自测：临时工程跑通全部命令（含非编程场景、整理能力、英文标签、数据安全）
 ```
+
+> `-B` 别省：脚本住在技能包里，不加会在**包内**留下 `__pycache__`（实测 498 KB 派生文件），
+> 而发布流程的 `_package.py --check` 把副本里的 `__pycache__` 当漂移 —— "跑过自测"会把下一道门禁弄红。
 
 **写入命令的通用规矩**：目标文件必须是 **UTF-8**。不是 UTF-8（GBK 老仓库等）时会**拒绝写入**并返回退出码 2，
 文件保持字节不变——这是故意的，避免把解码失败的字节写成 `U+FFFD` 毁掉中文。

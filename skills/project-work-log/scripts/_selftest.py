@@ -4684,6 +4684,49 @@ def card_phase(tmp: str) -> None:
        "the manifest names the container relative to its parent, not '.'",
        repr(man.get("container")))
 
+    # ── 索引那条路也得认人（2026-10-17 轮七 H-2b）──────────────────────────────
+    #
+    # H-2 那一轮只收口了**两条**路：`existing_cards()` 认 tags（读入）、`avoid_foreign()`
+    # 写盘前查一次（撞名）。第三条路漏了 —— `index_rows()` 从前只看后缀，于是
+    # `--index-only --write` 会把 `source_status: stale` 写进**别人的卡**（实测 sha 变了），
+    # 它们的行还会混进 INDEX 与"归属"统计（连"源找不到"都算在我们头上）。
+    # 这里钉四件事：外来卡逐字节不变、不进 INDEX 行、我们的卡照旧进、
+    # 且我们那张同样是脏源的卡**照样**被打 stale（别为了挡外人把自家也挡了）。
+    fidx = os.path.join(tmp, "foreignidx")
+    fcards = os.path.join(fidx, CONTAINER, "memory-cards")
+    os.makedirs(fcards)
+
+    def _raw_card(cid: str, tags: str, source: str) -> str:
+        fm = f"---\nid: {cid}\nlayer: knowledge\ntags: [{tags}]\n"
+        if source:
+            fm += f"source: {source}\n"
+        return (fm + "---\n\n"
+                "## 功能名\n\n某功能\n\n## 执行\n\n先这样再那样。\n\n## 生效条件\n\n需要时。\n\n"
+                "## 不适用条件\n\n不需要时。\n\n## 验证\n\n做一遍就知道。\n\n## 出处\n\n某处。\n")
+
+    write(os.path.join(fcards, "wl900-ours-gone.pointer.md"),
+          _raw_card("wl900-ours-gone", "dsh-lore, domain:general", f"{CONTAINER}/9999-gone.md"))
+    write(os.path.join(fcards, "foreign-dangling.pointer.md"),
+          _raw_card("foreign-dangling", "other-tool", f"{CONTAINER}/9998-nope.md"))
+    write(os.path.join(fcards, "foreign-plain.pointer.md"),
+          _raw_card("foreign-plain", "other-tool", ""))
+    dangling_path = os.path.join(fcards, "foreign-dangling.pointer.md")
+    dangling_before = read(dangling_path)
+    r12 = run(fidx, CONTAINER, "--index-only", "--write", "--project", "selftest-project", tool=tool)
+    ok(r12.returncode == 0, "--index-only --write runs on a dir with foreign cards",
+       r12.stdout + r12.stderr)
+    ok(read(dangling_path) == dangling_before,
+       "a foreign card with a dangling source is not stamped stale", read(dangling_path)[:300])
+    idx2 = read(os.path.join(fcards, "INDEX.md"))
+    ok("foreign-dangling" not in idx2 and "foreign-plain" not in idx2,
+       "foreign cards stay out of the index rows", idx2[:500])
+    ok("wl900-ours-gone" in idx2, "while our own card is listed", idx2[:500])
+    ok("source_status: stale" in read(os.path.join(fcards, "wl900-ours-gone.pointer.md")),
+       "and our own card with a dangling source is still stamped",
+       read(os.path.join(fcards, "wl900-ours-gone.pointer.md"))[:300])
+    ok("不收录进 INDEX" in r12.stderr,
+       "the skip goes to stderr, same channel as existing_cards()", r12.stderr[-400:])
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="journal.py 自测")

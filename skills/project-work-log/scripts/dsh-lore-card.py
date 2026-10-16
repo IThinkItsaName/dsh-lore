@@ -723,14 +723,24 @@ def index_rows(card_dir: str, container: str = "", write: bool = False) -> list[
         叫 `ops` 就是 `ops/0001-x.md`），核之前把那一层前缀剥掉，再 `join(container, …)`。
 
     `write=False` 时只**报告**（返回行里带 `stale_now`），一个字节都不改：只读语义得住。
+
+    **只收本工具投的卡**（2026-10-17 轮七，H-2b）：`*.pointer.md` 不是本工具专有的后缀
+    （灵枢插件自己也往这里投卡），所以这里的判据必须与 `existing_cards()` **同一个**
+    （`is_our_card()`）。从前只看后缀，于是第三条路漏了 —— `--index-only --write` 会把
+    `source_status: stale` 写进**别人的卡**（实测 sha 变了），它们的行还会混进 INDEX
+    与"归属"统计（连"源找不到"都算在我们头上）。H-2 那一轮只收口了"读入/撞名"两条路。
     """
     rows: list[dict] = []
     if not os.path.isdir(card_dir):
         return rows
+    skipped: list[str] = []
     for fn in sorted(os.listdir(card_dir)):
         if not fn.endswith(".pointer.md"):
             continue
         p = os.path.join(card_dir, fn)
+        if not is_our_card(p):
+            skipped.append(fn[: -len(".pointer.md")])
+            continue
         t = read(p)
         source = _fm(t, "source")
         # 只在真给了容器时才核（容器空串 = 调用方只要表格，不做追溯校验）。
@@ -772,6 +782,13 @@ def index_rows(card_dir: str, container: str = "", write: bool = False) -> list[
             "path": fn,
         })
     rows.sort(key=lambda r: (r["domain"], r["id"]))
+    if skipped:
+        # 与 `existing_cards()` 同一路（stderr）同一口气：这是"这张不是我们的"，
+        # 不是产物的一部分。走 stdout 会把外来卡的 id 混进"索引重建"的正文里 ——
+        # 而自测里那条断言正是钉"别把它算成自家卡（只有 skip 提示可以点它的名）"。
+        shown = "、".join(skipped[:3]) + ("…" if len(skipped) > 3 else "")
+        print(f"[skip] {len(skipped)} 张卡不是本工具投的（frontmatter 没有 `tags: [dsh-lore, …]`）："
+              f"{shown} —— 不收录进 INDEX，也不碰它们", file=sys.stderr)
     return rows
 
 
@@ -1079,6 +1096,11 @@ def main(argv: list[str]) -> int:
                     hit, why = c, f"与同源卡 `{c['id']}` 标题重合 {len(ov) / len(un):.2f}（同源扩写，应 augment 而非新建）"
                     break
         if hit is None:
+            # 第三道（**兜底**，2026-10-17 轮七写明）：比对面是**整份卡文件**（`c["text"]`，
+            # 含 frontmatter、出处、标题那一行），而手里这个只是正文 `les["body"]` ——
+            # 分母天生比分子大得多，所以 `≥ 0.72` 在真数据上基本打不中（实测不同卡
+            # 0.15 上下，同源命中实际靠的是标题 Jaccard 1.00 那条）。留着它是为了
+            # "改了措辞的同一条"那种长正文，别指望它在日常数据上响。
             best, best_s = None, 0.0
             for c in cards:
                 s = max(similarity(les["body"], c["text"]), similarity(les["title"], c.get("title", "")))

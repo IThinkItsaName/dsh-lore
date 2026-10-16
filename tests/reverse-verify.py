@@ -624,6 +624,16 @@ MUTATIONS: list[tuple] = [
      '        return slug, ""',
      "a foreign card sitting on one of our names is not overwritten",
      CARD_SRC),
+
+    # 5) 第三条路退回"只看后缀"（H-2b 的原样回退）：`index_rows()` 又不认 tags，
+    #    于是 `--index-only --write` 把 `source_status: stale` 写进别人的卡。
+    ("card", "索引与陈旧标记又不认自家卡（外来卡被写 stale）",
+     '        if not is_our_card(p):\n'
+     '            skipped.append(fn[: -len(".pointer.md")])\n'
+     '            continue\n',
+     '',
+     "a foreign card with a dangling source is not stamped stale",
+     CARD_SRC),
 ]
 
 

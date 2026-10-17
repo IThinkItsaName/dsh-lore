@@ -8,6 +8,45 @@
 
 ## [未发布]
 
+## [0.9.1] - 2026-10-17
+
+### 修复：主动送达建的收件会话不在工作区名册里（界面显示「未分组」）
+
+`create({ cwd })` 不会把会话挂进 `workspace.sessionIds` —— 只有 `create({ workspaceId })`
+会走 `workspace.attachSession()`，而界面就是按这份名册分组的。于是收件会话在磁盘上一
+切正常，对话列表里却成了「未分组」（真机实例 `session-3e2f…`「跨工作区来信提醒处理」）。
+现在送达前先按路径在 `workspaceRegistry.list()` 里找目标工作区，用 `workspaceId` 建/收养；
+**没有名册的宿主（headless）退回 `cwd`**（那里没有分组问题），有名册但路径不匹配才拒绝。
+
+### 修复：`sessions` 不排除已归档会话
+
+宿主的 `sessionController.list()` 返回完整语料（live + persisted），归档集合在
+`workspaceRegistry.archivedSessionIds` 里、由界面那侧隐藏；工具只按 cwd 过滤，于是把用户
+归档的对话又列了出来（实测：`session-21568609…` 在归档集合里，`sessions` 照样返回它）。
+现在按那份集合再过一道；宿主不提供 registry 时不过滤（工具描述里写明了）。
+
+### 修复：`send` 的 `file` / `workspace` 没有边界
+
+`workspace` 只查绝对路径、`file` 原样透传 → `send({ workspace: '~/.dsh', file: '.credentials.yaml' })`
+能把凭据整份复制进**跨工作区**信箱。现在 `workspace` 必须等于调用方 Agent 的 cwd（发件人
+身份，不许冒充），`file` 必须落在该工作区内（`realpath` 比较，软链接也挡；相对路径按工作区
+解析）。授权表写回前重读：撤销不会被旧快照复活。
+
+### 新增：`send` 可以点名**同工作区**的一个对话
+
+可选 `session`：只允许自己工作区里的会话（`to` 必须等于自己的 cwd；`inspect` 校验归属、
+`archivedSessionIds` 排除已归档）。跨工作区仍然只到工作区粒度 —— 对方的会话清单是侦察面。
+点名投递**不动**订阅表里默认收件会话的计数与轮换（`deliveries` 与 40 条换会话只属于那个
+会话）。这同时让"发信 → 对方回信 → 回信落回原对话"这条链可用。
+
+### 变更：跨工作区来信提醒显示成**通知卡**，而不是用户消息
+
+送达消息仍是 `user/message`（user 角色、不可信输入，**不是** developer/system），但
+`source.kind` 从 `'user'` 改成 `'inbox-notice'`：界面按来源分类，`user` 画成用户气泡，
+其他 kind 画成「触发本轮」的通知卡（与后台任务 / 定时任务同一套 `TurnTriggerNode` 外观）。
+
+门禁：自测 798、`test:plugin` 17 支全绿、`audit` CLEAN。
+
 ## [0.9.0] - 2026-10-17
 
 ### 新增：信箱补上「发送」与「主动送达」；字段只加 `id` / `thread`
@@ -28,32 +67,17 @@
   `<记忆根>/inbox-subscriptions.json`（固定收件会话 id + 已推送条数）。沙箱会话里 CLI 写不了
   记忆根（`workspace-write` 挡在 `~/dsh-lore-memory` 外，实测），所以同一件事也给了工具入口
   `worklog_memory` 的 `subscribe`（`active:false` 撤销；边界=调用方 Agent 的 cwd）。
-  发件方 `send` 带 `to` 且对方已授权时：`sessionController.create({workspaceId, sessionId})` →
+  发件方 `send` 带 `to` 且对方已授权时：`sessionController.create({cwd, sessionId})` →
   `resolveAgent(sessionId)` → `agent.followup(createUserMessage(...))` → `sessions.flush`
   （**与 `dsh-schedule` 同一条投递路**；不走向界面用的 `prompt`，那条还要过附件与上传绑定），
   推一条**不含正文**的提醒，整段包在 `withoutInitiator` 里（免得把发件方变成它的父级）。
-- **分组（真机补）**：建收件会话必须用 `create({workspaceId})`，不能只给 `cwd` —— 只有前者
-  会走 `workspace.attachSession()`，把会话挂进 `workspace.sessionIds`（**界面按它分组**）；
-  只给 cwd 的会话在磁盘上正常、界面上却显示成**「未分组」**（真机实例 `session-3e2f…`
-  「跨工作区来信提醒处理」）。目标路径不在 `workspaceRegistry` 里时**拒绝**主动送达。
 - **收束（规矩 6）**：每成功推送一条 +1，满 40 条换一个新的收件会话 id；旧会话原样留着，
   由用户归档。失败不记账，下一次还会再试。
 - **同/跨分治**：`worklog_memory` 新增 `sessions`，只列**调用方 Agent 的 `cwd`** 下的会话
   （标题来自 `sessionQuery.readTitle`）。边界**不取 `workspace` 参数**（模型能随手填一个别的
   路径），拿不到 initiator 就拒绝。跨工作区不枚举 —— 不是过滤掉了，是根本没去读。
-  **已归档的会话不列**：宿主 `list()` 返回完整语料，工具按 `workspaceRegistry.archivedSessionIds`
-  再过滤一次（归档 = 不想在任何"可选项"里再看到它）。
 - **递文件**：`put --file` 把整份文件当正文；单条上限 16 KiB → **64 KiB**（总量 256 → 512 KiB）。
   规则同时收紧：**不许**把文件直接放进对方目录（旧文那句"真要传文件应该进工作区、进记录"作废）。
-- **发件边界（复核补）**：`send` 的 `workspace` 必须是**本会话自己的工作区**（发件人身份，
-  不许冒充别的目录），`file` 必须落在该工作区内（`realpath` 比较，软链接也挡）—— 否则模型能把
-  任意本地文件（比如凭据）整份复制进跨工作区信箱。授权表写回前重读：撤销不会被旧快照复活。
-- **同工作区对话点名（复核补）**：`send` 多一个可选 `session` —— 只允许**自己工作区里**的
-  会话（`to` 必须等于自己的 cwd；`inspect` 校验归属、已归档的排除）。跨工作区仍然只到
-  工作区粒度：对方的会话清单是侦察面。
-- **提醒的显示（复核补）**：送达消息改成 `user/message` + `source.kind = 'inbox-notice'`
-  （**不是** `'user'`，更不是 developer/system）。界面按来源分类：`user` 画成用户气泡，
-  其他 kind 画成「触发本轮」的通知卡（与后台任务 / 定时任务同一套外观）。
 - **独立性可断言**：新增 `tests/audit-inbox-delivery.mjs` —— 列表与取件都不返回正文、主动
   提醒里没有正文标记、取走的信只落在取件方的工作区、`sessions` 列不到别的工作区、
   `workspaceKey` 与 CLI 的 `subscriptions_key` 对拍（两个进程一个算法）。
@@ -2057,7 +2081,8 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.0...HEAD
+[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.7.0...v0.8.0

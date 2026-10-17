@@ -101,7 +101,7 @@ function letters() {
 function makeCtx({
   cwd = WS_A, sessions = [], titles = {}, archived = [], noInitiator = false, noController = false,
   registered = [{ id: 'ws-a', path: WS_A }, { id: 'ws-b', path: WS_B }],
-  sessionCwds = {}, missingSessions = [],
+  sessionCwds = {}, missingSessions = [], noRegistry = false,
 } = {}) {
   const calls = { create: [], followup: [], flush: 0, resolveAgent: [], tools: [], withoutInitiator: 0 }
   const services = {
@@ -111,7 +111,10 @@ function makeCtx({
     // 归档集合在宿主里由 registry 持有（`archivedSessionIds`），界面按它隐藏会话；
     // 工具必须自己再过滤一次（`sessionController.list()` 返回的是完整语料）。
     // `list()` 是工作区名册：主动送达要靠它把会话挂进 `workspace.sessionIds`（否则"未分组"）。
-    workspaceRegistry: { archivedSessionIds: archived.map(String), list: () => registered },
+    // `noRegistry` 模拟 headless 宿主：没有名册时主动送达必须退回 `create({cwd})`。
+    ...(noRegistry ? {} : {
+      workspaceRegistry: { archivedSessionIds: archived.map(String), list: () => registered },
+    }),
     agents: {
       withoutInitiator: async (fn) => {
         calls.withoutInitiator += 1
@@ -444,6 +447,11 @@ if (!hasPython) {
     ok(callsT.resolveAgent[0] === 'session-target-1',
       'waking the named conversation, not the workspace inbox session',
       JSON.stringify(callsT.resolveAgent))
+    // 点名投递不该动订阅表里那个默认收件会话的计数/轮换（轮十四复核 L2）。
+    const afterTargeted = mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_A)]
+    ok(afterTargeted.deliveries === 0 && afterTargeted.session === 'session-inbox-a',
+      'an explicit target does not advance or rotate the default inbox session',
+      JSON.stringify(afterTargeted))
 
     const cross = await toolT.execute({
       operation: 'send', workspace: WS_A, text: 'x', to: WS_B, session: 'session-target-1',
@@ -468,6 +476,28 @@ if (!hasPython) {
     })
     ok(archivedSend.ok === false && /已归档/.test(archivedSend.text),
       'an archived conversation is refused', archivedSend.text)
+  }
+
+  /* --------------------------- 4c. headless host: no workspace registry → cwd fallback ── */
+
+  {
+    // 轮十四复核 L1：没有名册的宿主（headless / 嵌入）没有"分组"这回事，旧行为（按 cwd 建）
+    // 完全够用 —— 不该因为一个纯界面问题让它失去主动送达。
+    mod.writeSubscriptions(ROOT, {
+      [mod.workspaceKey(WS_B)]: {
+        path: WS_B, active: true, session: 'session-headless-b', deliveries: 0,
+        at: '2026-10-17T12:30:00+08:00',
+      },
+    })
+    const { tool: headlessTool, calls: headlessCalls } = mount({ noRegistry: true })
+    const headless = await headlessTool.execute({
+      operation: 'send', workspace: WS_A, text: 'headless 宿主也要能推。', to: WS_B,
+    })
+    ok(headless.ok === true && /active delivery/.test(headless.text),
+      'a host without a workspace registry still gets active delivery', headless.text)
+    ok(headlessCalls.create.length === 1 && headlessCalls.create[0].cwd === WS_B
+      && headlessCalls.create[0].workspaceId === undefined,
+      'and it falls back to create({ cwd }) instead of refusing', JSON.stringify(headlessCalls.create))
   }
 
   /* ------------------------------------- 5. sessions: the boundary is the caller's cwd ── */

@@ -101,6 +101,7 @@ function letters() {
 function makeCtx({
   cwd = WS_A, sessions = [], titles = {}, archived = [], noInitiator = false, noController = false,
   registered = [{ id: 'ws-a', path: WS_A }, { id: 'ws-b', path: WS_B }],
+  sessionCwds = {}, missingSessions = [],
 } = {}) {
   const calls = { create: [], followup: [], flush: 0, resolveAgent: [], tools: [], withoutInitiator: 0 }
   const services = {
@@ -131,6 +132,11 @@ function makeCtx({
       create: async (request) => {
         calls.create.push(request)
         return { sessionId: request.sessionId }
+      },
+      // 只读地给出一个会话的 header（`send` 的 `session` 用它校验归属）。
+      inspect: async (sessionId) => {
+        if (missingSessions.includes(sessionId)) throw new Error(`session "${sessionId}" not found`)
+        return { meta: { id: sessionId, cwd: sessionCwds[sessionId] ?? cwd } }
       },
       // 与真宿主同形：`liveAgent` 返回 `{ agent }`，投递走 `agent.followup`（不是 `prompt`）。
       resolveAgent: async (sessionId) => {
@@ -370,8 +376,10 @@ if (!hasPython) {
   ok(calls3.followup.length === 1,
     'delivery appends exactly one message to that session', JSON.stringify(calls3.followup))
   const message = calls3.followup[0] ?? {}
-  ok(message.role === 'user' && message.source?.kind === 'user',
-    'the notice is an ordinary `user/message` (never developer/system)', JSON.stringify({ role: message.role, source: message.source }))
+  ok(message.role === 'user' && message.source?.kind === 'inbox-notice',
+    'the notice is a user/message with an `inbox-notice` source — the UI renders that as a '
+      + 'trigger card, not a user bubble, and never as developer/system',
+    JSON.stringify({ role: message.role, source: message.source }))
   ok(calls3.flush === 1, 'and it asks the host to flush the session log (durable before we report success)',
     String(calls3.flush))
   const notice = message.content?.[0]?.text ?? ''
@@ -408,6 +416,59 @@ if (!hasPython) {
   const noController = await mod.pushInboxNotice(bareCtx, { root: ROOT, to: WS_B, senderName: 'workspace-a' })
   ok(noController.pushed === false && noController.reason === 'host-without-session-controller',
     'a host with no session controller reports it instead of pretending', JSON.stringify(noController))
+
+  /* ------------------------------- 4b. same-workspace conversation targeting ── */
+
+  {
+    // 用户 2026-10-17：要能往**同工作区的某个对话**发提示。跨工作区仍然只到工作区粒度
+    // （对方的会话清单是侦察面），所以 `session` 只在 `to === 自己工作区` 时有效。
+    mod.writeSubscriptions(ROOT, {
+      [mod.workspaceKey(WS_A)]: {
+        path: WS_A, active: true, session: 'session-inbox-a', deliveries: 0,
+        at: '2026-10-17T12:00:00+08:00',
+      },
+    })
+    const { tool: toolT, calls: callsT } = mount({
+      sessionCwds: { 'session-target-1': WS_A, 'session-b1': WS_B },
+      missingSessions: ['session-missing'],
+    })
+    const targeted = await toolT.execute({
+      operation: 'send', workspace: WS_A, text: '请继续审查，结束后回一条消息。',
+      to: WS_A, session: 'session-target-1',
+    })
+    ok(targeted.ok === true && /conversation session-target-1/.test(targeted.text),
+      'a same-workspace conversation can be targeted', targeted.text)
+    ok(callsT.create.length === 1 && callsT.create[0].workspaceId === 'ws-a'
+      && callsT.create[0].sessionId === 'session-target-1' && callsT.create[0].cwd === undefined,
+      'and it creates/adopts exactly that session', JSON.stringify(callsT.create))
+    ok(callsT.resolveAgent[0] === 'session-target-1',
+      'waking the named conversation, not the workspace inbox session',
+      JSON.stringify(callsT.resolveAgent))
+
+    const cross = await toolT.execute({
+      operation: 'send', workspace: WS_A, text: 'x', to: WS_B, session: 'session-target-1',
+    })
+    ok(cross.ok === false && /own workspace/.test(cross.text),
+      'cross-workspace targeting is refused (workspace-level only)', cross.text)
+    const foreign = await toolT.execute({
+      operation: 'send', workspace: WS_A, text: 'x', to: WS_A, session: 'session-b1',
+    })
+    ok(foreign.ok === false && /不属于本工作区/.test(foreign.text),
+      'a session that lives in another workspace is refused', foreign.text)
+    const missing = await toolT.execute({
+      operation: 'send', workspace: WS_A, text: 'x', to: WS_A, session: 'session-missing',
+    })
+    ok(missing.ok === false && /没有/.test(missing.text), 'an unknown session is reported', missing.text)
+
+    const { tool: toolArchived } = mount({
+      sessionCwds: { 'session-archived-1': WS_A }, archived: ['session-archived-1'],
+    })
+    const archivedSend = await toolArchived.execute({
+      operation: 'send', workspace: WS_A, text: 'x', to: WS_A, session: 'session-archived-1',
+    })
+    ok(archivedSend.ok === false && /已归档/.test(archivedSend.text),
+      'an archived conversation is refused', archivedSend.text)
+  }
 
   /* ------------------------------------- 5. sessions: the boundary is the caller's cwd ── */
 

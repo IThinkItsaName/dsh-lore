@@ -237,6 +237,33 @@ if (!hasPython) {
     'an unknown DSH_WORKLOG_PYTHON falls back to python / python3 / py (ENOENT only)',
     fallback.text)
 
+  // (d3) the sender boundary: `workspace` must be this session's own workspace — the same rule
+  //      `sessions` / `subscribe` already enforce. Otherwise `from:` is spoofable AND `file`
+  //      would be read relative to a directory the model picked (that is how a credential file
+  //      could be copied into a cross-workspace channel).
+  resetInbox()
+  const spoofSender = await tool.execute({ operation: 'send', workspace: WS_B, text: '假装从 B 发。' })
+  ok(spoofSender.ok === false && /sender/.test(spoofSender.text),
+    '`send` refuses a workspace that is not this session\'s own', spoofSender.text)
+  ok(letters().length === 0, 'and nothing is written for a refused sender', String(letters().length))
+  const outside = join(SANDBOX, 'outside-secret.txt')
+  writeFileSync(outside, 'DO-NOT-LEAVE-THE-WORKSPACE\n', 'utf8')
+  const escape = await tool.execute({ operation: 'send', workspace: WS_A, file: outside })
+  ok(escape.ok === false && /inside your workspace/.test(escape.text),
+    '`send --file` refuses a file outside the sender workspace', escape.text)
+  ok(letters().length === 0, 'and the outside file is not copied into the inbox', String(letters().length))
+  writeFileSync(join(WS_A, 'relative-note.txt'), '相对路径也可以。\n', 'utf8')
+  const relativeSent = await tool.execute({ operation: 'send', workspace: WS_A, file: 'relative-note.txt' })
+  ok(relativeSent.ok === true
+    && letters().some((letter) => letter.body === '相对路径也可以。\n'),
+    'a relative `file` is resolved inside the workspace', relativeSent.text)
+  {
+    const { tool: noInitSend } = mount({ noInitiator: true })
+    const refused = await noInitSend.execute({ operation: 'send', workspace: WS_A, text: 'x' })
+    ok(refused.ok === false && /拿不到/.test(refused.text),
+      'without an initiator `send` refuses rather than guessing a sender', refused.text)
+  }
+
   // (e) long text goes through a temp file (Windows argv caps at ~32 KiB), and stays intact.
   resetInbox()
   const long = `长正文头\n${'x'.repeat(40 * 1024)}`

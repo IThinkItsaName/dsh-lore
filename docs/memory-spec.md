@@ -301,7 +301,7 @@ promote suggest [--all]
 | 模式 | 机制 | 何时用 |
 |---|---|---|
 | **被动**（默认） | `PromptContext` 尾注入一行「待收 N 条」，等收件方下次开会话或自己来查 | 绝大多数情况 |
-| **主动**（逐工作区显式开关） | 收件方在自己的工作区跑 `journal.py inbox subscribe`（写 `<记忆根>/inbox-subscriptions.json`：固定 `session` id + 已推送条数）。发件方 `worklog_memory` 的 `send` 带 `to` 时：`ctx.sessionController.create({ cwd, sessionId })` → `ctx.sessionController.prompt(...)`（宿主建一条 `user/message` 并唤醒那一轮），推的是**不含正文**的提醒 | 确实需要对方**现在**动起来 |
+| **主动**（逐工作区显式开关） | 收件方在自己的工作区跑 `journal.py inbox subscribe`（写 `<记忆根>/inbox-subscriptions.json`：固定 `session` id + 已推送条数）。发件方 `worklog_memory` 的 `send` 带 `to` 时：`ctx.sessionController.create({ cwd, sessionId })` → `resolveAgent(sessionId)` → `agent.followup(createUserMessage(...))`（与 `dsh-schedule` 同一条投递路）→ `sessions.flush`，推的是**不含正文**的提醒 | 确实需要对方**现在**动起来 |
 
 **主动模式的代价必须写在这里**：它会在你不在场时**花额度**、并且**在没有上下文的情况下自作主张**。所以它默认关，且是**收件方工作区**的授权，不是发件方能决定的。
 
@@ -394,10 +394,11 @@ promote suggest [--all]
 CLI 写不了记忆根**（workspace-write 挡在 `~/dsh-lore-memory` 外，实测 `Permission denied`），
 所以同一件事也给了工具入口 `worklog_memory` 的 `subscribe`（`active: false` 撤销）——
 边界是**调用方 Agent 的 cwd**，发件方替别人开不了。发件方 `send` 带 `to` 时走
-`sessionController.create` → `sessionController.prompt`，推的是**不含正文**的提醒；每成功
-一条 +1，到 40 条换一个新会话（规矩 6）。`send` 不带 `to` 时只投不推，答案会说明"信在共享
-信箱里、任何工作区都能取"。**代价照旧**：主动送达会在收件人不在场时花额度，所以默认关、
-只有收件方能开。
+`sessionController.create` → `resolveAgent` → `agent.followup(createUserMessage(...))` →
+`sessions.flush`（**与 `dsh-schedule` 同一条投递路**；不用给界面用的 `prompt`，那条要过
+附件与上传绑定），推的是**不含正文**的提醒；每成功一条 +1，到 40 条换一个新会话（规矩 6）。
+`send` 不带 `to` 时只投不推，答案会说明"信在共享信箱里、任何工作区都能取"。**代价照旧**：
+主动送达会在收件人不在场时花额度，所以默认关、只有收件方能开。
 
 ⑤ **广播：不做（2026-10-17 定）。** 四条理由：
 

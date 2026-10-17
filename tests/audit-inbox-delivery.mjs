@@ -99,7 +99,7 @@ function letters() {
  * the real one hides exactly the failures the real one produces.
  */
 function makeCtx({ cwd = WS_A, sessions = [], titles = {}, noInitiator = false, noController = false } = {}) {
-  const calls = { create: [], prompt: [], promptSignals: [], tools: [], withoutInitiator: 0 }
+  const calls = { create: [], followup: [], flush: 0, resolveAgent: [], tools: [], withoutInitiator: 0 }
   const services = {
     sessionQuery: {
       readTitle: async (id) => (Object.prototype.hasOwnProperty.call(titles, id) ? { title: titles[id] } : undefined),
@@ -111,6 +111,12 @@ function makeCtx({ cwd = WS_A, sessions = [], titles = {}, noInitiator = false, 
       },
       ...(noInitiator ? {} : { currentInitiator: () => ({ session: { id: 'session-this', header: { cwd } } }) }),
     },
+    sessions: {
+      flush: async () => {
+        calls.flush += 1
+        return true
+      },
+    },
   }
   if (!noController) {
     services.sessionController = {
@@ -119,13 +125,15 @@ function makeCtx({ cwd = WS_A, sessions = [], titles = {}, noInitiator = false, 
         calls.create.push(request)
         return { sessionId: request.sessionId }
       },
-      prompt: async (request, signal) => {
-        // 真宿主第一行就 `signal.throwIfAborted()`（dsh 0.2.0-rc.2）。假宿主必须一样严：
-        // 漏传 signal 会在这里炸，而不是等到真机上炸。
-        signal.throwIfAborted()
-        calls.prompt.push(request)
-        calls.promptSignals.push(signal)
-        return { accepted: true }
+      // 与真宿主同形：`liveAgent` 返回 `{ agent }`，投递走 `agent.followup`（不是 `prompt`）。
+      resolveAgent: async (sessionId) => {
+        calls.resolveAgent.push(sessionId)
+        return {
+          agent: {
+            session: { id: sessionId },
+            followup: (message) => calls.followup.push(message),
+          },
+        }
       },
     }
   }
@@ -280,7 +288,7 @@ if (!hasPython) {
   })
   ok(notSubscribed.ok === true && /not subscribed/.test(notSubscribed.text),
     '`to` without an authorization stays passive (the sender cannot turn it on)', notSubscribed.text)
-  ok(calls2.create.length === 0 && calls2.prompt.length === 0,
+  ok(calls2.create.length === 0 && calls2.followup.length === 0,
     'and no session was created or prompted', JSON.stringify(calls2))
 
   // Authorize B (what `journal.py inbox subscribe` writes), then send: B's fixed inbox session
@@ -299,12 +307,17 @@ if (!hasPython) {
     && calls3.create[0].sessionId === sessionId,
     'delivery creates/adopts the fixed inbox session in the recipient workspace',
     JSON.stringify(calls3.create))
-  ok(calls3.prompt.length === 1 && calls3.prompt[0].sessionId === sessionId,
-    'delivery appends exactly one message to that session', JSON.stringify(calls3.prompt))
-  ok(calls3.promptSignals.length === 1 && calls3.promptSignals[0]?.aborted === false,
-    'the prompt gets a live AbortSignal — the host calls `signal.throwIfAborted()` first',
-    String(calls3.promptSignals[0]))
-  const notice = calls3.prompt[0]?.content?.[0]?.text ?? ''
+  ok(calls3.resolveAgent.length === 1 && calls3.resolveAgent[0] === sessionId,
+    'delivery resolves the live Agent of that session (the schedule path, not `prompt`)',
+    JSON.stringify(calls3.resolveAgent))
+  ok(calls3.followup.length === 1,
+    'delivery appends exactly one message to that session', JSON.stringify(calls3.followup))
+  const message = calls3.followup[0] ?? {}
+  ok(message.role === 'user' && message.source?.kind === 'user',
+    'the notice is an ordinary `user/message` (never developer/system)', JSON.stringify({ role: message.role, source: message.source }))
+  ok(calls3.flush === 1, 'and it asks the host to flush the session log (durable before we report success)',
+    String(calls3.flush))
+  const notice = message.content?.[0]?.text ?? ''
   ok(notice.includes('worklog_memory') && notice.includes('来信提醒'),
     'the notice says what it is and how to fetch', notice)
   ok(!notice.includes(marker),

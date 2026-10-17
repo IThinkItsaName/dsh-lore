@@ -74,6 +74,10 @@ const bareImports = [...entry.matchAll(/^\s*import[^\n]*from\s+['"]([^'"]+)['"]/
 const allowedBare = (spec) => spec.startsWith('node:')
   || spec === '@deepseek-ai/schemastery'
   || spec === '@deepseek-ai/dsh-tools'
+  // 2026-10-17：主动送达要构造一条 `user/message`（`createUserMessage`），那是
+  // `@deepseek-ai/dsh-llm` 的公开工厂 —— 宿主自己（schedule / session-controller）用的同一个。
+  // 它**不是**第三方：插件的 peerDependencies 里钉了版本，宿主运行时提供解析。
+  || spec === '@deepseek-ai/dsh-llm'
 const unexpected = bareImports.filter((spec) => !allowedBare(spec))
 ok(unexpected.length === 0,
    'every bare import is a node: builtin or a host-supplied @deepseek-ai package',

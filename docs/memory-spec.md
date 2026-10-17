@@ -390,11 +390,14 @@ promote suggest [--all]
 
 ④ **两种收法都已实现**（主动模式 / 被动计数 + `worklog_memory` 的 `inbox` 取件）。
 主动模式 2026-10-17 实装：收件方在**自己的工作区**跑 `inbox subscribe` 授权（写
-`<记忆根>/inbox-subscriptions.json`，里面有一个固定收件会话 id 与已推送条数）；发件方
-`send` 带 `to` 时走 `sessionController.create` → `sessionController.prompt`，推的是
-**不含正文**的提醒；每成功一条 +1，到 40 条换一个新会话（规矩 6）。`send` 不带 `to` 时
-只投不推，答案会说明"信在共享信箱里、任何工作区都能取"。**代价照旧**：主动送达会在收件人
-不在场时花额度，所以默认关、只有收件方能开。
+`<记忆根>/inbox-subscriptions.json`，里面有一个固定收件会话 id 与已推送条数）；**沙箱会话里
+CLI 写不了记忆根**（workspace-write 挡在 `~/dsh-lore-memory` 外，实测 `Permission denied`），
+所以同一件事也给了工具入口 `worklog_memory` 的 `subscribe`（`active: false` 撤销）——
+边界是**调用方 Agent 的 cwd**，发件方替别人开不了。发件方 `send` 带 `to` 时走
+`sessionController.create` → `sessionController.prompt`，推的是**不含正文**的提醒；每成功
+一条 +1，到 40 条换一个新会话（规矩 6）。`send` 不带 `to` 时只投不推，答案会说明"信在共享
+信箱里、任何工作区都能取"。**代价照旧**：主动送达会在收件人不在场时花额度，所以默认关、
+只有收件方能开。
 
 ⑤ **广播：不做（2026-10-17 定）。** 四条理由：
 

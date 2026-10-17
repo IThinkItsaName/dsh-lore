@@ -18,8 +18,8 @@
 > **曾用名 `dsh-worklog`**（2026-09-30 改名；GitHub 仓库同时改为 `IThinkItsaName/dsh-lore`，旧链接自动重定向）。
 > **环境变量仍是 `DSH_WORKLOG_*`**、技能名 `project-work-log`、工具名 `worklog_memory` 也都没变。
 
-版本变化见 [CHANGELOG.md](CHANGELOG.md)（最近三版：`0.8.1` 记忆根设置在桌面 profile 上真的生效 · `0.8.0` 记忆根可配置 ·
-`0.7.0` 跨工作区消息「取件」）。
+版本变化见 [CHANGELOG.md](CHANGELOG.md)（最近三版：`0.9.0` 信箱发信与主动送达 · `0.8.1` 记忆根设置在桌面 profile 上真的生效 ·
+`0.8.0` 记忆根可配置）。
 
 ## 一、三层的边界
 
@@ -54,7 +54,7 @@
 
 ```bash
 dsh plugin --profile <profile> add dsh-lore                # 按包名装（推荐：装 registry 上的发布版）
-dsh plugin --profile <profile> add dsh-lore@v0.8.1        # 固定到某个版本（tag 形态，`audit-versions` 会核对）
+dsh plugin --profile <profile> add dsh-lore@v0.9.0        # 固定到某个版本（tag 形态，`audit-versions` 会核对）
 dsh plugin --profile <profile> add /绝对/路径/<checkout>   # 从本地装 —— 见下面那条警告
 ```
 
@@ -71,7 +71,7 @@ dsh plugin --profile <profile> add /绝对/路径/<checkout>   # 从本地装 �
 
 ```bash
 pi install git:github.com/IThinkItsaName/dsh-lore            # 全局
-pi install git:github.com/IThinkItsaName/dsh-lore@v0.8.1     # 固定到 tag（推荐）
+pi install git:github.com/IThinkItsaName/dsh-lore@v0.9.0     # 固定到 tag（推荐）
 pi install -l git:github.com/IThinkItsaName/dsh-lore         # 只装到当前项目（写入 .pi/settings.json，可随仓库共享）
 ```
 

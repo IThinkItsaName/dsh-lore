@@ -215,7 +215,35 @@ if (!hasPython) {
     'and it arrives byte-for-byte (the temp file was only the transport)',
     String(letters()[0]?.body.length))
 
-  /* ------------------------------------------- 3. active delivery: authorization first ── */
+  /* ---------------------------------------- 3. subscribe: only your own workspace ── */
+
+  {
+    // 收件方的授权必须能在**没有 shell** 的沙箱会话里完成：CLI 写记忆根会被 workspace-write
+    // 挡住（实测 `Permission denied`），而插件跑在宿主进程里。所以 `subscribe` 也走工具；
+    // 边界与 `sessions` 同一条：调用方 Agent 的 cwd，`workspace` 参数不算数。
+    const { tool: toolSub } = mount({ cwd: WS_A })
+    const on = await toolSub.execute({ operation: 'subscribe', workspace: WS_A })
+    ok(on.ok === true && /active delivery is ON/.test(on.text), 'subscribe turns active delivery on', on.text)
+    const subs = mod.readSubscriptions(ROOT)
+    ok(subs[mod.workspaceKey(WS_A)]?.active === true,
+      'the authorization lands in the table', JSON.stringify(subs))
+    ok(String(subs[mod.workspaceKey(WS_A)]?.session ?? '').startsWith('session-'),
+      'with a fixed inbox session id (resume, not create-per-message)',
+      JSON.stringify(subs[mod.workspaceKey(WS_A)]))
+    const spoof = await toolSub.execute({ operation: 'subscribe', workspace: WS_B })
+    ok(spoof.ok === true && mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_B)] === undefined,
+      'the `workspace` argument cannot subscribe someone else (cwd wins)', spoof.text)
+    const off = await toolSub.execute({ operation: 'subscribe', workspace: WS_A, active: false })
+    ok(off.ok === true && /OFF/.test(off.text), 'active:false revokes it', off.text)
+    ok(mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_A)]?.active === false,
+      'the revocation is persisted (active:false), not a deleted row')
+    const { tool: noInit } = mount({ noInitiator: true })
+    const refusedSub = await noInit.execute({ operation: 'subscribe', workspace: WS_A })
+    ok(refusedSub.ok === false && /拿不到/.test(refusedSub.text),
+      'without an initiator subscribe refuses rather than guessing', refusedSub.text)
+  }
+
+  /* ------------------------------------------- 4. active delivery: authorization first ── */
 
   resetInbox()
   // No `to`: no push, and the answer must say the letter stays in the shared inbox.
@@ -285,7 +313,7 @@ if (!hasPython) {
   ok(noController.pushed === false && noController.reason === 'host-without-session-controller',
     'a host with no session controller reports it instead of pretending', JSON.stringify(noController))
 
-  /* ------------------------------------- 4. sessions: the boundary is the caller's cwd ── */
+  /* ------------------------------------- 5. sessions: the boundary is the caller's cwd ── */
 
   const sessions = [
     { sessionId: 'session-a1', cwd: WS_A, running: true, updatedAt: 2 },
@@ -311,7 +339,7 @@ if (!hasPython) {
   ok(refused.ok === false && /拿不到/.test(refused.text),
     'without an initiator it refuses rather than guessing a workspace', refused.text)
 
-  /* ---------------------------------------- 5. independence: a landed letter stays put ── */
+  /* ---------------------------------------- 6. independence: a landed letter stays put ── */
 
   resetInbox()
   const independenceMarker = 'INDEPENDENCE-MARKER-c4d1'

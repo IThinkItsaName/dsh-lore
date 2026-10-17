@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+## [0.9.0] - 2026-10-17
+
 ### 新增：信箱补上「发送」与「主动送达」；字段只加 `id` / `thread`
 
 2026-10-17 用户提了五点（发给谁 / 怎么发 / 发什么 / 怎么收 / 广播有没有必要），
@@ -23,8 +25,10 @@
   `thread`；`inbox list` / `take` 都显示。**别的字段不加**：正文永不进提示词，字段的收益只在
   `list` 的元信息里。
 - **主动送达**：CLI 新增 `inbox subscribe [--off]` / `unsubscribe` / `status`，授权表是
-  `<记忆根>/inbox-subscriptions.json`（固定收件会话 id + 已推送条数）。发件方 `send` 带 `to`
-  且对方已授权时：`sessionController.create({cwd, sessionId})` →
+  `<记忆根>/inbox-subscriptions.json`（固定收件会话 id + 已推送条数）。沙箱会话里 CLI 写不了
+  记忆根（`workspace-write` 挡在 `~/dsh-lore-memory` 外，实测），所以同一件事也给了工具入口
+  `worklog_memory` 的 `subscribe`（`active:false` 撤销；边界=调用方 Agent 的 cwd）。
+  发件方 `send` 带 `to` 且对方已授权时：`sessionController.create({cwd, sessionId})` →
   `sessionController.prompt(...)`（宿主建 `user/message`）→ 推一条**不含正文**的提醒，
   整段包在 `withoutInitiator` 里（免得把发件方变成它的父级）。
 - **收束（规矩 6）**：每成功推送一条 +1，满 40 条换一个新的收件会话 id；旧会话原样留着，
@@ -2037,7 +2041,8 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.1...HEAD
+[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.6.0...v0.7.0

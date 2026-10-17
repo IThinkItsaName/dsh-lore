@@ -378,6 +378,10 @@ python scripts/journal.py inbox subscribe     # 授权；--off 撤销，`unsubsc
 python scripts/journal.py inbox status        # 看是否开启、收件会话 id、已推送几条
 ```
 
+沙箱会话里 CLI 写不了记忆根（`workspace-write` 挡在 `~/dsh-lore-memory` 外），所以同一件事也
+可以在会话里用 `worklog_memory` 的 `subscribe` 操作（`active: false` 撤销）——它由插件写盘，
+边界是**本会话工作区**，替别人开不了。
+
 授权写在 `<记忆根>/inbox-subscriptions.json`（**不是记忆条目**：不进索引、不参与 lint），
 键是规范化后的工作区路径，值里有一个**固定收件会话 id**（有就 resume，没有才 create）
 和已推送条数。发件方用 `worklog_memory` 的 `send` 带 `to` 时，会：

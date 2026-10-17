@@ -99,7 +99,7 @@ function letters() {
  * the real one hides exactly the failures the real one produces.
  */
 function makeCtx({ cwd = WS_A, sessions = [], titles = {}, noInitiator = false, noController = false } = {}) {
-  const calls = { create: [], prompt: [], tools: [], withoutInitiator: 0 }
+  const calls = { create: [], prompt: [], promptSignals: [], tools: [], withoutInitiator: 0 }
   const services = {
     sessionQuery: {
       readTitle: async (id) => (Object.prototype.hasOwnProperty.call(titles, id) ? { title: titles[id] } : undefined),
@@ -119,8 +119,12 @@ function makeCtx({ cwd = WS_A, sessions = [], titles = {}, noInitiator = false, 
         calls.create.push(request)
         return { sessionId: request.sessionId }
       },
-      prompt: async (request) => {
+      prompt: async (request, signal) => {
+        // 真宿主第一行就 `signal.throwIfAborted()`（dsh 0.2.0-rc.2）。假宿主必须一样严：
+        // 漏传 signal 会在这里炸，而不是等到真机上炸。
+        signal.throwIfAborted()
         calls.prompt.push(request)
+        calls.promptSignals.push(signal)
         return { accepted: true }
       },
     }
@@ -297,6 +301,9 @@ if (!hasPython) {
     JSON.stringify(calls3.create))
   ok(calls3.prompt.length === 1 && calls3.prompt[0].sessionId === sessionId,
     'delivery appends exactly one message to that session', JSON.stringify(calls3.prompt))
+  ok(calls3.promptSignals.length === 1 && calls3.promptSignals[0]?.aborted === false,
+    'the prompt gets a live AbortSignal — the host calls `signal.throwIfAborted()` first',
+    String(calls3.promptSignals[0]))
   const notice = calls3.prompt[0]?.content?.[0]?.text ?? ''
   ok(notice.includes('worklog_memory') && notice.includes('来信提醒'),
     'the notice says what it is and how to fetch', notice)

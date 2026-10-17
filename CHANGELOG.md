@@ -37,6 +37,8 @@
 - **同/跨分治**：`worklog_memory` 新增 `sessions`，只列**调用方 Agent 的 `cwd`** 下的会话
   （标题来自 `sessionQuery.readTitle`）。边界**不取 `workspace` 参数**（模型能随手填一个别的
   路径），拿不到 initiator 就拒绝。跨工作区不枚举 —— 不是过滤掉了，是根本没去读。
+  **已归档的会话不列**：宿主 `list()` 返回完整语料，工具按 `workspaceRegistry.archivedSessionIds`
+  再过滤一次（归档 = 不想在任何"可选项"里再看到它）。
 - **递文件**：`put --file` 把整份文件当正文；单条上限 16 KiB → **64 KiB**（总量 256 → 512 KiB）。
   规则同时收紧：**不许**把文件直接放进对方目录（旧文那句"真要传文件应该进工作区、进记录"作废）。
 - **发件边界（复核补）**：`send` 的 `workspace` 必须是**本会话自己的工作区**（发件人身份，

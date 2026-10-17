@@ -98,12 +98,15 @@ function letters() {
  * because it used to expose the services as plain properties. A fake host that is easier than
  * the real one hides exactly the failures the real one produces.
  */
-function makeCtx({ cwd = WS_A, sessions = [], titles = {}, noInitiator = false, noController = false } = {}) {
+function makeCtx({ cwd = WS_A, sessions = [], titles = {}, archived = [], noInitiator = false, noController = false } = {}) {
   const calls = { create: [], followup: [], flush: 0, resolveAgent: [], tools: [], withoutInitiator: 0 }
   const services = {
     sessionQuery: {
       readTitle: async (id) => (Object.prototype.hasOwnProperty.call(titles, id) ? { title: titles[id] } : undefined),
     },
+    // 归档集合在宿主里由 registry 持有（`archivedSessionIds`），界面按它隐藏会话；
+    // 工具必须自己再过滤一次（`sessionController.list()` 返回的是完整语料）。
+    workspaceRegistry: { archivedSessionIds: archived.map(String) },
     agents: {
       withoutInitiator: async (fn) => {
         calls.withoutInitiator += 1
@@ -385,12 +388,20 @@ if (!hasPython) {
     { sessionId: 'session-a1', cwd: WS_A, running: true, updatedAt: 2 },
     { sessionId: 'session-b1', cwd: WS_B, running: false, updatedAt: 1 },
     { sessionId: 'session-a2', cwd: WS_A, running: false, updatedAt: 1 },
+    // 已归档：宿主的 `list()` 仍然返回它（完整语料），工具必须自己按 registry 过滤掉。
+    { sessionId: 'session-a3-archived', cwd: WS_A, running: false, updatedAt: 1 },
   ]
-  const titles = { 'session-a1': 'A 的工作标题', 'session-a2': 'A 的第二个标题', 'session-b1': 'B 的秘密标题' }
-  const { tool: tool5 } = mount({ cwd: WS_A, sessions, titles })
+  const titles = {
+    'session-a1': 'A 的工作标题', 'session-a2': 'A 的第二个标题',
+    'session-b1': 'B 的秘密标题', 'session-a3-archived': 'A 的已归档对话',
+  }
+  const { tool: tool5 } = mount({ cwd: WS_A, sessions, titles, archived: ['session-a3-archived'] })
   const listed = await tool5.execute({ operation: 'sessions', workspace: WS_A })
   ok(listed.ok === true && listed.text.includes('A 的工作标题') && listed.text.includes('A 的第二个标题'),
     '`sessions` lists the calling workspace\'s sessions with titles', listed.text)
+  ok(!listed.text.includes('A 的已归档对话') && !listed.text.includes('session-a3-archived'),
+    'archived sessions are NOT listed (the host list includes them; the tool filters by registry)',
+    listed.text)
   ok(!listed.text.includes('B 的秘密标题') && !listed.text.includes('session-b1'),
     'and never enumerates another workspace (that is its titles and timeline)', listed.text)
   const filtered = await tool5.execute({ operation: 'sessions', workspace: WS_A, query: '第二个' })

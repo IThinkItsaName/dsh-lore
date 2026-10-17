@@ -91,18 +91,16 @@ function letters() {
 /**
  * A fake host with only what this path uses. `calls` records every session operation, so the
  * assertions can read the exact request the plugin built.
+ *
+ * **Optional services are reachable only through `get()`** — that is what the real Cordis
+ * context does. On 2026-10-17 the first `sessions` call after a restart returned
+ * `cannot get property "sessionController" without inject`, and this harness could not see it
+ * because it used to expose the services as plain properties. A fake host that is easier than
+ * the real one hides exactly the failures the real one produces.
  */
 function makeCtx({ cwd = WS_A, sessions = [], titles = {}, noInitiator = false, noController = false } = {}) {
   const calls = { create: [], prompt: [], tools: [], withoutInitiator: 0 }
-  const ctx = {
-    skills: { registerProvider: () => () => {} },
-    tools: {
-      register: (definition) => {
-        calls.tools.push(definition)
-        return () => {}
-      },
-    },
-    logger: { info() {}, warn() {}, error() {} },
+  const services = {
     sessionQuery: {
       readTitle: async (id) => (Object.prototype.hasOwnProperty.call(titles, id) ? { title: titles[id] } : undefined),
     },
@@ -115,7 +113,7 @@ function makeCtx({ cwd = WS_A, sessions = [], titles = {}, noInitiator = false, 
     },
   }
   if (!noController) {
-    ctx.sessionController = {
+    services.sessionController = {
       list: async () => ({ items: sessions }),
       create: async (request) => {
         calls.create.push(request)
@@ -126,6 +124,19 @@ function makeCtx({ cwd = WS_A, sessions = [], titles = {}, noInitiator = false, 
         return { accepted: true }
       },
     }
+  }
+  const ctx = {
+    // `skills` / `tools` 声明在 inject 里，`logger` 是核心服务 —— 与真宿主一样可以直接访问。
+    skills: { registerProvider: () => () => {} },
+    tools: {
+      register: (definition) => {
+        calls.tools.push(definition)
+        return () => {}
+      },
+    },
+    logger: { info() {}, warn() {}, error() {} },
+    // 其余服务只经 `get()`：未经 inject 的直接属性访问在 Cordis 里会抛。
+    get: (name) => services[name],
   }
   return { ctx, calls }
 }

@@ -62,7 +62,7 @@ jobs:
       - name: Check the skill-only copy
         run: npm run test:skill-only
 
-      # 16 支 harness。它们各自的收尾都用 tests/_report.mjs 的 `report()`，
+      # 17 支 harness。它们各自的收尾都用 tests/_report.mjs 的 `report()`，
       # 有 FAIL 就 exit 1；有 SKIP 会在末行注明 `(N skipped)`，别把"没验"读成"验过"。
       # `tests/audit-harness-hygiene.mjs` 守着这份名单本身：磁盘上的门禁与这里列的对不上就红。
       - name: Plugin harnesses

@@ -278,7 +278,9 @@ feedback: 评价-worklog.md
 ```
 memory publish | collect [--dry-run] | add | search | index [--check] | lint [--strict] | status
 dream [ROOT] [--dry-run] [--force] | dream --accept [--in FILE] | dream --check [--strict]
-inbox put | list [--json] | take NAME [--into-record TITLE] [--keep] | sweep [--older-than N] [--apply] | count
+inbox put [--text T | --file F] [--thread ID] | list [--json] | take NAME [--into-record TITLE] [--keep]
+inbox sweep [--older-than N] [--apply] | count
+inbox subscribe [--off] | unsubscribe | status            # 收件方的主动送达授权（[ROOT] 是工作区）
 promote suggest [--all]
 ```
 
@@ -299,11 +301,11 @@ promote suggest [--all]
 | 模式 | 机制 | 何时用 |
 |---|---|---|
 | **被动**（默认） | `PromptContext` 尾注入一行「待收 N 条」，等收件方下次开会话或自己来查 | 绝大多数情况 |
-| **主动**（逐工作区显式开关） | `ctx.agents.create({ sessionId, meta: { cwd } })` 或 `resume()`，把消息作为一条 `user/message` 追加 | 确实需要对方**现在**动起来 |
+| **主动**（逐工作区显式开关） | 收件方在自己的工作区跑 `journal.py inbox subscribe`（写 `<记忆根>/inbox-subscriptions.json`：固定 `session` id + 已推送条数）。发件方 `worklog_memory` 的 `send` 带 `to` 时：`ctx.sessionController.create({ cwd, sessionId })` → `ctx.sessionController.prompt(...)`（宿主建一条 `user/message` 并唤醒那一轮），推的是**不含正文**的提醒 | 确实需要对方**现在**动起来 |
 
 **主动模式的代价必须写在这里**：它会在你不在场时**花额度**、并且**在没有上下文的情况下自作主张**。所以它默认关，且是**收件方工作区**的授权，不是发件方能决定的。
 
-### 五条设计规矩
+### 六条设计规矩
 
 1. **权限跟着收件方**。消息**永不携带**沙箱模式；自动拉起的会话沿用目标工作区的**当前策略**。
    `sandboxPolicy.resolve()` 的语义是「用户批准的显式模式 > 会话最后一次 `sandbox/mode` 事件 > 部署默认」，
@@ -323,8 +325,11 @@ promote suggest [--all]
    当成上下文的一部分，而它其实是外部输入；把它留在"要不要去取"这一步，决定权才在收件方手里。
    配套的机械痕迹：`put` 落盘时写 `from` / `at` / 「不可信输入」头部，`list` 显示 `from`、
    `take` 把整段渲染出来 —— 于是规矩 4 那条"消息不可信"在**被动模式下也不是一句口头约定**。
-6. **收件会话会长期增长**，所以它需要自己的收束规则（定期收敛或到一定条数归档）——
-   这一条**尚未实现**，是本设计的已知缺口。
+6. **收件会话会长期增长**，所以它需要自己的收束规则。**已实现（2026-10-17）**：每成功推送
+   一条提醒就 +1，到 `INBOX_SESSION_ROTATE_AFTER`（40）条时换一个新的收件会话 id；旧会话
+   原样留着，由用户自己归档（不删、不清空）。计数写在授权表里，**只有真的推进去了才 +1**
+   —— 失败不记账，下一次还会再试。**没实现的那半**：按时间收敛（"超过 N 天没动过就换"）
+   没做；现在的判据只有条数。
 
 ### 取件：正文以**文件**进收件方工作区，而不是以文字进提示词
 
@@ -360,17 +365,36 @@ promote suggest [--all]
 目标时，走界面由**用户**挑，模型只负责发给被挑中的那个工作区 —— 侦察面因此不进模型这一侧。
 （"随对话内容自动改标题"那类插件帮不上这里：标题正是从**内容**推出来的元信息。）
 
+**已落地（2026-10-17）**：`worklog_memory` 的 `sessions` 操作列**同工作区**的会话（标题来自
+`sessionQuery.readTitle`）。边界取**调用方 Agent 的 `cwd`**，`workspace` 参数不参与判定
+（模型能随手填一个别的路径）；拿不到 initiator 就**拒绝**，不猜。跨工作区的会话清单在这里
+没有枚举路径 —— 不是"过滤掉了"，是根本没去读。
+
 ② **发送工具：做 `put` 的薄包装，但"递文件"必须装进信里。** 工具层给 `--text`（短）/
 `--file`（长）两条，写路径仍然只有 `put`（CLI 是权威）。**不许把文件直接放进对方目录**：
 `from` / `at` / 「不可信输入」头部要跟着正文走（规矩 5 的机械痕迹），"文件"在协议里是
 **信的正文**，不是旁路。收件侧 `.lore-inbox/` 已经是"整份文件进工作区"，两侧对称。
 
+**已落地（2026-10-17）**：`send` 的 `text` / `file` 两条参数（长正文 >8 KiB 自动落临时文件
+再走 `--file`，避开 Windows 命令行上限）。实现是起 `journal.py inbox put` 子进程 —— **不重写
+一遍格式**，于是"写路径只有一条"是真话而不是纪律；子进程的 stdio 走**文件**而不是管道
+（受限沙箱里 Node 的 pipe 会 `EPERM`，实测过）。
+
 ③ **字段只加两个**：稳定 `id`（去重 / 幂等）与可选 `thread`（来回）。`from` / `at` /
 「不可信输入」已经覆盖了"时间与来去"。**别再堆字段** —— 正文永不进提示词，字段的收益
 只体现在 `list` 的元信息里。
 
-④ **两种收法都已经实现**（主动模式 / 被动计数 + `worklog_memory` 的 `inbox` 取件）。
-还欠的两点记在这儿：主动模式"立刻提醒去读"的 UX；规矩 6 那条**收件会话收束规则**。
+**已落地（2026-10-17）**：`id` = 正文的 sha256 前 16 位（同一条正文重投得到同一个 id；
+它**不是防篡改**，只是"哪一条"的标签），`thread` 只在真回信时写，不塞空字段；
+`inbox list` 与 `inbox take` 都显示这两个字段。
+
+④ **两种收法都已实现**（主动模式 / 被动计数 + `worklog_memory` 的 `inbox` 取件）。
+主动模式 2026-10-17 实装：收件方在**自己的工作区**跑 `inbox subscribe` 授权（写
+`<记忆根>/inbox-subscriptions.json`，里面有一个固定收件会话 id 与已推送条数）；发件方
+`send` 带 `to` 时走 `sessionController.create` → `sessionController.prompt`，推的是
+**不含正文**的提醒；每成功一条 +1，到 40 条换一个新会话（规矩 6）。`send` 不带 `to` 时
+只投不推，答案会说明"信在共享信箱里、任何工作区都能取"。**代价照旧**：主动送达会在收件人
+不在场时花额度，所以默认关、只有收件方能开。
 
 ⑤ **广播：不做（2026-10-17 定）。** 四条理由：
 
@@ -390,6 +414,10 @@ promote suggest [--all]
 ⑥ **独立性要可断言，不能靠假定。** "不同对话与工作区互不串"应当有一条**能跑**的反向验证
 （A 工作区的信箱正文永不进 B 的上下文与落点）—— 同一天 `wl/0116` 那次事故的教训：
 隔离被假定、没人验，九轮全绿也能把数据写到别人家里。
+
+**已落地（2026-10-17）**：`tests/audit-inbox-delivery.mjs` 断言四件事 —— 列表与取件都
+不返回正文；主动提醒里没有正文标记；取走的信只落在取件方的工作区（别处没有 `.lore-inbox/`）；
+`sessions` 列不到别的工作区。它跑在隔离记忆根上，A/B 两个假工作区都只活在那次运行里。
 
 ## 十二、升格为技能
 

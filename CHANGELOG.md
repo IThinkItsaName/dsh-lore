@@ -8,6 +8,39 @@
 
 ## [未发布]
 
+### 新增：信箱补上「发送」与「主动送达」；字段只加 `id` / `thread`
+
+2026-10-17 用户提了五点（发给谁 / 怎么发 / 发什么 / 怎么收 / 广播有没有必要），
+`docs/memory-spec.md` §十一 末节定案。**定案时那节写着「两种收法都已经实现」，而主动模式在
+`lib/index.js` 里一行都没有**（没有 `sessionController`、没有 `followup`；git 历史里也从未
+有过）—— 这一版把它做实，并补上「独立性要可断言」。
+
+- **发送**：`worklog_memory` 新增 `send`（`text` 短 / `file` 整份文件）。实现是起
+  `journal.py inbox put` 子进程 —— **写路径仍然只有 CLI 一条**，插件不重写格式。长正文
+  （>8 KiB）自动落临时文件再走 `--file`（Windows 命令行有长度上限）；子进程 stdio 走**文件**
+  而不是管道（受限沙箱里 Node 的 pipe 会 `EPERM`，实测过）。`send` 可带 `thread`。
+- **字段**：信的头部加 `id`（正文 sha256 前 16 位 —— 同一条正文重投得到同一个 id）与可选
+  `thread`；`inbox list` / `take` 都显示。**别的字段不加**：正文永不进提示词，字段的收益只在
+  `list` 的元信息里。
+- **主动送达**：CLI 新增 `inbox subscribe [--off]` / `unsubscribe` / `status`，授权表是
+  `<记忆根>/inbox-subscriptions.json`（固定收件会话 id + 已推送条数）。发件方 `send` 带 `to`
+  且对方已授权时：`sessionController.create({cwd, sessionId})` →
+  `sessionController.prompt(...)`（宿主建 `user/message`）→ 推一条**不含正文**的提醒，
+  整段包在 `withoutInitiator` 里（免得把发件方变成它的父级）。
+- **收束（规矩 6）**：每成功推送一条 +1，满 40 条换一个新的收件会话 id；旧会话原样留着，
+  由用户归档。失败不记账，下一次还会再试。
+- **同/跨分治**：`worklog_memory` 新增 `sessions`，只列**调用方 Agent 的 `cwd`** 下的会话
+  （标题来自 `sessionQuery.readTitle`）。边界**不取 `workspace` 参数**（模型能随手填一个别的
+  路径），拿不到 initiator 就拒绝。跨工作区不枚举 —— 不是过滤掉了，是根本没去读。
+- **递文件**：`put --file` 把整份文件当正文；单条上限 16 KiB → **64 KiB**（总量 256 → 512 KiB）。
+  规则同时收紧：**不许**把文件直接放进对方目录（旧文那句"真要传文件应该进工作区、进记录"作废）。
+- **独立性可断言**：新增 `tests/audit-inbox-delivery.mjs` —— 列表与取件都不返回正文、主动
+  提醒里没有正文标记、取走的信只落在取件方的工作区、`sessions` 列不到别的工作区、
+  `workspaceKey` 与 CLI 的 `subscriptions_key` 对拍（两个进程一个算法）。
+- **文档**：`memory-spec.md` §十一 把「已实现」改成实话并写明授权/收束/边界；`commands.md`
+  的 ROOT 矩阵与信箱一节、`references/memory.md`、`SETTINGS.md`（`DSH_WORKLOG_PYTHON`）同步。
+- 门禁：自测 798、`test:plugin` **17 支**全绿（新增一支）、`audit` CLEAN。
+
 ### 修复：记忆根隔离只钉 `DSH_HOME`，罩不住 0.8.0 的第四级默认根
 
 `_selftest.py` 的 `memory_phase` 从 2026-09-28 那次真实事故起就在整相外层钉 `DSH_HOME`，

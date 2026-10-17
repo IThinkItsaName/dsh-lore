@@ -30,13 +30,15 @@
   **它不知道 DSH 存在** —— 这是硬边界，也是 `skill-only/` 那条发行线的前提。
 - **记忆层**：写在 CLI（`journal.py memory …`，要过来源分档、索引重建、`lint`），读在工具（`worklog_memory`，
   唯一**不离开会话、不靠 shell** 的读路）。**这条不对称是有意的**：判定只有一处定义。
-- **插件层**另有：待收条数尾注入（只在变化时追加，空信箱零成本）、技能注册、配置卡片。
+  信箱也在这层：`send` 发信、`inbox` 取件、`sessions` 列**本工作区**的会话标题；主动送达要
+  收件方先在**自己**的工作区 `inbox subscribe`（默认关，会在收件人不在场时花额度）。
+- **插件层**另有：待收条数尾注入（只在变化时追加，空信箱零成本）、主动送达的提醒推送、技能注册、配置卡片。
 
 ## 二、装完你会得到什么
 
 | 装法 | 得到 | 得不到 |
 |---|---|---|
-| **DSH 插件包**（本仓库） | 三个技能 + 记忆索引注入 + `worklog_memory` 工具（记忆读写 + 信箱取件）+ 配置卡片 | —— |
+| **DSH 插件包**（本仓库） | 三个技能 + 记忆索引注入 + `worklog_memory` 工具（记忆读写 + 信箱收发 + 本工作区会话清单）+ 配置卡片 | —— |
 | **普通 Agent Skill**（`skills/`） | 只要 `project-work-log`：完整的记录体系与 27 个命令 | 记忆注入、工具、配置卡片 |
 | **纯文档变体**（`skill-only/`） | 同一套约定与模板，**没有脚本**（给跑不了 Python 的平台） | 机械门禁、分析命令 |
 
@@ -102,7 +104,7 @@ python <skill>/scripts/journal.py check --strict --lint       # 结构 + 内容�
 | 门禁 | `check`（结构）、`lint`（内容质量）—— 有 ERROR 时退出码 1 |
 | 分析生成 | `stats`、`topics`、`digest`（交接摘要）、`retro`（复盘骨架）、`export`（JSON/CSV） |
 | 容器维护 | `archive`（篇号区间归档 + 链接重写）、`split`（按年分卷）、`prune`（冷存候选，默认只报告） |
-| **记忆（跨工作区）** | `memory publish\|collect\|add\|search\|index\|lint\|status`、`dream`、`inbox put\|list\|take\|sweep\|count`、`promote suggest\|scaffold`（升格为技能） |
+| **记忆（跨工作区）** | `memory publish\|collect\|add\|search\|index\|lint\|status`、`dream`、`inbox put\|list\|take\|sweep\|count`、`inbox subscribe\|unsubscribe\|status`（主动送达授权）、`promote suggest\|scaffold`（升格为技能） |
 
 完整参数见 [`references/commands.md`](skills/project-work-log/references/commands.md)；记忆层布局与准入规则见
 [`docs/memory-spec.md`](docs/memory-spec.md)。

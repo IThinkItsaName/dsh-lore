@@ -149,6 +149,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 | `DSH_WORKLOG_SETTINGS` | 直接指定设置文件的**完整路径**，压过 `DSH_HOME`。给便携安装与测试用。 |
 | `DSH_WORKLOG_MEMORY` | 直接指定**全局记忆根目录**的完整路径，压过 `DSH_HOME`。同样给便携安装与测试用 —— 测试必须能指向临时目录，否则跑一次就会动到用户真实的记忆库。 |
 | `DSH_WORKLOG_TRACE` | 诊断日志的目标文件。见 `lib/index.js` 顶部注释。 |
+| `DSH_WORKLOG_PYTHON` | `send`（发信）调用的解释器，默认 `python`。发信是**薄包装** `journal.py inbox put`（写路径只有 CLI 一条），所以要一个能跑 Python 的解释器；只在真正发信时才用得上，列不了会话与取件都不需要它。 |
 
 ## 已知配置键
 

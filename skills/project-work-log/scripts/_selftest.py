@@ -3695,8 +3695,8 @@ def _memory_phase(parent: str) -> None:
         with open(os.path.join(inbox, first_item), "rb") as fh:
             raw = fh.read()
     meta, body = JOURNAL.inbox_split(raw.decode("utf-8"))
-    ok(meta.get("from") and meta.get("at") and "不可信输入" in meta.get("note", ""),
-       "inbox: 落盘时写下 from / at /「不可信输入」那句（头部由工具渲染）", str(meta))
+    ok(meta.get("from") and meta.get("at") and meta.get("id") and "不可信输入" in meta.get("note", ""),
+       "inbox: 落盘时写下 from / at / id /「不可信输入」那句（头部由工具渲染）", str(meta))
     ok(meta.get("from") == JOURNAL.memory_workspace_name(base),
        "inbox: from 取的是**命令运行所在目录**的名字（不提供能随便填的字段）", str(meta))
     ok(body == msg + "\n",
@@ -3714,7 +3714,8 @@ def _memory_phase(parent: str) -> None:
     else:
         golden = read_bytes(fixture)
         gmeta, gbody = JOURNAL.inbox_split(golden.decode("utf-8"))
-        replay = (JOURNAL.inbox_header(gmeta.get("from", ""), gmeta.get("at", ""))
+        replay = (JOURNAL.inbox_header(gmeta.get("from", ""), gmeta.get("at", ""),
+                                       gmeta.get("id", ""), gmeta.get("thread"))
                   + gbody).encode("utf-8")
         ok(replay == golden,
            "inbox: 夹具能被 inbox_header 逐字节重放（头部措辞/那句 note 不许悄悄改）",
@@ -3737,6 +3738,68 @@ def _memory_phase(parent: str) -> None:
         ok(produced == golden,
            "inbox: 真跑一次 inbox put，除 at: 外与黄金夹具逐字节相同（夹具不会悄悄过期）",
            f"produced={produced[:160]!r} golden={golden[:160]!r}")
+    # --- id / thread：2026-10-17 定的两个字段 -----------------------------------
+    # 用**独立记忆根**：投进上面的 `mem` 会把 `inbox count 的第一行就是一个整数` 从 1 变成 3。
+    field_mem = os.path.join(base, "field-mem")
+    field_inbox = JOURNAL.memory_inbox_dir(field_mem)
+    same = "去重键的正文"
+    r1 = run(base, "inbox", "put", same, "--memory", field_mem)
+    r2 = run(base, "inbox", "put", same, "--memory", field_mem)
+    ok(r1.returncode == 0 and r2.returncode == 0, "inbox: 同一条正文可以重投", r1.stdout + r2.stdout)
+    fmetas = []
+    for name in sorted(os.listdir(field_inbox)):
+        fmetas.append(JOURNAL.inbox_split(
+            read_bytes(os.path.join(field_inbox, name)).decode("utf-8"))[0])
+    ok(len(fmetas) == 2 and fmetas[0].get("id") and fmetas[0].get("id") == fmetas[1].get("id"),
+       "inbox: id 是正文的稳定摘要 —— 同一条重投得到同一个 id（去重 / 幂等）", str(fmetas))
+    ok(JOURNAL.inbox_message_id(same + "\n") == fmetas[0].get("id"),
+       "inbox: id 就是正文的 sha256 前 16 位（换一条正文就换一个 id）", str(fmetas))
+    ok(not fmetas[0].get("thread") and not fmetas[1].get("thread"),
+       "inbox: 不给 --thread 就不写这个字段（不塞空字段）", str(fmetas))
+    reply = run(base, "inbox", "put", "这是一封回信", "--thread", fmetas[0]["id"],
+                "--memory", field_mem)
+    ok(reply.returncode == 0, "inbox: --thread 可以指向一条消息 id", reply.stdout + reply.stderr)
+    r = run(base, "inbox", "list", "--memory", field_mem)
+    ok(f"thread={fmetas[0]['id']}" in r.stdout,
+       "inbox: list 里能看到 thread（来回可对）", r.stdout)
+    bad_thread = run(base, "inbox", "put", "x", "--thread", "not-a-hex-id", "--memory", field_mem)
+    ok(bad_thread.returncode == 1 and "十六进制" in bad_thread.stdout,
+       "inbox: 不是消息 id 的 --thread 被拒绝（不是静默忽略）", bad_thread.stdout)
+    # `--text` 与位置参数等价，且**不许**和 `--file` 一起给（递文件就把整份文件当正文）。
+    via_flag = run(base, "inbox", "put", "--text", "用选项传的正文", "--memory", field_mem)
+    ok(via_flag.returncode == 0, "inbox: --text 可以替代位置参数", via_flag.stdout + via_flag.stderr)
+    whole = os.path.join(base, "payload.txt")
+    write(whole, "整份文件的内容\n第二行\n")
+    via_file = run(base, "inbox", "put", "--file", whole, "--memory", field_mem)
+    ok(via_file.returncode == 0, "inbox: --file 把整份文件当正文投进去", via_file.stdout + via_file.stderr)
+    both = run(base, "inbox", "put", "x", "--file", whole, "--memory", field_mem)
+    ok(both.returncode == 1 and "只能给一个" in both.stdout,
+       "inbox: 文本与 --file 同时给会被拒绝（别猜作者想投哪个）", both.stdout)
+    # --- 主动送达的授权（2026-10-17）：默认关，开/关都要落盘，status 能读回来 ----
+    sub_mem = os.path.join(base, "sub-mem")
+    sub_path = os.path.join(sub_mem, JOURNAL.MEMORY_SUBSCRIPTIONS_NAME)
+    r = run(base, "inbox", "status", "--root", base, "--memory", sub_mem)
+    ok("关（未授权）" in r.stdout, "inbox: 主动送达默认关（未授权）", r.stdout)
+    r = run(base, "inbox", "subscribe", "--root", base, "--memory", sub_mem)
+    ok(r.returncode == 0 and os.path.isfile(sub_path),
+       "inbox: subscribe 落下授权表（不是只打印一句话）", r.stdout + r.stderr)
+    subs = json.loads(read_bytes(sub_path).decode("utf-8"))
+    ws = subs.get("workspaces", {})
+    entry = ws.get(JOURNAL.subscriptions_key(base), {})
+    ok(bool(entry) and entry.get("active") is True and str(entry.get("session", "")).startswith("session-"),
+       "inbox: 授权按规范化工作区路径记，收件会话有固定 id（有就 resume、没有才 create）",
+       str(subs))
+    r = run(base, "inbox", "status", "--root", base, "--memory", sub_mem)
+    ok("主动送达：开" in r.stdout and entry.get("session", "") in r.stdout,
+       "inbox: status 读回授权与收件会话", r.stdout)
+    r = run(base, "inbox", "unsubscribe", "--root", base, "--memory", sub_mem)
+    ok(r.returncode == 0 and "已撤销" in r.stdout, "inbox: unsubscribe 撤销授权", r.stdout)
+    subs = json.loads(read_bytes(sub_path).decode("utf-8"))
+    ok(subs["workspaces"][JOURNAL.subscriptions_key(base)].get("active") is False,
+       "inbox: 撤销是落盘的（active: false），不是把记录删掉", str(subs))
+    # 授权表与记忆根平级、**不进**记忆条目（`memory_volumes` 只认 `NN-*.md` 目录）。
+    ok(JOURNAL.load_memory_entries(sub_mem) == [],
+       "inbox: 授权表不是记忆条目（不索引、不参与 lint）")
     r = m(base, "inbox", "list")
     ok(f"from={meta.get('from')}" in r.stdout and "样式表要加前缀" in r.stdout,
        "inbox: list 显示发件方与原消息首行", r.stdout)
@@ -3780,8 +3843,12 @@ def _memory_phase(parent: str) -> None:
     ok(r.returncode == 0 and "样式表要加前缀" in r.stdout, "inbox: list 列出条目", r.stdout)
     r = m(base, "inbox", "list", "--json")
     ok(r.returncode == 0 and '"name"' in r.stdout, "inbox: list --json 给机器读", r.stdout)
-    # 上限：单条 / 条数 / 总量
-    r = m(base, "inbox", "put", "x" * (JOURNAL.MEMORY_INBOX_ITEM_MAX_BYTES + 1))
+    # 上限：单条 / 条数 / 总量。单条这一条用**文件**投 —— 64 KiB 的正文塞不进 Windows
+    # 的命令行（`CreateProcess` 有长度上限，实测 `[WinError 206] 文件名或扩展名太长`），
+    # 用 `--file` 才测得到"上限"本身，而不是"命令行长度"。
+    oversized = os.path.join(base, "oversized.txt")
+    write(oversized, "x" * (JOURNAL.MEMORY_INBOX_ITEM_MAX_BYTES + 1))
+    r = m(base, "inbox", "put", "--file", oversized)
     ok(r.returncode != 0 and "单条" in r.stdout,
        "inbox: 单条超上限被拒绝（写满报错，不静默堆积）", r.stdout[:120])
     r = m(base, "inbox", "put", "")

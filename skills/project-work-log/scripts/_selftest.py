@@ -3747,20 +3747,30 @@ def _memory_phase(parent: str) -> None:
     r2 = run(base, "inbox", "put", same, "--memory", field_mem)
     ok(r1.returncode == 0 and r2.returncode == 0, "inbox: 同一条正文可以重投", r1.stdout + r2.stdout)
     fmetas = []
-    for name in sorted(os.listdir(field_inbox)):
+    # 目录可能整个不在（变异"`--memory` 不再覆盖路径"会让信写到别的根）：当"一个条目都没有"，
+    # 下面的断言自然变红，而相不会带着 FileNotFoundError 结束（同族的坑见 3680 那段注释）。
+    field_names = sorted(os.listdir(field_inbox)) if os.path.isdir(field_inbox) else []
+    for name in field_names:
         fmetas.append(JOURNAL.inbox_split(
             read_bytes(os.path.join(field_inbox, name)).decode("utf-8"))[0])
-    ok(len(fmetas) == 2 and fmetas[0].get("id") and fmetas[0].get("id") == fmetas[1].get("id"),
+    # 空列表时也别取下标：变异"`--memory` 不再覆盖路径"会让这个目录不存在、fmetas 为空，
+    # `fmetas[0]` 就是 IndexError —— 那会**带走整相**（C>0），而不是让断言变红
+    # （2026-10-17 全量跑就在这里崩过）。
+    f0 = fmetas[0] if fmetas else {}
+    f1 = fmetas[1] if len(fmetas) > 1 else {}
+    ok(len(fmetas) == 2 and f0.get("id") and f0.get("id") == f1.get("id"),
        "inbox: id 是正文的稳定摘要 —— 同一条重投得到同一个 id（去重 / 幂等）", str(fmetas))
-    ok(JOURNAL.inbox_message_id(same + "\n") == fmetas[0].get("id"),
+    ok(JOURNAL.inbox_message_id(same + "\n") == f0.get("id"),
        "inbox: id 就是正文的 sha256 前 16 位（换一条正文就换一个 id）", str(fmetas))
-    ok(not fmetas[0].get("thread") and not fmetas[1].get("thread"),
+    ok(not f0.get("thread") and not f1.get("thread"),
        "inbox: 不给 --thread 就不写这个字段（不塞空字段）", str(fmetas))
-    reply = run(base, "inbox", "put", "这是一封回信", "--thread", fmetas[0]["id"],
+    # 用 `.get()` 而不是 `["id"]`：变异"文本模式直接写"会把这封信用 CRLF 落盘，
+    # `inbox_split` 于是解析不出头部（meta 为空），取下标就是 KeyError —— 同样是相崩。
+    reply = run(base, "inbox", "put", "这是一封回信", "--thread", f0.get("id") or "",
                 "--memory", field_mem)
     ok(reply.returncode == 0, "inbox: --thread 可以指向一条消息 id", reply.stdout + reply.stderr)
     r = run(base, "inbox", "list", "--memory", field_mem)
-    ok(f"thread={fmetas[0]['id']}" in r.stdout,
+    ok(f"thread={f0.get('id')}" in r.stdout,
        "inbox: list 里能看到 thread（来回可对）", r.stdout)
     bad_thread = run(base, "inbox", "put", "x", "--thread", "not-a-hex-id", "--memory", field_mem)
     ok(bad_thread.returncode == 1 and "十六进制" in bad_thread.stdout,
@@ -3796,7 +3806,16 @@ def _memory_phase(parent: str) -> None:
     r = run(base, "inbox", "subscribe", "--root", base, "--memory", sub_mem)
     ok(r.returncode == 0 and os.path.isfile(sub_path),
        "inbox: subscribe 落下授权表（不是只打印一句话）", r.stdout + r.stderr)
-    subs = json.loads(read_bytes(sub_path).decode("utf-8"))
+
+    # 授权表可能压根没落盘（变异"`--memory` 不再覆盖路径"会让 subscribe 写到别处，
+    # `read_bytes` 拿到的是哨兵文本）—— 解析失败就当空表，让断言自然变红，别让相崩掉。
+    def _read_subs(path: str) -> dict:
+        try:
+            return json.loads(read_bytes(path).decode("utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    subs = _read_subs(sub_path)
     ws = subs.get("workspaces", {})
     entry = ws.get(JOURNAL.subscriptions_key(base), {})
     ok(bool(entry) and entry.get("active") is True and str(entry.get("session", "")).startswith("session-"),
@@ -3807,8 +3826,8 @@ def _memory_phase(parent: str) -> None:
        "inbox: status 读回授权与收件会话", r.stdout)
     r = run(base, "inbox", "unsubscribe", "--root", base, "--memory", sub_mem)
     ok(r.returncode == 0 and "已撤销" in r.stdout, "inbox: unsubscribe 撤销授权", r.stdout)
-    subs = json.loads(read_bytes(sub_path).decode("utf-8"))
-    ok(subs["workspaces"][JOURNAL.subscriptions_key(base)].get("active") is False,
+    subs = _read_subs(sub_path)
+    ok(subs.get("workspaces", {}).get(JOURNAL.subscriptions_key(base), {}).get("active") is False,
        "inbox: 撤销是落盘的（active: false），不是把记录删掉", str(subs))
     # 授权表与记忆根平级、**不进**记忆条目（`memory_volumes` 只认 `NN-*.md` 目录）。
     ok(JOURNAL.load_memory_entries(sub_mem) == [],
@@ -4143,7 +4162,8 @@ def numbering_phase(parent: str) -> None:
         r = run(take_con, "inbox", "put", f"payload {i}", "--memory", take_mem)
         ok(r.returncode == 0, f"concurrency fixture: inbox put {i}", r.stdout + r.stderr)
     take_inbox = JOURNAL.memory_inbox_dir(take_mem)
-    items = sorted(os.listdir(take_inbox))
+    # 同上：`--memory` 被变异弄失效时这个目录根本不会建出来，listdir 会带走整相。
+    items = sorted(os.listdir(take_inbox)) if os.path.isdir(take_inbox) else []
     procs = [subprocess.Popen(
         [sys.executable, TOOL, "inbox", "take", items[i], "--into-record", "same title",
          "--memory", take_mem, "--root", take_con],
@@ -4171,8 +4191,9 @@ def numbering_phase(parent: str) -> None:
        "6 个进程同时 take：六条正文都在，没有哪一条被覆盖掉",
        f"（来自信箱 ×{taken.count('（来自信箱')}；"
        f"缺={[i for i in range(6) if f'payload {i}' not in taken]}）")
-    ok(os.listdir(take_inbox) == [],
-       "6 个进程同时 take：取走的六条都从信箱里删干净了", str(os.listdir(take_inbox)))
+    take_left = sorted(os.listdir(take_inbox)) if os.path.isdir(take_inbox) else []
+    ok(not take_left,
+       "6 个进程同时 take：取走的六条都从信箱里删干净了", str(take_left))
 
     # ---- 占号对账：**确定性**地撞号（第三轮复查 N-A）------------------- #
     #
@@ -4436,6 +4457,21 @@ def card_phase(tmp: str) -> None:
     # 详见 `card_record_long_sentence()` 的说明。别删：删了那条断言就没有反例可抓。
     write(os.path.join(cont, "0004-longsentence.md"), card_record_long_sentence(
         "0004", "长句", "长句这条结论要被摘要截断。"))
+    # 第五档：正文**两句以上**（第一句带句号，后面还有正文）—— 专给「卡正文行不许以
+    # 『。』开头」那条断言当靶子（2026-10-17 复核）。`ccg()` 拿 `_trim_ellipsis(摘要)` 的
+    # 长度去切正文，而它把句末「。」剥掉了 → 剩下的正文以那个「。」开头，落进卡里就是
+    # 一行「。 后半句」。只有"第一句有句号 + 后面还有字"的正文才触发，单句记录的卡测不到
+    # （夹具里其余几档的正文都是单句，所以从前这条缺陷一个断言也没有）。
+    write(os.path.join(cont, "0005-two-sentences.md"), card_record_with_bulk(
+        "0005", "两句正文", "两句正文的靶子",
+        "第一句先把根因说完。第二句接着给做法与验证方式，让摘要后面确实还留着正文。"))
+    # 第六档：**文件名够长**，让 `work_log/…` 这条源路径超过 34 字节。索引「源」列那条
+    # 「不截断」的断言（连同反向变异「源列又截断」）靠它才有靶子 —— 其余夹具的源路径
+    # 都短于 34 字节，`_clip(…, 34)` 在它们身上根本不触发，断言与变异都会空转。
+    write(os.path.join(cont, "0006-long-source-path-for-the-index-source-column.md"),
+          card_record_with_bulk(
+              "0006", "长源路径", "长源路径的靶子",
+              "文件名写得够长，索引里的源路径才会被旧实现截成半截，拼不回这篇记录。"))
     write(os.path.join(cont, "lessons", "README.md"), LESSONS_INDEX)
     # 另一册：出处指向**本容器里那篇长记录**，验「出处指得到」这一档；
     # 它的源记录在下面会被删掉，用来验「源没了 → 卡要标 stale」。
@@ -4522,6 +4558,19 @@ def card_phase(tmp: str) -> None:
     ok(all(os.path.getsize(os.path.join(cards, f)) > 300 for f in ptrs),
        "cards are not empty stubs")
 
+    # 卡正文**不许有一行以「。」开头**（2026-10-17 复核）：`ccg()` 算剩余正文时用的是
+    # `_trim_ellipsis(摘要)` 的长度，而那个函数把句末「。」剥掉了 —— 切出来的 `rest`
+    # 就以那个句号开头，落进卡里变成「。 七条缺陷…」这样一行。真容器里 8 张 full 卡
+    # 实测如此（`wl0107-*`、`wl0108`），`0005-two-sentences` 是本断言的靶子。
+    lead_period = []
+    for fn in fulls:
+        for ln in read(os.path.join(cards, fn)).splitlines():
+            if ln.startswith("。"):
+                lead_period.append(f"{fn}: {ln[:40]}")
+    ok(not lead_period,
+       "no card body line starts with a stray 「。」（摘要后的句号不该被切成新行）",
+       "；".join(lead_period[:3]) or f"{len(fulls)} 张 full 卡逐行查过")
+
     # 「执行」小节**不许把开头说两遍**（2026-10-17 第二轮修全的那条）。
     # 卡里那一节是"摘要 + 正文剩余"，而摘要是正文的 `first_sentence(…, 200)`；
     # 第一句超长时那个函数会**自己补一个 `…`**，而 `…` 不在正文里 —— 前缀守卫一旦带着它
@@ -4565,6 +4614,23 @@ def card_phase(tmp: str) -> None:
     head_block = idx1.split("| id |")[0]
     ok(not any(ln.startswith("| `") for ln in head_block.splitlines()),
        "the index header carries no card rows (bodies stay in the table only)")
+
+    # 「源」列必须**能定位到记录**（2026-10-17 复核）：从前是 `_clip(r["source"], 34)`，
+    # 真容器 50 行里 46 行被截成 `work_log/0108-review-r6-half-fixe…` —— 只看索引找不到
+    # 那篇记录，读者被迫开卡，索引的一半意义就没了。两条一起钉：源不截断、拼回去真存在。
+    src_cells = [ln.split("|")[6].strip() for ln in idx1.splitlines() if ln.startswith("| `")]
+    clipped_src = [c for c in src_cells if "…" in c]
+    ok(src_cells and not clipped_src,
+       "the index's 源 column is not truncated (the index alone locates the record)",
+       "；".join(clipped_src[:3]) or f"{len(src_cells)} 行源路径都完整")
+    unresolved_src = []
+    for c in src_cells:
+        rel = c[len(CONTAINER) + 1:] if c.startswith(f"{CONTAINER}/") else c
+        if not os.path.exists(os.path.join(cont, *rel.split("/"))):
+            unresolved_src.append(c)
+    ok(not unresolved_src,
+       "every 源 in the index resolves to a real file (a clipped path cannot be joined back)",
+       "；".join(unresolved_src[:3]) or f"{len(src_cells)} 行逐行 resolve 过")
 
     r2 = run(croot, CONTAINER, "--all", "--write", "--project", "selftest-project", tool=tool)
     ptrs2 = sorted(f for f in os.listdir(cards) if f.endswith(".pointer.md"))

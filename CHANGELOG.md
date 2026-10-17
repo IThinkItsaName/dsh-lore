@@ -8,6 +8,33 @@
 
 ## [未发布]
 
+## [0.9.2] - 2026-10-17
+
+### 修复：记忆卡「执行」小节里多一行孤零零的「。」
+
+整卡拼「执行」时是"摘要 + 正文剩余"，而剩余那段拿 `_trim_ellipsis(摘要)` 的**长度**去切正文 ——
+那个函数把句末的「。」剥掉了，切出来的剩余就以那个句号开头，落进卡里变成一行「。 七条缺陷…」。
+真容器 50 张 full 卡里 8 张如此（`wl0107-*`、`wl0108`）。现在切片后先吃掉开头的「。／…」；
+自测加「任何卡正文行都不以『。』开头」一条断言，靶子是新的夹具记录 `0005-two-sentences`
+（正文两句、第一句带句号）—— 其余夹具的正文都是单句，这条缺陷此前**一条断言都没有**。
+
+### 修复：`INDEX.md` 的「源」列被截成 34 字节，只看索引定位不到记录
+
+`printable_index()` 里是 `_clip(r["source"], 34)`：真容器 50 行里 46 行成了
+`work_log/0108-review-r6-half-fixe…`，拼不回那篇记录 —— 索引"一行定位一篇"的意义没了一半。
+现在整条路径照写；自测加两条断言（源列不带省略号、每一行都能 resolve 回文件），夹具新增
+`0006-long-source-path-for-the-index-source-column.md` 把源路径撑过 34 字节 —— 短路径上
+`_clip` 根本不触发，断言和反向变异都会空转。
+
+### 变更：INDEX 头部的体量改成实测值
+
+「一行 ≈ 150 B」是写死的（本容器实测 328 B），「真源是它的十几倍到几十倍」也是没有分母的话。
+现在按本份表格算均值，并指回「源」列让读者自己比；`references/memory.md` 里同一句同步改成
+实测口径。
+
+门禁：自测 805、`test:plugin` 17 支全绿、`audit` CLEAN、`_package.py --check` 零漂移、
+变异 106 条全绿（106 如期变红 / M=0 / C=0 / K=0）。
+
 ## [0.9.1] - 2026-10-17
 
 ### 修复：主动送达建的收件会话不在工作区名册里（界面显示「未分组」）
@@ -2091,7 +2118,8 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.1...HEAD
+[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.0...v0.8.1

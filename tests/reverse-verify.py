@@ -125,9 +125,9 @@ MUTATIONS: list[tuple] = [
      '    env = ""\n    if env:',
      "memory: $DSH_WORKLOG_MEMORY 覆盖整条路径"),
     ("memory", "inbox 头部不带那句不可信提示",
-     '    return f"---\\nfrom: {sender}\\nat: {stamp}\\nnote: {INBOX_NOTE}\\n---\\n\\n"',
-     '    return f"---\\nfrom: {sender}\\nat: {stamp}\\n---\\n\\n"',
-     "inbox: 落盘时写下 from / at /「不可信输入」那句（头部由工具渲染）"),
+     '    lines.append(f"note: {INBOX_NOTE}")',
+     '',
+     "inbox: 落盘时写下 from / at / id /「不可信输入」那句（头部由工具渲染）"),
     ("memory", "登记过的来源工作区没了也当错",
      '    if state == "gone":\n'
      '        where = registry_names(registry)[ws][0]\n'
@@ -663,6 +663,24 @@ MUTATIONS: list[tuple] = [
      '                        continue\n',
      '',
      "a directory named like a lesson volume does not abort the projection",
+     CARD_SRC),
+
+    # 9) 切剩余正文时又把被剥掉的句号留在行首（2026-10-17 复核的原样回退）：
+    #    `_trim_ellipsis` 剥掉了句末「。」，切片长度却按剥掉之后的算 —— 于是卡里多出
+    #    一行「。 后半句」。靶子在 `card_phase` 的 `0005-two-sentences`（正文两句、
+    #    第一句带句号且后面还有正文；其余夹具都是单句，测不到）。
+    ("card", "剩余正文又把句号留在行首（卡里多一行「。 …」）",
+     '                    rest = n_body[len(n_sum):].lstrip("。…").lstrip()',
+     '                    rest = n_body[len(n_sum):].lstrip()',
+     "no card body line starts with a stray 「。」（摘要后的句号不该被切成新行）",
+     CARD_SRC),
+
+    # 10) 索引「源」列又截断（2026-10-17 复核的原样回退）：真容器 50 行里 46 行被切到
+    #     34 字节，`work_log/0108-review-r6-half-fixe…` 拼不回记录 —— 只看索引定位不到。
+    ("card", "索引的源列又被截断（截出来的路径拼不回记录）",
+     '        src = (r["source"] or "（未标）") + (" [源未找到]" if r["stale"] else "")',
+     '        src = _clip(r["source"] or "（未标）", 34) + (" [源未找到]" if r["stale"] else "")',
+     "the index's 源 column is not truncated (the index alone locates the record)",
      CARD_SRC),
 ]
 

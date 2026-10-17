@@ -554,10 +554,15 @@ def build_cards(lesson: dict, ctx: dict, slug: str) -> tuple[str, str]:
                 #   ② 真命中时切片必须与比较**同源**：从前切 `n_body`、长度却取未归一的
                 #      `len(head["执行"])`，正文里有换行/连续空格时两个长度不同，切偏几个
                 #      字符就把 `…` 留在开头，拿去重判的串非空 —— 真重复反而不报。
+                #   ③ 切片起点要**跳过被剥掉的标点**（2026-10-17 复核）：`_trim_ellipsis`
+                #      把句末 `。` 去掉了，而 `len(n_sum)` 是去掉之后的长度 —— 于是
+                #      `rest` 以那个 `。` 开头，写进卡里变成一行孤零零的「。 七条缺陷…」
+                #      （真卡 `wl0107-*` / `wl0108` 上实测存在）。只吃**开头**的这几个
+                #      标点，正文中间的不动 —— 与 `_trim_ellipsis` 只去尾部是同一条理由。
                 n_sum = _trim_ellipsis(norm_ws(head["执行"]))
                 n_body = norm_ws(extra_exec)
                 if n_sum and n_body.startswith(n_sum):
-                    rest = n_body[len(n_sum):].lstrip()
+                    rest = n_body[len(n_sum):].lstrip("。…").lstrip()
                     if rest:
                         out.append(rest)
                 else:
@@ -815,12 +820,28 @@ def _mark_stale(path: str, text: str) -> None:
 
 
 def printable_index(rows: list[dict], project: str, domain: str = "") -> str:
+    """渲染 `memory-cards/INDEX.md`。
+
+    「源」列**不截断**：从前这里是 `_clip(r["source"], 34)`，真容器 50 行里 46 行被切成
+    `work_log/0108-review-r6-half-fixe…` —— 顺着索引定位不到记录，等于强迫读者开卡，
+    索引的一半意义就这么没了（2026-10-17 复核）。路径本身不过一两百字节，换来的可定位性
+    值得这几列宽度。
+
+    头部「一行 ≈ N B」取**本份表格的实测均值**：从前写死 `150 B`（实测 300 B 上下，差一倍），
+    「真源是它的十几倍到几十倍」也是没有分母的话 —— 一并改成指回「源」列，让读者自己看。
+    """
     doms: dict[str, int] = {}
     for r in rows:
         doms[r["domain"]] = doms.get(r["domain"], 0) + 1
     dom_txt = "、".join(f"{k} {v}" for k, v in sorted(doms.items())) or "（无）"
     stale = [r for r in rows if r["stale"]]
     nob = [r for r in rows if r["no_boundary"]]
+    table = []
+    for r in rows:
+        src = (r["source"] or "（未标）") + (" [源未找到]" if r["stale"] else "")
+        table.append(f"| `{r['id']}` | {r['domain']} | {_clip(r['title'], 44)} | "
+                     f"{_clip(r['exec'], 56)} | {_clip(r['cond'], 40)} | {src} | {r['bytes']} |")
+    avg = round(sum(len(l.encode("utf-8")) for l in table) / len(table)) if table else 0
     out = [
         "# 记忆卡索引（memory-cards/INDEX.md）",
         "",
@@ -828,9 +849,9 @@ def printable_index(rows: list[dict], project: str, domain: str = "") -> str:
         f"> 项目 `{project or '（未标注）'}` · 项目域 `{domain or '（未标注）'}` · "
         f"卡 {len(rows)} 张（只算本工具投的） · 域：{dom_txt}",
         "",
-        f"- 体量：INDEX 一行 ≈ 150 B，**先读这张表再决定读哪张卡**；一张卡 pointer "
+        f"- 体量：INDEX 一行 ≈ {avg} B（本表实测），**先读这张表再决定读哪张卡**；一张卡 pointer "
         f"{min((r['bytes'] for r in rows), default=0)}–{max((r['bytes'] for r in rows), default=0)} B，"
-        f"真源是它的十几倍到几十倍。",
+        f"真源在「源」列那一行。",
         f"- 归属：{len(stale)} 张的源记录不在本容器（`[源未找到]`）——卡本身没错，错的是追溯链。"
         if stale else "- 归属：全部卡的源记录都在本容器内。",
         f"- 边界：{len(nob)} 张**没有**显式声明的「不适用条件」（卡里如实写了「边界未在来源里显式声明」，"
@@ -840,11 +861,7 @@ def printable_index(rows: list[dict], project: str, domain: str = "") -> str:
         "| id | 域 | 功能名 | 执行（一句） | 生效条件 | 源 | 卡 B |",
         "|---|---|---|---|---|---|---|",
     ]
-    for r in rows:
-        src = _clip(r["source"], 34) + (" [源未找到]" if r["stale"] else "")
-        out.append(f"| `{r['id']}` | {r['domain']} | {_clip(r['title'], 44)} | "
-                   f"{_clip(r['exec'], 56)} | {_clip(r['cond'], 40)} | {src} | {r['bytes']} |")
-    return "\n".join(out) + "\n"
+    return "\n".join(out + table) + "\n"
 
 
 def write_index_file(path: str, rows: list[dict], project: str, domain: str = "",

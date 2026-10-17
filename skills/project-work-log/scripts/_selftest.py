@@ -3775,6 +3775,19 @@ def _memory_phase(parent: str) -> None:
     both = run(base, "inbox", "put", "x", "--file", whole, "--memory", field_mem)
     ok(both.returncode == 1 and "只能给一个" in both.stdout,
        "inbox: 文本与 --file 同时给会被拒绝（别猜作者想投哪个）", both.stdout)
+    # `--outbox DIR`：同工作区直投 —— 写进给定目录，**不进共享信箱**（也不受信箱总量上限约束）。
+    outbox = os.path.join(base, "direct-outbox")
+    before_shared = len(JOURNAL._inbox_items(field_mem))
+    r = run(base, "inbox", "put", "直投正文", "--outbox", outbox, "--memory", field_mem)
+    ok(r.returncode == 0 and "已写入工作区收件夹" in r.stdout,
+       "inbox: --outbox 写进给定目录（不是共享信箱）", r.stdout + r.stderr)
+    direct_files = [n for n in os.listdir(outbox) if n.endswith(".md")] if os.path.isdir(outbox) else []
+    ok(len(direct_files) == 1,
+       "inbox: --outbox 目录里落了一封信", str(direct_files))
+    ok(len(JOURNAL._inbox_items(field_mem)) == before_shared,
+       "inbox: --outbox 不往共享信箱里写一条", str(before_shared))
+    ok(JOURNAL.inbox_split(read(os.path.join(outbox, direct_files[0])))[1].strip() == "直投正文",
+       "inbox: --outbox 的信仍是同一份头部 + 正文")
     # --- 主动送达的授权（2026-10-17）：默认关，开/关都要落盘，status 能读回来 ----
     sub_mem = os.path.join(base, "sub-mem")
     sub_path = os.path.join(sub_mem, JOURNAL.MEMORY_SUBSCRIPTIONS_NAME)

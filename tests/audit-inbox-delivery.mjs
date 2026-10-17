@@ -557,4 +557,67 @@ if (!hasPython) {
     'and nothing appears in any other workspace (independence is a landing fact, not a promise)')
 }
 
+/* ------------------- 7. same-workspace direct letters (no shared inbox) ── */
+
+{
+  mkdirSync(join(WS_A, 'work_log'), { recursive: true })
+  mod.writeSubscriptions(ROOT, {
+    [mod.workspaceKey(WS_A)]: {
+      path: WS_A, active: true, session: 'session-inbox-a', deliveries: 0,
+      at: '2026-10-17T13:00:00+08:00',
+    },
+  })
+  resetInbox()
+  const dropDir = join(WS_A, 'work_log', '.lore-inbox')
+  const { tool: toolD } = mount({ sessionCwds: { 'session-target-2': WS_A } })
+  const direct = await toolD.execute({
+    operation: 'send', workspace: WS_A, to: WS_A, session: 'session-target-2',
+    text: '同工作区直投：请审完后回执。',
+  })
+  ok(direct.ok === true && /direct letter written/.test(direct.text),
+    'a same-workspace send goes direct, not through the shared inbox', direct.text)
+  ok(letters().length === 0, 'nothing lands in the shared inbox', String(letters().length))
+  const drops = existsSync(dropDir) ? readdirSync(dropDir).filter((name) => name.endsWith('.md')) : []
+  ok(drops.length === 1, 'the letter lands in work_log/.lore-inbox/', JSON.stringify(drops))
+  const dropFile = join(dropDir, drops[0])
+  const dropMeta = mod.inboxSplit(readFileSync(dropFile, 'utf8')).meta
+  ok(/^[0-9a-f]{16}$/.test(dropMeta.id ?? ''),
+    'it keeps the same header (from/at/id/note)', JSON.stringify(dropMeta))
+  const pending = mod.readPendingLetters(WS_A)
+  ok(pending.length === 1 && pending[0].name === drops[0] && pending[0].id === dropMeta.id,
+    'and it is recorded as pending (unanswered)', JSON.stringify(pending))
+
+  // `inbox` lists it as [direct] and never returns the body.
+  const listed = await toolD.execute({ operation: 'inbox', workspace: WS_A })
+  ok(listed.ok === true && listed.text.includes('[direct]') && listed.text.includes(drops[0]),
+    '`inbox` lists the direct letter as pending', listed.text)
+  ok(!listed.text.includes('请审完后回执'), 'and still never returns the body', listed.text)
+
+  // `message` on a direct letter = process it (archive), not "move it in".
+  const processed = await toolD.execute({ operation: 'inbox', workspace: WS_A, message: drops[0] })
+  ok(processed.ok === true && /processed \(archived\)/.test(processed.text),
+    '`message` processes a direct letter (archives it)', processed.text)
+  const archived = join(WS_A, 'work_log', 'logs', 'inbox', drops[0])
+  ok(existsSync(archived) && !existsSync(dropFile),
+    'the file leaves the drop folder for work_log/logs/inbox/', archived)
+  ok(mod.readPendingLetters(WS_A).length === 0, 'and the pending entry is gone')
+
+  // A reply with `thread` closes the original automatically.
+  const again = await toolD.execute({
+    operation: 'send', workspace: WS_A, to: WS_A, session: 'session-target-2',
+    text: '第二封：等你回执。',
+  })
+  ok(again.ok === true, 'a second direct letter is sent', again.text)
+  const second = mod.readPendingLetters(WS_A)[0]
+  const reply = await toolD.execute({
+    operation: 'send', workspace: WS_A, to: WS_A, session: 'session-target-2',
+    text: '回执：已办。', thread: second.id,
+  })
+  ok(reply.ok === true && /closed 1 pending letter/.test(reply.text),
+    'a reply with `thread` closes the original', reply.text)
+  const left = mod.readPendingLetters(WS_A).filter((item) => item.id === second.id)
+  ok(left.length === 0 && existsSync(join(WS_A, 'work_log', 'logs', 'inbox', second.name)),
+    'the original is archived and no longer pending')
+}
+
 report('inbox delivery OK — one writer, authorized waking, no body in any prompt, and sessions stay in their own workspace')

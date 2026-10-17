@@ -430,6 +430,18 @@ CLI 写不了记忆根**（workspace-write 挡在 `~/dsh-lore-memory` 外，实�
 送达走同一条 `create({workspaceId, sessionId})` + `followup`，所以"往某个对话发提示"与
 "往工作区收件会话发"没有第二套机制。
 
+**同工作区转送不走公共区域（2026-10-17 定）**：`to` 就是自己的 cwd 时，信**直接**写进
+`<工作区>/work_log/.lore-inbox/`（容器里的点目录，门禁与索引都不扫它；没有 `work_log/` 时
+退回工作区根下的 `.lore-inbox/`），**不进**共享记忆根的信箱，也不受共享信箱的条数/总量
+上限约束（单条大小上限照旧）。写盘仍走 `journal.py inbox put --outbox DIR` —— 格式只有一份。
+
+**读后要处理（2026-10-17 定）**：直投信在落点旁边有一份 `.pending.json`（"发了、还没办结"）。
+办结有两条路，都会把信**归档**到 `<工作区>/work_log/logs/inbox/` 并从待处理里去掉：
+① **回执**：回信时 `send` 带 `thread = 原信 id`（这叫"读过了、办完了"）；
+② **显式标记**：`worklog_memory` 的 `inbox` 带 `message = <文件名>`（这叫"处理掉"）。
+没办结的会**一直列在 `inbox` 的待处理里**（`[direct]` 行），提醒文案也写着"未处理的会一直列在
+待处理里" —— 这就是"读后应当被处理"的机械判据：文件不会悄悄堆在收件夹里。
+
 **显示：来源标记是 `inbox-notice`，不是 `user`**。消息仍然是 **`user/message`（user 角色、
 不可信输入）**，也**不是** developer/system —— 规矩 4 不动；变的只是 `source.kind`：界面按
 来源分类，`kind === 'user'` 画成**用户气泡**，其他 kind 画成「触发本轮」的通知卡（与后台任务、

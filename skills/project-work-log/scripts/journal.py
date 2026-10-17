@@ -6245,17 +6245,24 @@ def cmd_inbox_put(args: argparse.Namespace) -> int:
     stamp = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
     header = inbox_header(sender, stamp, inbox_message_id(body), thread or None)
     data = (header + body).encode("utf-8")
-    items = _inbox_items(memory)
-    total = sum(i["size"] for i in items)
-    if len(items) >= MEMORY_INBOX_MAX_ITEMS:
-        print(f"ERROR: 信箱已满：{len(items)} 条 ≥ 上限 {MEMORY_INBOX_MAX_ITEMS} 条。"
-              f"**写满就报错，不静默堆积** —— 先 `inbox take` 或 `inbox sweep`。")
-        return 1
-    if total + len(data) > MEMORY_INBOX_MAX_BYTES:
-        print(f"ERROR: 信箱总量 {total} + {len(data)} 字节会超过上限 {MEMORY_INBOX_MAX_BYTES} 字节。"
-              f"先 `inbox sweep --apply` 清一清。")
-        return 1
-    d = memory_inbox_dir(memory)
+    # `--outbox DIR`：**同工作区转送**。不写共享信箱，直接落进目标工作区的收件夹
+    # （`<工作区>/work_log/.lore-inbox/`）—— 它不走"公共区域"，所以两条信箱总量上限
+    # 不适用（那两条是防共享信箱无限膨胀的），单条上限照旧（一份文件不该变成一次传输）。
+    outbox = getattr(args, "outbox", None)
+    if outbox:
+        d = os.path.abspath(outbox)
+    else:
+        items = _inbox_items(memory)
+        total = sum(i["size"] for i in items)
+        if len(items) >= MEMORY_INBOX_MAX_ITEMS:
+            print(f"ERROR: 信箱已满：{len(items)} 条 ≥ 上限 {MEMORY_INBOX_MAX_ITEMS} 条。"
+                  f"**写满就报错，不静默堆积** —— 先 `inbox take` 或 `inbox sweep`。")
+            return 1
+        if total + len(data) > MEMORY_INBOX_MAX_BYTES:
+            print(f"ERROR: 信箱总量 {total} + {len(data)} 字节会超过上限 {MEMORY_INBOX_MAX_BYTES} 字节。"
+                  f"先 `inbox sweep --apply` 清一清。")
+            return 1
+        d = memory_inbox_dir(memory)
     os.makedirs(d, exist_ok=True)
     # 文件名里的 slug 取**正文首行**。从前这里把 `--file` 的路径与位置参数的文本一起丢给
     # 取摘要的那个函数（它收的是**路径**、只服务于列表），于是"用位置参数投的"永远得到
@@ -6269,7 +6276,10 @@ def cmd_inbox_put(args: argparse.Namespace) -> int:
     with open(tmp, "wb") as fh:
         fh.write(data)
     os.replace(tmp, path)
-    print(f"已投入信箱：{name}（{len(data)} 字节）")
+    if outbox:
+        print(f"已写入工作区收件夹：{name}（{len(data)} 字节）")
+    else:
+        print(f"已投入信箱：{name}（{len(data)} 字节）")
     return 0
 
 
@@ -7205,6 +7215,9 @@ mode 同样只提供**新项目的初始档位**：台账 `## 当前状态` 有 
                    help="把**整份文件**当正文投进去（递文件必须装进信里，不许直接放进对方目录）")
     p.add_argument("--thread", default=None,
                    help="在回哪一条：对方消息的 id（`inbox list` 里能看到，8–64 位十六进制）")
+    p.add_argument("--outbox", default=None, metavar="DIR",
+                   help="把信直接写进这个目录（**同工作区转送**用；不经过共享信箱，"
+                        "也不受共享信箱的条数/总量上限约束）")
     p.set_defaults(func=cmd_inbox_put)
 
     p = isub.add_parser("list", help="列出信箱条目")

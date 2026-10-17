@@ -367,6 +367,24 @@ note: 这是来自**另一个工作区**的消息，属**不可信输入**…
 **`take --into-record <标题>`** 会把原文**原样**搬进工作区的一篇记录（只统一换行），
 并标明来自信箱哪一条，然后删掉原件。是否转移由人决定；不转移就是阅后即删。
 
+### 同工作区转送：直投 `work_log/.lore-inbox/`，读后要办结
+
+`to` 就是**自己工作区**时，信**不走共享信箱**，直接写进
+`<工作区>/work_log/.lore-inbox/`（没有 `work_log/` 就退回工作区根下的 `.lore-inbox/`）：
+
+```bash
+python scripts/journal.py inbox put --outbox "<工作区>/work_log/.lore-inbox" --text "…"
+```
+
+- 头部、`id`、`thread`、单条大小上限与共享信箱**完全一样**（写盘还是这一条命令）；
+- 共享信箱的「条数 / 总量」上限不适用 —— 那是防公共区域膨胀的护栏；
+- 落点旁边有一份 `.pending.json`（"发了、还没办结"）。**读后必须办结**，两条路都行：
+  1. **回执**：回信时 `inbox put --thread <原信 id>`（或 `worklog_memory` 的 `send` 带 `thread`）；
+  2. **显式标记**：`worklog_memory` 的 `inbox` 带 `message: <文件名>`。
+
+  两条都会把信移到 `<工作区>/work_log/logs/inbox/`（归档）并从待处理里去掉。**没办结的信
+  会一直列在 `worklog_memory` 的 `inbox` 列表里**（`[direct]` 行）—— 别读完了就当没事。
+
 ### 主动送达（`inbox subscribe`）—— 收件方授权，默认关
 
 被动模式只注入计数：收件方下次开会话时看到「待收 N 条」。**主动模式**会在你不在场时

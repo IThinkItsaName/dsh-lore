@@ -45,6 +45,16 @@
 `source.kind` 从 `'user'` 改成 `'inbox-notice'`：界面按来源分类，`user` 画成用户气泡，
 其他 kind 画成「触发本轮」的通知卡（与后台任务 / 定时任务同一套 `TurnTriggerNode` 外观）。
 
+### 新增：同工作区转送直投 `work_log/.lore-inbox/`，读后要办结
+
+`send` 的 `to` 就是自己的 cwd 时，信**不再经共享记忆根的信箱**，直接写进
+`<工作区>/work_log/.lore-inbox/`（容器里的点目录，门禁与索引都不扫；没有 `work_log/` 时退回
+工作区根下的 `.lore-inbox/`）。写盘仍走 `journal.py inbox put --outbox DIR` —— 格式只有一份；
+共享信箱的条数/总量上限不适用（单条大小上限照旧）。
+直投信在落点旁记一份 `.pending.json`，**办结有两条路**：回信带 `thread = 原信 id`，或
+`worklog_memory inbox` 带 `message = 文件名` —— 两条都会把信归档到
+`<工作区>/work_log/logs/inbox/` 并从待处理里去掉；没办结的会一直列在 `inbox` 的 `[direct]` 行里。
+
 门禁：自测 798、`test:plugin` 17 支全绿、`audit` CLEAN。
 
 ## [0.9.0] - 2026-10-17

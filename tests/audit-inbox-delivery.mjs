@@ -206,6 +206,14 @@ if (!hasPython) {
   const empty = await tool.execute({ operation: 'send', workspace: WS_A })
   ok(empty.ok === false && /needs `text`/.test(empty.text), 'an empty send is refused', empty.text)
 
+  // (d2) a broken `DSH_WORKLOG_PYTHON` falls back to the usual names instead of blaming Python.
+  process.env.DSH_WORKLOG_PYTHON = 'definitely-not-a-python-7f3a'
+  const fallback = await tool.execute({ operation: 'send', workspace: WS_A, text: '解释器回退。' })
+  delete process.env.DSH_WORKLOG_PYTHON
+  ok(fallback.ok === true,
+    'an unknown DSH_WORKLOG_PYTHON falls back to python / python3 / py (ENOENT only)',
+    fallback.text)
+
   // (e) long text goes through a temp file (Windows argv caps at ~32 KiB), and stays intact.
   resetInbox()
   const long = `长正文头\n${'x'.repeat(40 * 1024)}`

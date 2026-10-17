@@ -401,6 +401,14 @@ CLI 写不了记忆根**（workspace-write 挡在 `~/dsh-lore-memory` 外，实�
 `sessionController.create` → `resolveAgent` → `agent.followup(createUserMessage(...))` →
 `sessions.flush`（**与 `dsh-schedule` 同一条投递路**；不用给界面用的 `prompt`，那条要过
 附件与上传绑定），推的是**不含正文**的提醒；每成功一条 +1，到 40 条换一个新会话（规矩 6）。
+
+**`create` 必须给 `workspaceId`，不能只给 `cwd`**（2026-10-17 真机补）：两者都把会话建在正确
+目录里，但只有 `workspaceId` 那条会走 `workspace.attachSession(sessionId)`，把会话挂进
+`workspace.sessionIds` —— **界面就是按这份名册分组的**。只给 `cwd` 建出来的会话在磁盘上一切
+正常，却会在对话列表里显示成**「未分组」**（真机实例：`session-3e2f…`「跨工作区来信提醒处理」）。
+所以送达前先按路径在 `workspaceRegistry.list()` 里找那个工作区；**找不到就直接拒绝主动送达**
+（信仍在共享信箱），而不是造一个野会话。
+
 `send` 不带 `to` 时只投不推，答案会说明"信在共享信箱里、任何工作区都能取"。**代价照旧**：
 主动送达会在收件人不在场时花额度，所以默认关、只有收件方能开。
 

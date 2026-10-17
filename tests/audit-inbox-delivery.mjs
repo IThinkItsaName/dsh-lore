@@ -98,7 +98,10 @@ function letters() {
  * because it used to expose the services as plain properties. A fake host that is easier than
  * the real one hides exactly the failures the real one produces.
  */
-function makeCtx({ cwd = WS_A, sessions = [], titles = {}, archived = [], noInitiator = false, noController = false } = {}) {
+function makeCtx({
+  cwd = WS_A, sessions = [], titles = {}, archived = [], noInitiator = false, noController = false,
+  registered = [{ id: 'ws-a', path: WS_A }, { id: 'ws-b', path: WS_B }],
+} = {}) {
   const calls = { create: [], followup: [], flush: 0, resolveAgent: [], tools: [], withoutInitiator: 0 }
   const services = {
     sessionQuery: {
@@ -106,7 +109,8 @@ function makeCtx({ cwd = WS_A, sessions = [], titles = {}, archived = [], noInit
     },
     // 归档集合在宿主里由 registry 持有（`archivedSessionIds`），界面按它隐藏会话；
     // 工具必须自己再过滤一次（`sessionController.list()` 返回的是完整语料）。
-    workspaceRegistry: { archivedSessionIds: archived.map(String) },
+    // `list()` 是工作区名册：主动送达要靠它把会话挂进 `workspace.sessionIds`（否则"未分组"）。
+    workspaceRegistry: { archivedSessionIds: archived.map(String), list: () => registered },
     agents: {
       withoutInitiator: async (fn) => {
         calls.withoutInitiator += 1
@@ -321,6 +325,27 @@ if (!hasPython) {
   ok(calls2.create.length === 0 && calls2.followup.length === 0,
     'and no session was created or prompted', JSON.stringify(calls2))
 
+  // A subscribed path that is not in the workspace registry: refuse to wake it. Creating a
+  // session by `cwd` alone would leave an **ungrouped** conversation in the UI (2026-10-17).
+  {
+    const orphanDir = join(SANDBOX, 'not-a-workspace')
+    mkdirSync(orphanDir, { recursive: true })
+    mod.writeSubscriptions(ROOT, {
+      [mod.workspaceKey(orphanDir)]: {
+        path: orphanDir, active: true, session: 'session-orphan-1', deliveries: 0,
+        at: '2026-10-17T10:00:00+08:00',
+      },
+    })
+    const { tool: orphanTool, calls: orphanCalls } = mount({})
+    const orphan = await orphanTool.execute({
+      operation: 'send', workspace: WS_A, text: '发给一个没有注册成工作区的目录。', to: orphanDir,
+    })
+    ok(orphan.ok === true && /not a registered DSH workspace/.test(orphan.text),
+      'a target outside the workspace registry is refused (no ungrouped session)', orphan.text)
+    ok(orphanCalls.create.length === 0, 'and no session is created for it',
+      JSON.stringify(orphanCalls.create))
+  }
+
   // Authorize B (what `journal.py inbox subscribe` writes), then send: B's fixed inbox session
   // is created/reused and gets a notice that carries **no body**.
   const sessionId = `session-${'a'.repeat(8)}-1111-2222-3333-444455556666`
@@ -333,9 +358,11 @@ if (!hasPython) {
     operation: 'send', workspace: WS_A, text: `正文里的唯一标记 ${marker}`, to: WS_B,
   })
   ok(pushed.ok === true && /active delivery/.test(pushed.text), 'an authorized target is woken', pushed.text)
-  ok(calls3.create.length === 1 && resolve(calls3.create[0].cwd) === resolve(WS_B)
-    && calls3.create[0].sessionId === sessionId,
-    'delivery creates/adopts the fixed inbox session in the recipient workspace',
+  // **`workspaceId`，不是 `cwd`**：只有前者会走 `workspace.attachSession()`，把会话挂进
+  // 工作区名册；只给 cwd 建出来的会话在界面上是「未分组」（2026-10-17 的真机实例）。
+  ok(calls3.create.length === 1 && calls3.create[0].workspaceId === 'ws-b'
+    && calls3.create[0].cwd === undefined && calls3.create[0].sessionId === sessionId,
+    'delivery creates/adopts the fixed session **by workspace id** (so the UI can group it)',
     JSON.stringify(calls3.create))
   ok(calls3.resolveAgent.length === 1 && calls3.resolveAgent[0] === sessionId,
     'delivery resolves the live Agent of that session (the schedule path, not `prompt`)',

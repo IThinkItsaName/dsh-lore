@@ -28,10 +28,14 @@
   `<记忆根>/inbox-subscriptions.json`（固定收件会话 id + 已推送条数）。沙箱会话里 CLI 写不了
   记忆根（`workspace-write` 挡在 `~/dsh-lore-memory` 外，实测），所以同一件事也给了工具入口
   `worklog_memory` 的 `subscribe`（`active:false` 撤销；边界=调用方 Agent 的 cwd）。
-  发件方 `send` 带 `to` 且对方已授权时：`sessionController.create({cwd, sessionId})` →
+  发件方 `send` 带 `to` 且对方已授权时：`sessionController.create({workspaceId, sessionId})` →
   `resolveAgent(sessionId)` → `agent.followup(createUserMessage(...))` → `sessions.flush`
   （**与 `dsh-schedule` 同一条投递路**；不走向界面用的 `prompt`，那条还要过附件与上传绑定），
   推一条**不含正文**的提醒，整段包在 `withoutInitiator` 里（免得把发件方变成它的父级）。
+- **分组（真机补）**：建收件会话必须用 `create({workspaceId})`，不能只给 `cwd` —— 只有前者
+  会走 `workspace.attachSession()`，把会话挂进 `workspace.sessionIds`（**界面按它分组**）；
+  只给 cwd 的会话在磁盘上正常、界面上却显示成**「未分组」**（真机实例 `session-3e2f…`
+  「跨工作区来信提醒处理」）。目标路径不在 `workspaceRegistry` 里时**拒绝**主动送达。
 - **收束（规矩 6）**：每成功推送一条 +1，满 40 条换一个新的收件会话 id；旧会话原样留着，
   由用户归档。失败不记账，下一次还会再试。
 - **同/跨分治**：`worklog_memory` 新增 `sessions`，只列**调用方 Agent 的 `cwd`** 下的会话

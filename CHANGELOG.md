@@ -32,6 +32,13 @@
 现在按本份表格算均值，并指回「源」列让读者自己比；`references/memory.md` 里同一句同步改成
 实测口径。
 
+### 变更：文档不再把 `memory-cards/` 当成常驻查找入口
+
+本工作区那份 103 文件的投影样本**已整体删除**（没有消费者；50 张卡里 24 张的正文与 `lessons/`
+逐字重复）。`references/memory.md` 与 `conventions.md` 改成"**按需现生成、读完就删**"：要筛结论时
+`dsh-lore-card.py <容器> --all --index-only --write` 落一张索引表，看完把 `memory-cards/` 删掉 ——
+生成物不该常驻在容器里。
+
 门禁：自测 805、`test:plugin` 17 支全绿、`audit` CLEAN、`_package.py --check` 零漂移、
 变异 106 条全绿（106 如期变红 / M=0 / C=0 / K=0）。
 

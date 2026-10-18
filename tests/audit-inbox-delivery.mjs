@@ -536,17 +536,28 @@ if (!hasPython) {
   const listed = await tool5.execute({ operation: 'sessions', workspace: WS_A })
   ok(listed.ok === true && listed.text.includes('A 的工作标题') && listed.text.includes('A 的第二个标题'),
     '`sessions` lists the calling workspace\'s sessions with titles', listed.text)
+  ok(listed.text.includes('@workspace-a'),
+    'every row is labelled with its workspace', listed.text)
   ok(!listed.text.includes('A 的已归档对话') && !listed.text.includes('session-a3-archived'),
     'archived sessions are NOT listed (the host list includes them; the tool filters by registry)',
     listed.text)
   ok(!listed.text.includes('B 的秘密标题') && !listed.text.includes('session-b1'),
-    'and never enumerates another workspace (that is its titles and timeline)', listed.text)
+    'the default scope does not enumerate another workspace', listed.text)
+  const across = await tool5.execute({ operation: 'sessions', workspace: WS_A, scope: 'all' })
+  ok(across.ok === true && across.text.includes('B 的秘密标题') && across.text.includes('@workspace-b'),
+    '`scope: "all"` lists other workspaces, labelled with the workspace name', across.text)
+  ok(across.text.includes('A 的工作标题') && across.text.includes('@workspace-a'),
+    'and still lists the calling workspace with its label', across.text)
+  ok(!across.text.includes('A 的已归档对话'),
+    'archived sessions stay hidden under `scope: "all"` too', across.text)
+  ok(/read-only/i.test(across.text) && /own workspace/.test(across.text),
+    'the cross-workspace footer says sending stays workspace-level', across.text)
   const filtered = await tool5.execute({ operation: 'sessions', workspace: WS_A, query: '第二个' })
   ok(filtered.ok === true && filtered.text.includes('A 的第二个标题') && !filtered.text.includes('A 的工作标题'),
     '`query` filters by title', filtered.text)
   const spoofed = await tool5.execute({ operation: 'sessions', workspace: WS_B })
   ok(!spoofed.text.includes('B 的秘密标题'),
-    'passing another path in `workspace` does not widen the boundary (cwd wins)', spoofed.text)
+    'passing another path in `workspace` does not widen the default boundary (cwd wins)', spoofed.text)
 
   const { tool: tool6 } = mount({ noInitiator: true, sessions, titles })
   const refused = await tool6.execute({ operation: 'sessions', workspace: WS_A })
@@ -639,4 +650,6 @@ if (!hasPython) {
     'the original is archived and no longer pending')
 }
 
-report('inbox delivery OK — one writer, authorized waking, no body in any prompt, and sessions stay in their own workspace')
+report('inbox delivery OK — one writer, authorized waking, no body in any prompt, and sessions stay '
+  + 'in their own workspace by default (`scope: "all"` lists other workspaces read-only, labelled, '
+  + 'with sending still workspace-level)')

@@ -8,6 +8,16 @@
 
 ## [未发布]
 
+### 新增：`sessions` 可显式跨工作区（只读、带归属标注）
+
+- `worklog_memory` 的 `sessions` 增 `scope`：默认 `workspace`（行为与之前一致）；`all` 列出
+  本机各工作区的会话，每行带 `@<工作区名>`（取 `workspaceRegistry.list()` 的 title，缺省退回
+  目录名）。标题过滤 `query` 对两种 scope 都生效。
+- **只读**：`send.session` 仍只接受本工作区会话，跨工作区投递保持工作区粒度。
+- 已归档会话在两种 scope 下都被过滤。
+- `tests/audit-inbox-delivery.mjs` 补断言：默认不枚举对方；`scope: "all"` 列出且带标注、
+  归档仍隐藏、footer 明说发送仍限本区。
+
 ### 修复：台账命令的续行处理（`73fef59` / `7e145b0` / `8e7451d`）
 
 - `status --set`：改一个字段时，连同它的**缩进续行**（含缩进列表）一起替换；续行判据是

@@ -1,55 +1,145 @@
 # dsh-lore
 
-**给 AI 的长期工作记忆。** 三块能力，依赖单向向下：
+**给 AI 的长期工作记忆。** 把项目里发生过什么、为什么这么做、留下了什么可复用经验，做成一套
+可读、可查、可校验的文档体系；换会话、换 agent，甚至接手的 agent **没有这个技能**，也能看懂并继续。
 
-| 层 | 是什么 |
-|---|---|
-| **技能层** | 过程记录 + 索引台账 + 经验手册 + `journal.py` 工具箱（纯 Python 标准库，**不需要 DSH**） |
-| **记忆层** | 跨工作区的事实，存在所有工作区之外（默认 `~/dsh-lore-memory`）：来源分档、索引、收敛、信箱 |
-| **插件层** | DSH 集成：记忆注入、`worklog_memory` 工具、技能注册、配置卡片 |
+一句话：**过程留证据，索引管导航，经验可复用。**
 
-三层可以只用一层；不限编程（软件、研究、写作、运营都能用）。术语与验证口径见
-[`references/conventions.md`](skills/project-work-log/references/conventions.md)。
+## 它解决什么问题
 
-> **2026-10-18 起，`reliability-guidelines` 已拆为独立技能**，不再随本包分发，也不再由插件
-> 注册或提供 `guidelinesEnabled` / `guidelinesLanguage` / `guidelinesDir` 设置。本包仍带
-> `project-work-log` 与 `client-require-whitelist` 两个技能。
+一个需要长期维护的项目，最怕的不是代码丢，而是**上下文丢**：
 
-> 本仓库的约定、文档与脚本由 **DeepSeek Flash 系列模型**整理生成（未经人工逐条校验），使用时请自行甄别。
-> 曾用名 `dsh-worklog`（2026-09-30 改名）；环境变量仍是 `DSH_WORKLOG_*`，技能名 `project-work-log`、
-> 工具名 `worklog_memory` 未变。
+- 三个月后没人记得某个决定为什么这么定；
+- 换一个会话/agent，接手者要从头翻聊天记录；
+- 踩过的坑换个 agent 再踩一遍；
+- 记录越写越多，最后没人找得到"现在做到哪了"。
 
-## 安装
+dsh-lore 把这些问题收进一个容器：
+
+| 层 | 位置 | 职责 |
+|---|---|---|
+| **技能层** | `work_log/` | 过程记录 + 索引台账 + 经验手册 + `journal.py` 工具箱（纯 Python 标准库，**不需要 DSH**） |
+| **记忆层** | 所有工作区之外（默认 `~/dsh-lore-memory`） | 跨工作区的事实：来源分档、索引、收敛、信箱 |
+| **插件层** | DSH profile | 技能注册、记忆注入、`worklog_memory` 工具、配置卡片 |
+
+三层可以只用一层；不限编程——软件、研究、写作、运营都能用。
+
+> **它不是什么**：不是变更日志（工作区整理、取证、环境变动都记，`变更集` 只是可选字段）；
+> 不是任务管理器（待办只是滚动清单）；不是插件专属（技能层可以独立跑）。
+> 为什么做、七条不变量与已知缺口，见 [`docs/why.md`](docs/why.md)。
+
+## 快速开始
+
+### DSH 里
 
 ```bash
-# DSH 插件（带记忆注入、工具与配置卡片）
+# 装插件：注册技能、注入记忆、提供 worklog_memory 与设置卡片
 dsh plugin --profile <profile> add dsh-lore@v0.9.3
+```
 
-# pi / 任意 Agent Skills harness（只拿技能层）
+然后在项目里让 agent「建工作日志 / 留个记录」，或手动跑：
+
+```bash
+ROOT=.   # 项目根；下面命令都接受 [ROOT] 或 --root
+
+python <skill>/scripts/journal.py new --title "标题" --insert
+python <skill>/scripts/journal.py brief                 # 一屏：状态 + 待办 + 近期记录
+python <skill>/scripts/journal.py check --strict --lint # 结构 + 内容，两道门禁
+```
+
+> `<skill>` 是安装后的技能目录（例如 `~/.dsh/skills/project-work-log`）。
+> 不知道装到哪时，先看 `~/.dsh/skills/` 或工作区的 `.dsh/skills/`。
+
+### 只拿技能层（pi / 任意 Agent Skills）
+
+```bash
 pi install git:github.com/IThinkItsaName/dsh-lore@v0.9.3
 ```
 
-> 本地目录装出来的是**链接**，源目录一移动就废 —— 长期用请钉 tag。自带技能的包必须打开
-> `skill-filesystem`，本包已在 `cordis.patch.yml` 里处理。
+装完把 `skills/project-work-log/` 放进目标平台的 skills 目录即可。没有 Python 也能用：
+`skill-only/` 是纯文档变体，把校验写成人工清单。
 
-## 用法
+> 本地目录装出来的是**链接**，源目录一移动就废——长期用请钉 tag。
+> 自带技能的 DSH 包必须打开 `skill-filesystem`；本包已在 [`cordis.patch.yml`](cordis.patch.yml) 里处理。
 
-代理按「留记录 / 建工作日志 / 总结 / 复盘 / 归档」这类意图自动加载技能，也可以直接跑脚本：
+## 日常怎么用
 
-```bash
-python <skill>/scripts/journal.py brief                 # 当前坐标（替代整读索引）
-python <skill>/scripts/journal.py new --title "…" --insert
-python <skill>/scripts/journal.py check --strict --lint # 结构 + 内容，两道门禁
-python <skill>/scripts/journal.py memory add --source wl/0042 "…"   # 跨工作区记忆
+| 你想做的事 | 用什么 |
+|---|---|
+| 接手一个项目，先看坐标 | `journal.py brief` |
+| 看最近几篇各自做到哪 | `journal.py snapshot --entries 12` |
+| 找旧结论 | `journal.py search "关键词"` → `show <篇号>` |
+| 开一篇新记录 | `journal.py new --title "…" --insert` |
+| 收尾：改状态 / 勾待办 / 抽经验 | `status --set`、`todo`、`lesson add` |
+| 归档一阶段 / 索引瘦身 | `archive`、`index compact` |
+| 把教训带到别的项目 | `memory publish` → `memory collect`（DSH 里也可用 `worklog_memory`） |
+| 定期整理 | `journal.py check --strict --lint`；每月看一次 `_inbox.md` 与 `lessons/` |
+
+DSH 插件还提供：
+
+- **`worklog_memory` 工具**：检索全局记忆、收发信箱、列会话。它只处理**工作区之外**的那一层；
+  `work_log/` 台账仍然用 `journal.py` 和普通文件工具，插件不替代它们。
+- **记忆注入**：经验层规则常驻；记忆索引进可缓存前缀；未读信箱只在有内容时尾注入。
+- **配置卡片**：技能开关、记忆开关与目录、诊断日志等；每个字段的归属与生效时机见
+  [`SETTINGS.md`](SETTINGS.md)。
+
+## 仓库结构
+
+```
+skills/project-work-log/       # 技能层：SKILL.md + 5 份 references + 4 个 Python 脚本
+skills/client-require-whitelist/ # 随包技能：客户端 require 白名单检查（默认关着）
+lib/index.js                   # 宿主半边：技能 provider、记忆注入、worklog_memory、状态端点
+lib/client.js                  # 浏览器半边：本 bundle 那一页的配置卡片
+cordis.patch.yml               # DSH bundle 补丁（启用 skill-filesystem、插入本包行）
+tests/                         # 17 支插件门禁（注册表契约、清单、路径、设置、客户端运行时…）
+skill-only/ + dist/            # 无脚本变体：给不能跑 Python 的环境
+docs/                          # 设计权威（why / worklog / settings / memory / goals）
+SETTINGS.md · RELEASING.md · PUBLISHING.md · CHANGELOG.md
 ```
 
-DSH 里另有 `worklog_memory` 工具：检索记忆、收发信箱（同工作区直投 `work_log/.lore-inbox/`，
-跨工作区走共享信箱）。
+## 独立性与设计边界
+
+- **技能层不知道 DSH 存在。** 它可以在没有 DSH 的环境单独跑；插件只是把它带进 DSH 的适配器。
+- **写给模型看的工具只有一个 `worklog_memory`。** 台账操作留在 CLI/文件层；这样没有插件的
+  agent 仍然能读记录，插件不会变成"没有它就打不开台账"的第二套系统。
+- **规则只有一个定义处。** 写入、索引、`lint` 都在 `journal.py`；插件不重写格式，只做薄包装
+  （例如 `send` 起 `journal.py inbox put`）。
+- **`reliability-guidelines` 已拆为独立技能**（2026-10-18，`0.9.3` 起）。本包不再随包提供它，
+  也不再提供 `guidelinesEnabled` / `guidelinesLanguage` / `guidelinesDir` 三个设置。
+- **没有 Python 也能用**：`skill-only/` 保留方法与模板，把机械门禁换成人工复核清单。
+
+完整的分层与依赖方向见 [`docs/plugin-spec.md`](docs/plugin-spec.md)。
+
+## 验证
+
+```bash
+npm test                 # 技能层自测（journal.py 全部命令 + 非编程场景 + 数据安全）
+npm run test:plugin      # 17 支插件门禁
+npm run audit            # 发版前审计（注册表 / 清单 / ESM / 安装面）
+npm run test:skill-only  # 无脚本变体与源一致
+```
+
+仓库门禁全绿不等于你的项目记录合格：项目自己的容器还要跑
+`journal.py check --strict --lint`。门禁的判据、已知误报与渐进原则见
+[`references/commands.md`](skills/project-work-log/references/commands.md)。
 
 ## 文档
 
-- 命令与约定：[`references/commands.md`](skills/project-work-log/references/commands.md)
-- 设计权威：[`docs/`](docs/README.md) · 记忆层：[`docs/memory-spec.md`](docs/memory-spec.md)
-- 设置：[`SETTINGS.md`](SETTINGS.md) · 发版：[`RELEASING.md`](RELEASING.md) · 版本：[`CHANGELOG.md`](CHANGELOG.md)
+- 设计权威：[`docs/`](docs/README.md) · 为什么做：[`docs/why.md`](docs/why.md)
+- 记录约定：[`references/conventions.md`](skills/project-work-log/references/conventions.md)
+- 命令与门禁：[`references/commands.md`](skills/project-work-log/references/commands.md)
+- 全局记忆：[`docs/memory-spec.md`](docs/memory-spec.md)
+- 设置：[`SETTINGS.md`](SETTINGS.md) · 发版：[`RELEASING.md`](RELEASING.md)
+- 版本变化：[`CHANGELOG.md`](CHANGELOG.md)
+
+## 版本与状态
+
+本仓库 `main` 当前是 **0.9.3**（`package.json`），**尚未打 tag / 推 / 发 npm**；已发布版是
+**0.9.2**。上面的安装示例钉的是本仓库当前版本；如果 tag 还没推，请改用 0.9.2，或用本地
+`file:` 源安装。发版流程见 [`RELEASING.md`](RELEASING.md)。
+
+> 本仓库的约定、文档与脚本由 **DeepSeek Flash 系列模型**整理生成（未经人工逐条校验），
+> 使用时请自行甄别。曾用名 `dsh-worklog`（2026-09-30 改名）；环境变量仍是 `DSH_WORKLOG_*`，
+> 技能名 `project-work-log`、工具名 `worklog_memory` 未变。
 
 MIT，见 [LICENSE](LICENSE)。

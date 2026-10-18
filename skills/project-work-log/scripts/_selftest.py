@@ -1095,6 +1095,20 @@ def appendix_phase(parent: str) -> None:
     ok("v0" not in ledger_text(dup),
        "块里不留旧值（不会再同时印着新旧两个状态）", ledger_text(dup))
 
+    # ① 多行字段：--set 换值时**旧续行必须一起清掉**（2026-10-18 实测：只换首行会把
+    #    旧值的尾巴留在新值下面，块里同时印着新旧两段状态）。
+    cont = make_fixture("appendix-status-continuation",
+                        skeleton(status="- 阶段：v1\n  旧值的第二行续写\n  旧值的第三行\n- 迭代：1"))
+    r = run(cont, "status", "--set", "阶段=一句话的新状态")
+    txt = ledger_text(cont)
+    ok(r.returncode == 0 and txt.count("- 阶段：一句话的新状态") == 1,
+       "status --set replaces a multi-line field's value", r.stdout + txt)
+    ok("旧值的第二行" not in txt and "旧值的第三行" not in txt,
+       "status --set drops the old continuation lines (no stale tail under the new value)",
+       txt)
+    ok("- 迭代：1" in txt and txt.index("- 迭代：1") > txt.index("- 阶段："),
+       "the next field survives the continuation cleanup and keeps its order", txt)
+
     noop = make_fixture("appendix-noop-status", skeleton(status="- 阶段：v1"))
     before = ledger_text(noop)
     r = run(noop, "status", "--set", "阶段")

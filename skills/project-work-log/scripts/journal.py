@@ -3448,6 +3448,7 @@ def cmd_status(args: argparse.Namespace) -> int:
                 head_line = head_line.rstrip("\r\n") + f"（{args.date}）" + (nl_of(text))
             lines[span[0]] = head_line
         changed = []
+        touched: set[str] = set()
         for pair in args.set:
             if "=" not in pair:
                 print(f"WARN: 忽略无法解析的 --set '{pair}'（应为 key=value）")
@@ -3465,6 +3466,7 @@ def cmd_status(args: argparse.Namespace) -> int:
                 # 命中已有字段时**沿用台账上的写法**，避免把 `核对 / 验证` 改写成 `核对`。
                 lines[i] = f"{m.group(1)}{existing}：{val}{m.group(4)}"
                 hits.append(existing)
+                touched.add(existing)
             if hits:
                 # 同一字段在块里写了多行时**全部**改掉（2026-10-15 修）：原来是命中第一行就
                 # `break`，第二行留着旧值 —— 块里同时印着新旧两个状态，命令却报成功。
@@ -3478,6 +3480,24 @@ def cmd_status(args: argparse.Namespace) -> int:
             lines.insert(end, f"- {key}：{val}{nl_of(text)}")
             span = (span[0], span[1], span[2] + 1)
             changed.append(key + "(新增)")
+        # **第二遍：清掉被改字段的续行**（2026-10-18 修）。字段的值可以写成多行（缩进续行），
+        # 而上面只替换了首行 —— 旧值的尾巴会留在新值下面，块里同时印着新旧两段状态。
+        # 判据：被 touched 的字段行之后、紧跟着的缩进行（且不是新的 `- 字段`）都算续行。
+        if touched:
+            i = span[1]
+            while i < span[2]:
+                m = re.match(r"^(\s*-\s*)([^：:\r\n]+)[：:]", lines[i])
+                if m and m.group(2).strip() in touched:
+                    j = i + 1
+                    while (j < span[2] and lines[j].strip()
+                           and lines[j][0] in " \t"
+                           and not re.match(r"^\s*-\s", lines[j])):
+                        j += 1
+                    if j > i + 1:
+                        removed = j - i - 1
+                        del lines[i + 1:j]
+                        span = (span[0], span[1], span[2] - removed)
+                i += 1
         if args.dry_run:
             # dry-run 要与真跑**同判**（2026-10-15 修，审查报告 §附录 (a) 的小瑕疵）：
             # 原来这里无条件打印 `将更新：`（空的时候就是一句空话）并返回 0，

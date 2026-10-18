@@ -92,8 +92,13 @@ settings.json（手工编辑）  >  row config（cordis.patch.yml）  >  内置�
 
 | 注入什么 | 接口 | 性质 | 代价 |
 |---|---|---|---|
+| 经验层规则（2026-10-18 加） | `ctx.systemPrompt.section({…})` | **稳定**；进系统提示词当固定前缀，**不随 `memoryEnabled` 关闭** | 约 490 字 / 340 tokens/请求；文本自带「仅当 `work_log/lessons/` 存在」的条件 |
 | 全局记忆索引 | `ctx.systemPrompt.section({…})` | **稳定**；进系统提示词当固定前缀 | 在**每个**请求里，所以按**字符预算**限制 |
 | 待收 N 条 | `ctx.systemPrompt.context({…})` | **可变**；尾注入在保留历史之后 | **只在内容变化时**追加，所以空信箱**零成本** |
+
+**经验层为什么要死注入**：它替代的是工作区 `AGENTS.md` 钩子——那段规则必须每轮都在，否则
+「先搜经验 / 踩坑记 inbox / 收尾前整理」只在模型主动加载技能时才生效。做成插件段之后，
+新工作区不必再建文件；skill-only 场景仍用 `AGENTS.md`（见 `templates.md` §10）。
 
 **为什么索引用 `section` 而不是 `context`**：索引变动很少（只在 `memory collect` / `index`
 之后），而它每次都是同一段文本 —— `section` 进的是**可缓存前缀**。

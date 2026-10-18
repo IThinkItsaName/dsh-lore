@@ -75,6 +75,24 @@ resetMemory()
 ok(mod.memoryIndexSection() === '', 'an absent memory root injects nothing')
 ok(mod.countInboxItems() === 0, 'an absent inbox counts 0, not a throw')
 
+// The experience rules are static text with their own applicability condition; assert both halves
+// so a future edit cannot drop the condition while keeping the three steps.
+{
+  const rules = mod.experienceLayerSection()
+  ok(rules.includes('work_log/lessons/'), 'the rules name the condition directory')
+  ok(rules.includes('work_log/_inbox.md'), 'the rules name the pitfall inbox')
+  ok(rules.includes('共同特征') && rules.includes('一眼看不出原因'),
+    'the rules generalize the trigger beyond the examples', rules)
+  ok(rules.includes('grep -rn') && rules.includes('Select-String'),
+    'the search is recursive and names a Windows equivalent', rules)
+  ok(rules.includes('工作区存在 `work_log/lessons/` 时适用'),
+    'the header carries the applicability condition', rules)
+  ok(rules.includes('当前状态') && rules.includes('待办'),
+    'the closing check also looks at the active ledger surface', rules)
+  ok(rules.includes('照某条经验做仍无效') && rules.includes('生效条件'),
+    'a lesson that did not work is recorded and re-scoped instead of silently dropped', rules)
+}
+
 // A generated index that carries only its own H1 is, in substance, empty. Injecting its header
 // would be the "here is nothing" line this rule exists to prevent.
 writeIndex('# 全局记忆索引（生成物：由正文分册推出，勿手写）\n')
@@ -149,22 +167,34 @@ function mountWith(document) {
 resetMemory()
 writeIndex(SAMPLE)
 
-// Defaults: memoryEnabled true, memoryInjectIndex true → both registered.
+// Defaults: memoryEnabled true, memoryInjectIndex true → the experience section + both memory
+// contributions are registered. The experience section is new (2026-10-18) and deliberately
+// **not** gated by the memory switches: it is workspace rules, not global memory.
 {
   const calls = mountWith({})
-  ok(calls.section.length === 1, 'the index section is registered by default', String(calls.section.length))
+  ok(calls.section.length === 2,
+    'the experience + index sections are registered by default', String(calls.section.length))
   ok(calls.context.length === 1, 'the inbox context is registered by default', String(calls.context.length))
-  ok(calls.section[0]?.name === 'dsh-lore:memory-index', 'the section carries a stable name', calls.section[0]?.name)
-  ok(calls.context[0]?.name === 'dsh-lore:inbox', 'the context carries a stable name', calls.context[0]?.name)
-  ok(Number.isFinite(calls.section[0]?.order), 'the section carries a finite order')
+  const experience = calls.section.find((s) => s.name === 'dsh-lore:experience')
+  const index = calls.section.find((s) => s.name === 'dsh-lore:memory-index')
+  ok(experience !== undefined && index !== undefined,
+    'both sections carry stable names', calls.section.map((s) => s.name).join(','))
+  ok(typeof experience?.text === 'string',
+    'the experience section is a static string, so it stays in the cacheable prefix')
+  ok(experience?.text.includes('work_log/lessons/') && experience?.text.includes('_inbox.md')
+     && experience?.text.includes('完成'),
+     'the experience rules mention the condition, the inbox and the closing check')
+  ok(!experience?.text.includes('AGENTS.md'),
+     'the injected rules no longer depend on a workspace AGENTS.md')
+  ok(Number.isFinite(index?.order), 'the index section carries a finite order')
   ok(Number.isFinite(calls.context[0]?.order), 'the context carries a finite order')
   // The whole point of the two-interface split: the index is STABLE text, the inbox is resolved
   // per assembly. Registering a string for the inbox would freeze the count at mount time.
-  ok(typeof calls.section[0]?.text === 'function', 'the index text is a function (re-read per assembly)')
+  ok(typeof index?.text === 'function', 'the index text is a function (re-read per assembly)')
   ok(typeof calls.context[0]?.text === 'function', 'the inbox text is a function (count read per assembly)')
   // These two used to be empty promises; assert the resolved text so a re-registration that
   // ignores the content cannot pass.
-  ok(calls.section[0]?.text().includes('host-style-claiming'), 'the registered section resolves to the index')
+  ok(index?.text().includes('host-style-claiming'), 'the registered section resolves to the index')
 }
 
 // `memoryInjectIndex: false` → the section is **still registered** (that is a registration fact)
@@ -173,10 +203,11 @@ writeIndex(SAMPLE)
 // immediate label — and the page's promise is what the assertion should hold it to.
 {
   const calls = mountWith({ memoryInjectIndex: false })
-  ok(calls.section.length === 1,
-    'memoryInjectIndex=false still registers the section', String(calls.section.length))
-  ok(calls.section[0]?.text() === '',
-    'but it resolves to nothing, so nothing is injected', JSON.stringify(calls.section[0]?.text()))
+  const index = calls.section.find((s) => s.name === 'dsh-lore:memory-index')
+  ok(calls.section.length === 2,
+    'memoryInjectIndex=false still registers both sections', String(calls.section.length))
+  ok(index?.text() === '',
+    'but the index resolves to nothing, so nothing is injected', JSON.stringify(index?.text()))
   ok(calls.context.length === 1, 'and the inbox context is independent of that switch', String(calls.context.length))
 }
 
@@ -185,18 +216,20 @@ writeIndex(SAMPLE)
 // function again: no re-mount, no restart.
 {
   const calls = mountWith({ memoryInjectIndex: true })
-  const text = calls.section[0].text
+  const text = calls.section.find((s) => s.name === 'dsh-lore:memory-index').text
   ok(text().includes('host-style-claiming'), 'with the switch on, the index is injected')
   writeFileSync(process.env.DSH_WORKLOG_SETTINGS, JSON.stringify({ memoryInjectIndex: false }), 'utf8')
   ok(text() === '',
     'flipping the switch takes effect on the next assembly — without a restart')
 }
 
-// `memoryEnabled: false` → neither. This is the master switch that the page says needs a restart,
-// and this is the asymmetry it is describing.
+// `memoryEnabled: false` → the two memory contributions are gone, but the **experience rules stay**:
+// turning global memory off must not silently disable the workspace's pitfall workflow.
 {
   const calls = mountWith({ memoryEnabled: false })
-  ok(calls.section.length === 0, 'memoryEnabled=false registers no index section')
+  ok(calls.section.length === 1 && calls.section[0]?.name === 'dsh-lore:experience',
+    'memoryEnabled=false keeps the experience section and drops the index',
+    calls.section.map((s) => s.name).join(','))
   ok(calls.context.length === 0, 'memoryEnabled=false registers no inbox context')
 }
 
@@ -318,4 +351,5 @@ writeIndex(SAMPLE)
 resetMemory()
 rmSync(SANDBOX, { recursive: true, force: true })
 
-report('memory injection OK — nothing means nothing, and both switches are real') 
+report('memory injection OK — nothing means nothing, the experience rules are unconditional, '
+  + 'and both switches are real') 

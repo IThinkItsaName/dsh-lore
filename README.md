@@ -19,10 +19,10 @@
 
 ```bash
 # DSH 插件（带记忆注入、工具与配置卡片）
-dsh plugin --profile <profile> add dsh-lore@v0.9.2
+dsh plugin --profile <profile> add dsh-lore@v0.9.3
 
 # pi / 任意 Agent Skills harness（只拿技能层）
-pi install git:github.com/IThinkItsaName/dsh-lore@v0.9.2
+pi install git:github.com/IThinkItsaName/dsh-lore@v0.9.3
 ```
 
 > 本地目录装出来的是**链接**，源目录一移动就废 —— 长期用请钉 tag。自带技能的包必须打开

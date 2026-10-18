@@ -8,6 +8,18 @@
 
 ## [未发布]
 
+## [0.9.3] - 2026-10-18
+
+### 新增：经验层规则由插件常驻注入（不再依赖 `AGENTS.md`）
+
+插件现在把 3 条经验层规则作为**稳定 section** 注入提示词（约 490 字 / 340 tokens）：仅当工作区
+存在 `work_log/lessons/` 时适用；覆盖「遇到现象先搜经验」「踩坑当场记 `_inbox.md`」「收尾前
+整理 inbox + 对照台账的当前状态与待办」。**照某条经验做仍无效时**也要记一行（用了哪条、为何
+无效、实际差异），整理时补「生效条件」或标失效，不能静默丢掉这条证据。它**不随
+`memoryEnabled` 关闭**——记忆开关只管全局记忆，不该顺手关掉工作区的踩坑流程。
+
+DSH 里新工作区不必再建 `AGENTS.md`；skill-only / 非 DSH 场景仍用模板 §10 的文件钩子。
+
 ## [0.9.2] - 2026-10-18
 
 ### 修复：收尾批（旧式子条目 / 两字标题 / L1·N1·N2 / 空行续行 / 测试默认值）
@@ -2225,7 +2237,8 @@
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.2...HEAD
+[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.8.1...v0.9.0

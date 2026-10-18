@@ -129,7 +129,7 @@
 |---|---|
 | **技能** | `skillEnabled`、`guidelinesEnabled`、`guidelinesLanguage`，以及收在「路径」折叠区里的 `skillDir` / `guidelinesDir` |
 | **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable` 三个开关，加**最后一栏路径框 `memoryDir`**（「记忆存放位置」），外加一个只读的「当前状态」折叠区 |
-| **高级** | `verbose`、`modelInvocable`、`userInvocable` |
+| **高级** | `verbose`、`modelInvocable`、`userInvocable`、`sessionsCrossWorkspace` |
 
 ### 能改什么
 
@@ -147,6 +147,7 @@
 | `verbose` | 开关 | 关 | 高级 | **插件**（挂载时定开关，之后每次 `trace` 都看它） | 需重启 |
 | `modelInvocable` | 开关 | 开 | 高级 | **插件**（投影候选时现读） | 即时 |
 | `userInvocable` | 开关 | 开 | 高级 | **插件**（投影候选时现读） | 即时 |
+| `sessionsCrossWorkspace` | 开关 | 开 | 高级 | **插件**（`sessions` 调用时现读）：关掉后 `scope:"all"` 被拒绝，默认 scope 不受影响 | 即时 |
 | `skillFile` | — | `SKILL.md` | **界面不提供控件** | **插件**（现读）—— 只由行配置给 | 即时 |
 | ~~`container`~~ | — | `work_log` | **界面不提供** | **`journal.py`** —— 插件不读 |
 | ~~`lessons`~~ | — | `lessons` | **界面不提供** | **`journal.py`** —— 插件不读 |
@@ -183,8 +184,8 @@ profile patch，也没有任何界面展示或提交它们；`projectDefaults()`
 
 1. **只有"要不要注册"需要重启**，而**2026-10-14 起只剩两条**属于这一类：
    `memoryEnabled`（两个注入都不注册）与 `verbose`（诊断在装载时装配）。
-   `skillEnabled` / `guidelinesEnabled` / `modelInvocable` / `userInvocable` / `skillDir` /
-   `skillFile` / `guidelinesDir` / `guidelinesLanguage` / `memoryDir` **都改成用到时现读** ——
+   `skillEnabled` / `guidelinesEnabled` / `modelInvocable` / `userInvocable` / `sessionsCrossWorkspace` /
+   `skillDir` / `skillFile` / `guidelinesDir` / `guidelinesLanguage` / `memoryDir` **都改成用到时现读** ——
    依据是 `cordis/README.md` §Volatile configuration（只变 `.volatile()` 字段时 Loader
    **不重挂载**，把新值提交进运行中的引用并发 `loader/volatile-update`）与官方 cookbook
    「在操作开始时读取 `.get()`」。技能那几项的落地方式见 `lib/index.js` 的 `createProvider`：

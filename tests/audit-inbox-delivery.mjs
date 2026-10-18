@@ -171,7 +171,7 @@ function makeCtx({
 
 function mount(options) {
   const { ctx, calls } = makeCtx(options)
-  mod.apply(ctx, {})
+  mod.apply(ctx, options?.config ?? {})
   const tool = calls.tools.find((definition) => definition?.name === 'worklog_memory')
   return { ctx, calls, tool }
 }
@@ -552,6 +552,17 @@ if (!hasPython) {
     'archived sessions stay hidden under `scope: "all"` too', across.text)
   ok(/read-only/i.test(across.text) && /own workspace/.test(across.text),
     'the cross-workspace footer says sending stays workspace-level', across.text)
+  // 设置页那个开关（默认开）：关掉之后 `all` 必须被拒绝，默认 scope 不受影响。
+  const { tool: toolOff } = mount({
+    cwd: WS_A, sessions, titles, config: { sessionsCrossWorkspace: false },
+  })
+  const offAll = await toolOff.execute({ operation: 'sessions', workspace: WS_A, scope: 'all' })
+  ok(offAll.ok === false && /跨工作区/.test(offAll.text),
+    'with the setting off, `scope: "all"` is refused (not silently downgraded)', offAll.text)
+  const offDefault = await toolOff.execute({ operation: 'sessions', workspace: WS_A })
+  ok(offDefault.ok === true && offDefault.text.includes('A 的工作标题')
+    && !offDefault.text.includes('B 的秘密标题'),
+    'and the default scope still works with the setting off', offDefault.text)
   const filtered = await tool5.execute({ operation: 'sessions', workspace: WS_A, query: '第二个' })
   ok(filtered.ok === true && filtered.text.includes('A 的第二个标题') && !filtered.text.includes('A 的工作标题'),
     '`query` filters by title', filtered.text)

@@ -380,6 +380,7 @@ promote suggest [--all]
   发送侧不变 —— `send.session` 仍只接受**本工作区**会话，跨工作区投递只到工作区粒度。
   侦察面因此从"默认不列"变成"默认不列、显式一步才列，且始终带归属"；
   这是用户在自己的多工作区机器上明确要求的能力。
+  设置页的「允许跨工作区查看会话」（高级页，默认开）是它的开关：关掉后 `all` 被拒绝。
 
 **已归档的会话不列**（2026-10-17 补）：宿主的 `sessionController.list()` 返回的是完整语料
 （live + persisted），归档集合在 `workspaceRegistry.archivedSessionIds` 里、由界面那侧隐藏；

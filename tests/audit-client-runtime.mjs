@@ -281,6 +281,7 @@ const PROJECTED_DEFAULTS = {
   skillDir: '', skillFile: 'SKILL.md', skillEnabled: true, modelInvocable: true, userInvocable: true, verbose: false,
   guidelinesEnabled: true, guidelinesDir: '', guidelinesLanguage: 'zh',
   memoryEnabled: true, memoryInjectIndex: true, memoryPersonalSearchable: false,
+  sessionsCrossWorkspace: true,
 }
 
 /* ============================ 1. wrapper + factory ========================= */
@@ -311,10 +312,11 @@ let clientExports = null
     seen.join(','))
   ok(typeof clientExports.claimNamespace === 'function',
     'the namespace claim is exported (the test drives it directly)')
-  // 十三：2026-10-14 加 `memoryDir`（记忆存放位置）。**这个数字每加一个字段都要跟着改**，
-  // 而且它与 `lib/index.js` 的 `Config` 是同一件事 —— 下面那条"exactly the volatile fields"才是真判据。
-  ok(Array.isArray(clientExports.FORM_FIELDS) && clientExports.FORM_FIELDS.length === 13,
-    'the claim fingerprint is exported and names thirteen fields',
+  // 十四：2026-10-14 加 `memoryDir`、2026-10-18 加 `sessionsCrossWorkspace`。
+  // **这个数字每加一个字段都要跟着改**，而且它与 `lib/index.js` 的 `Config` 是同一件事
+  // —— 下面那条"exactly the volatile fields"才是真判据。
+  ok(Array.isArray(clientExports.FORM_FIELDS) && clientExports.FORM_FIELDS.length === 14,
+    'the claim fingerprint is exported and names fourteen fields',
     JSON.stringify(clientExports.FORM_FIELDS))
   ok(clientExports.STATUS_URL === '/plugins/dsh-lore/status.json',
     'the read-only status endpoint is the only HTTP surface the client has',
@@ -646,12 +648,14 @@ const SEED = {
     modelInvocable: true, userInvocable: true, verbose: false,
     guidelinesEnabled: false, guidelinesDir: 'skills/reliability-guidelines', guidelinesLanguage: 'en',
     memoryEnabled: true, memoryInjectIndex: true, memoryPersonalSearchable: false,
+    sessionsCrossWorkspace: true,
   },
   base: {
     skillDir: 'skills/project-work-log', skillFile: 'SKILL.md', skillEnabled: true,
     modelInvocable: true, userInvocable: true, verbose: false,
     guidelinesEnabled: true, guidelinesDir: 'skills/reliability-guidelines', guidelinesLanguage: 'zh',
     memoryEnabled: true, memoryInjectIndex: true, memoryPersonalSearchable: false,
+    sessionsCrossWorkspace: true,
   },
   user: { guidelinesEnabled: false },
 }
@@ -924,11 +928,12 @@ const openDisclosure = async (index = 0) => {
   ok(advancedPanels.length === 1 && advancedPanels[0].props.id === 'dsh-lore-panel-advanced',
     'selecting 高级 renders its panel and only its panel')
   const advancedSwitches = getSwitches(advanced)
-  ok(advancedSwitches.length === 3, 'the 高级 panel holds three switches', String(advancedSwitches.length))
-  ok(advancedSwitches.map((node) => node.props.label).join(',') === '打开诊断日志,允许模型自动调用,允许手动调用',
-    'the three switches are verbose / modelInvocable / userInvocable, in order',
+  ok(advancedSwitches.length === 4, 'the 高级 panel holds four switches', String(advancedSwitches.length))
+  ok(advancedSwitches.map((node) => node.props.label).join(',')
+    === '打开诊断日志,允许模型自动调用,允许手动调用,允许跨工作区查看会话',
+    'the switches are verbose / modelInvocable / userInvocable / sessionsCrossWorkspace, in order',
     advancedSwitches.map((node) => node.props.label).join(','))
-  ok(advancedSwitches.map((node) => node.props.checked).join(',') === 'false,true,true',
+  ok(advancedSwitches.map((node) => node.props.checked).join(',') === 'false,true,true,true',
     'they reflect the projected values',
     advancedSwitches.map((node) => node.props.checked).join(','))
   ok(getInputs(advanced).length === 0, 'the 高级 panel holds no text input')

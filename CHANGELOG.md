@@ -8,6 +8,11 @@
 
 ## [未发布]
 
+### 新增：设置页「允许跨工作区查看会话」开关（高级页，默认开）
+
+关掉后 `sessions` 的 `scope:"all"` 直接拒绝（默认 scope 不受影响）；按调用时现读，改完即时生效。
+它是 `scope:"all"` 的唯一开关，与 `memoryPersonalSearchable` 一样属于"扩大可见范围"类。
+
 ### 新增：`sessions` 可显式跨工作区（只读、带归属标注）
 
 - `worklog_memory` 的 `sessions` 增 `scope`：默认 `workspace`（行为与之前一致）；`all` 列出

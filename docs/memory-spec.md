@@ -382,6 +382,12 @@ promote suggest [--all]
   这是用户在自己的多工作区机器上明确要求的能力。
   设置页的「允许跨工作区查看会话」（高级页，默认开）是它的开关：关掉后 `all` 被拒绝。
 
+**与会话搜索的关系（2026-10-18 定）**：实验性会话搜索（`session_search` / `session_event_search`
+等 5 个只读工具）按**内容/事件**检索、始终限制在 caller `cwd`；`sessions` 只列**标题/id**，供
+`send.session` 选目标。两者是分层关系（实验包自带 isolated `sessionQuery` 与 `:memory:` 索引，
+与宿主的 base `sessionQuery` 互不影响），**不合并、也不互斥**；`sessions` 的输出末尾用一句
+路由把"按内容找"指向 `session_search`。
+
 **已归档的会话不列**（2026-10-17 补）：宿主的 `sessionController.list()` 返回的是完整语料
 （live + persisted），归档集合在 `workspaceRegistry.archivedSessionIds` 里、由界面那侧隐藏；
 工具自己再按这份集合过滤一次 —— 用户归档一个对话，就是不想再在任何"可选项"里看到它。

@@ -538,6 +538,8 @@ if (!hasPython) {
     '`sessions` lists the calling workspace\'s sessions with titles', listed.text)
   ok(listed.text.includes('@workspace-a'),
     'every row is labelled with its workspace', listed.text)
+  ok(listed.text.includes('session_search'),
+    'the sessions output routes content search to session_search (layered, not merged)', listed.text)
   ok(!listed.text.includes('A 的已归档对话') && !listed.text.includes('session-a3-archived'),
     'archived sessions are NOT listed (the host list includes them; the tool filters by registry)',
     listed.text)

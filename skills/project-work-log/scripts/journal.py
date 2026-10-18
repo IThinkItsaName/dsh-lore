@@ -222,6 +222,38 @@ CITE_RE = re.compile(r"wl/(\d+)")
 # 用 `[ \t]` 而不是 `\s`：`\s` 会把换行也算进去，`^\s{2,}` 能跨行匹配到别处的缩进。
 CARD_TRIGGER_RE = re.compile(r"^[ \t]{2,}- 触发[ \t]*[：:]", re.M)
 CARD_VERIFY_RE = re.compile(r"^[ \t]{2,}- 验证[ \t]*[：:]", re.M)
+
+
+def card_shape_issues(text: str) -> list[tuple[int, str, str]]:
+    """按**条目**检查卡式形制，返回 `[(条目起始行号, 有的字段, 缺的字段)]`。
+
+    为什么按条目、不按整份文件：同一个分册里 A 条写「触发」、B 条写「验证」，
+    对整份文本 `search` 会让两者互相补齐、静默放行（2026-10-18 审查 M1 实测：
+    混合分册在 `check --strict` 下 0 warn）。条目边界 = **第 0 列**的 `-`
+    （列表项从这一列起），缩进行归当前条目；条目前的 H1 / 前言不参与。
+    """
+    issues: list[tuple[int, str, str]] = []
+    start = 0
+    block: list[str] = []
+
+    def flush() -> None:
+        if not block:
+            return
+        joined = "\n".join(block)
+        has_t = bool(CARD_TRIGGER_RE.search(joined))
+        has_v = bool(CARD_VERIFY_RE.search(joined))
+        if has_t != has_v:
+            have, miss = ("触发", "验证") if has_t else ("验证", "触发")
+            issues.append((start, have, miss))
+
+    for i, line in enumerate(text.splitlines(), 1):
+        if re.match(r"^-(?:[ \t]|$)", line):
+            flush()
+            start, block = i, [line]
+        elif block:
+            block.append(line)
+    flush()
+    return issues
 # 状态块标题后面的日期括号：全角 `（…）` 与半角 `(…)` 都要认（英文台账用半角）。
 DATE_PAREN_RE = re.compile(r"[（(][^）)\r\n]*[）)]")
 # 模板里的日期占位符：识别它是为了"刚初始化"和"真的没写日期"能分开。
@@ -2638,14 +2670,13 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
                 for c in cites:
                     if int(c) not in entries:
                         rep.add("WARN", where, f"来源 `wl/{c}` 在记录目录里不存在")
-                # 卡式条目的触发 / 验证必须成对：只写一个，下次就只剩半边线索。
+                # 卡式条目的触发 / 验证必须**按条目**成对：只写一个，下次就只剩半边线索。
+                # 按整份文件判会让 A 条的触发与 B 条的验证互相补齐（审查 M1）。
                 # 只认缩进子条目这一种形制 —— 旧条目里的「触发条件」不命中（见 CARD_*_RE）。
-                has_trig = bool(CARD_TRIGGER_RE.search(text))
-                has_ver = bool(CARD_VERIFY_RE.search(text))
-                if has_trig != has_ver:
-                    have, miss = ("触发", "验证") if has_trig else ("验证", "触发")
+                for start, have, miss in card_shape_issues(text):
                     rep.add("WARN", where,
-                            f"卡式条目有 `{have}：` 却缺 `{miss}：` 子条目（两者必须成对，缩进 2 空格）")
+                            f"第 {start} 行起的条目有 `{have}：` 却缺 `{miss}：` 子条目"
+                            f"（两者必须成对，缩进 2 空格）")
     return rep
 
 
@@ -4403,14 +4434,35 @@ def cmd_lesson(args: argparse.Namespace) -> int:
     cite = f"`wl/{args.source:04d}`"
     if cite not in line:
         line = line.rstrip("。.") + f"（{cite}）"
+    # 卡式字段的输入校验（2026-10-18 审查 M2 / L2）：
+    #   · 只给空白 → 会写出 `  - 触发：` 这种空子条目，而 `check` 还认它「存在」；
+    #   · 带换行 → 会把 2 空格缩进形制与 markdown 结构写坏，还能在第 0 列注入任意行。
+    # 两者都在落盘前拒绝，错误信息说清怎么改。
+    trig = (args.trigger or "").strip()
+    ver = (args.verify or "").strip()
+    for flag, raw in (("--trigger", args.trigger), ("--verify", args.verify)):
+        if raw is None:
+            continue
+        if not raw.strip():
+            print(f"ERROR: {flag} 只有空白；要么给内容，要么别传这个参数")
+            return 1
+        if "\n" in raw or "\r" in raw:
+            print(f"ERROR: {flag} 必须单行（不能换行）；多行会写坏卡式缩进与 markdown 结构")
+            return 1
+    avoids: list[str] = []
+    for raw in (args.avoid or []):
+        if "\n" in raw or "\r" in raw:
+            print("ERROR: --avoid 必须单行（不能换行）；多行会写坏卡式缩进与 markdown 结构")
+            return 1
+        if raw.strip():
+            avoids.append(raw.strip())
     # 卡式条目 = 主行 + 缩进 2 空格的子条目。三个参数都不传时 payloads 只有主行，
     # 输出与旧行为**逐字节一致**（这条由自测的旧断言守着）。
     payloads = [line + nl]
-    if args.trigger:
-        payloads.append(f"  - 触发：{args.trigger.strip()}{nl}")
-    if args.verify:
-        payloads.append(f"  - 验证：{args.verify.strip()}{nl}")
-    avoids = [a.strip() for a in (args.avoid or []) if a.strip()]
+    if trig:
+        payloads.append(f"  - 触发：{trig}{nl}")
+    if ver:
+        payloads.append(f"  - 验证：{ver}{nl}")
     if avoids:
         payloads.append(f"  - 别再来：{'；'.join(avoids)}{nl}")
     if args.topic:

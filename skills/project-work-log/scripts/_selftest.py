@@ -4529,6 +4529,16 @@ def card_phase(tmp: str) -> None:
           "记录被归档时指向它的卡应当能被查出来，而不是继续显示得像一条新鲜结论。"
           "（`wl/0003`；本条结论已进 lessons，可复用。）\n")
 
+    # 卡式条目（`0127`）：三字段必须被投影进「生效条件 / 验证方式 / 不适用条件」，
+    # 而且**不许**再作为正文留在「执行」里（2026-10-18 审查 M3 的端到端靶子）。
+    topic_path = os.path.join(cont, "lessons", "01-topic.md")
+    write(topic_path, read(topic_path) +
+          "- **卡式条目的三字段**：正文说明这条经验为什么值得三个字段，以及它们各自该被"
+          "投影到哪里，而不是连成一行塞进「执行」。（`wl/0001`；" + CARD_QUOTE + "）\n"
+          "  - 触发：改完插件产物后邻居界面丢样式\n"
+          "  - 验证：querySelectorAll('style:not([data-plugin])').length === 0\n"
+          "  - 别再来：把标记写成 data-plugin-css（不在宿主判据里）\n")
+
     tool = os.path.join(HERE, "dsh-lore-card.py")
     ok(os.path.isfile(tool), "dsh-lore-card.py ships next to journal.py", tool)
 
@@ -4588,6 +4598,26 @@ def card_phase(tmp: str) -> None:
        "、".join(dup_exec) or f"{len(fulls)} 张 full 卡逐张查过")
     ok(not any(p.startswith("wl0002") for p in ptrs),
        "no card slug derives from the too-short record", " ".join(ptrs)[:200])
+
+    # 卡式三字段（`0127` × 2026-10-18 审查 M3）：各归其位，且不许留在「执行」里。
+    card_sec: dict[str, str] = {}
+    for fn in fulls:
+        text = read(os.path.join(cards, fn))
+        if "卡式条目的三字段" in text:
+            for key in ("生效条件", "执行", "验证方式", "不适用条件"):
+                m = re.search(rf"(?m)^#\s*{key}\s*$\n(.*?)(?=\n#\s|\Z)", text, re.S)
+                card_sec[key] = " ".join(m.group(1).split()) if m else ""
+    ok(bool(card_sec), "a lesson card carrying 触发/验证/别再来 is projected",
+       f"{len(fulls)} full 卡里没找到靶子")
+    ok("触发：改完插件产物后邻居界面丢样式" in card_sec.get("生效条件", ""),
+       "the lesson's 触发 is projected into 生效条件", card_sec.get("生效条件", "")[:200])
+    ok("querySelectorAll('style:not([data-plugin])')" in card_sec.get("验证方式", ""),
+       "the lesson's 验证 is projected into 验证方式 (not the generic fallback)",
+       card_sec.get("验证方式", "")[:200])
+    ok("别再来：把标记写成 data-plugin-css" in card_sec.get("不适用条件", ""),
+       "the lesson's 别再来 is projected into 不适用条件", card_sec.get("不适用条件", "")[:200])
+    ok("触发：" not in card_sec.get("执行", "") and "验证：" not in card_sec.get("执行", ""),
+       "the card fields no longer leak into the 执行 section", card_sec.get("执行", "")[:200])
 
     body = read(os.path.join(cards, ptrs[0])) if ptrs else ""
     ok("domain:selftest-project" in body and "condition_space" in body,
@@ -5009,7 +5039,24 @@ def lesson_phase(parent: str) -> None:
     ok(r.returncode != 0, "lesson add still rejects an unknown source with card flags",
        r.stdout + r.stderr)
 
-    # 6) `check` 的形制检查：只认缩进子条目，且触发 / 验证必须成对 ----------------
+    # 5b) 空白 / 多行卡式值：落盘前拒绝（审查 M2 / L2）---------------------------
+    before = read(vol_path)
+    r = run(proj, "lesson", "add", "--volume", "01-topic.md", "--source", "1",
+            "--text", "空白触发", "--trigger", "   ")
+    ok(r.returncode != 0, "lesson add rejects a whitespace-only --trigger", r.stdout + r.stderr)
+    ok(read(vol_path) == before, "and it writes nothing when the card value is blank",
+       read(vol_path)[-200:])
+    r = run(proj, "lesson", "add", "--volume", "01-topic.md", "--source", "1",
+            "--text", "多行验证", "--trigger", "t", "--verify", "a\nb")
+    ok(r.returncode != 0, "lesson add rejects a multi-line --verify", r.stdout + r.stderr)
+    ok(read(vol_path) == before, "and it writes nothing when the card value has a newline",
+       read(vol_path)[-200:])
+    r = run(proj, "lesson", "add", "--volume", "01-topic.md", "--source", "1",
+            "--text", "只有反面", "--avoid", "只给反面（没有触发/验证）")
+    ok(r.returncode == 0 and "  - 别再来：只给反面（没有触发/验证）" in read(vol_path),
+       "a lone --avoid is allowed (it is not part of the pairing rule)", read(vol_path)[-300:])
+
+    # 6) `check` 的形制检查：只认缩进子条目，且触发 / 验证必须**按条目**成对 ------
     cproj = os.path.join(parent, "cardcheck")
     os.makedirs(os.path.join(cproj, CONTAINER, "lessons"))
     write(os.path.join(cproj, CONTAINER, "README.md"),
@@ -5025,19 +5072,28 @@ def lesson_phase(parent: str) -> None:
           "# 03 · T\n\n- **缺另一半**：x。（`wl/0001`）\n  - 验证：只有验证\n")
     write(os.path.join(cproj, CONTAINER, "lessons", "04-old.md"),
           "# 04 · T\n\n- **旧条**：x。（`wl/0001`）\n  - **触发条件（最容易忽略的一条）**：y。\n")
+    # 05：同一份分册里「完整卡 + 半边卡」。按整份文件 `search` 的实现会静默放行（M1）。
+    write(os.path.join(cproj, CONTAINER, "lessons", "05-mixed.md"),
+          "# 05 · T\n\n- **完整**：x。（`wl/0001`）\n  - 触发：t\n  - 验证：v\n\n"
+          "- **半边**：y。（`wl/0001`）\n  - 触发：只有触发\n")
     r = run(cproj, "check")
     ok(r.returncode == 0, "check passes when a card misses one half (it is only a WARN)",
        r.stdout)
-    ok("02-trig.md" in r.stdout and "卡式条目有 `触发：` 却缺 `验证：`" in r.stdout,
+    ok("02-trig.md" in r.stdout and "条目有 `触发：` 却缺 `验证：`" in r.stdout,
        "check warns when a card has 触发 but no 验证", r.stdout)
-    ok("03-verify.md" in r.stdout and "卡式条目有 `验证：` 却缺 `触发：`" in r.stdout,
+    ok("03-verify.md" in r.stdout and "条目有 `验证：` 却缺 `触发：`" in r.stdout,
        "check warns in the other direction too", r.stdout)
+    ok("05-mixed.md" in r.stdout,
+       "a half card is caught even when the same volume also has a complete card (M1)",
+       r.stdout)
+    ok("第 7 行起的条目有 `触发：` 却缺 `验证：`" in r.stdout,
+       "the warning names the line where the offending entry starts", r.stdout)
     ok("04-old.md" not in r.stdout,
        "the old-style 触发条件 sub-item is not mistaken for the card format", r.stdout)
     ok("01-topic.md" not in r.stdout,
        "a complete card is not flagged", r.stdout)
     r = run(cproj, "check", "--strict")
-    ok(r.returncode != 0 and "卡式条目有 `触发：` 却缺 `验证：`" in r.stdout,
+    ok(r.returncode != 0 and "条目有 `触发：` 却缺 `验证：`" in r.stdout,
        "check --strict turns the card WARN into an ERROR", r.stdout)
 
 

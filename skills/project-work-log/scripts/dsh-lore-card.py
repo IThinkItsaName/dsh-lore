@@ -46,6 +46,11 @@ _ID_SAFE = re.compile(r"[^a-z0-9-]+")
 # lessons 条目：`- **标题**：正文…` / `- **标题**：正文` 之后可有 2 空格缩进的子项
 # （有些条目写成 `- **id**\n  applies-to: …` 的字段块，不存在于 lessons 正文，留作兼容）
 LESSON_RE = re.compile(r"^- \*\*(?P<title>[^*]+)\*\*[：:]\s*(?P<body>.*)$")
+# 卡式条目的三个子字段（`0127` 起）。缩进 ≥2、字段名后接全/半角冒号。
+# 字段行与它的续行都**不进 body** —— 否则 full 卡的「执行」会把
+# `… - 触发：… - 验证：… - 别再来：…` 连成一行（2026-10-18 审查 M3）。
+CARD_FIELD_RE = re.compile(r"^[ \t]+- (?P<field>触发|验证|别再来)[ \t]*[：:][ \t]*(?P<text>.*)$")
+CARD_FIELDS = ("触发", "验证", "别再来")
 # 归档层目录名。`--include-archive` 扫的就是它下面（见 `all_records`）。
 ARCHIVE_DIR = "archive"
 SOURCE_REF_RE = re.compile(r"`(wl/\d+|wl-\d+|manual:[a-z]+)`")
@@ -339,15 +344,29 @@ def parse_lessons(path: str) -> list[dict]:
             title = f"{title}{lines[j].strip()}"
             j += 1
         body_lines = [m.group("body").strip()]
+        fields: dict[str, list[str]] = {k: [] for k in CARD_FIELDS}
+        current = ""
         while j < len(lines) and lines[j].startswith(("  ", "\t")):
-            body_lines.append(lines[j].strip())
+            fm = CARD_FIELD_RE.match(lines[j])
+            if fm:
+                current = fm.group("field")
+                fields[current].append(fm.group("text").strip())
+            elif current and lines[j].startswith(("    ", "\t\t")):
+                # 字段的续行（比字段缩进更深）：并进那个字段，别当正文。
+                fields[current].append(lines[j].strip())
+            else:
+                body_lines.append(lines[j].strip())
+                current = ""
             j += 1
         body = "\n".join(body_lines).strip()
         if len(body) < 24 or len(title) < 4:
             continue
         src = sorted(set(SOURCE_REF_RE.findall(body)))
         out.append({"title": title, "body": body, "sources": src, "volume": volume,
-                    "section": volume.split("-", 1)[-1].replace(".md", "")})
+                    "section": volume.split("-", 1)[-1].replace(".md", ""),
+                    "trigger": norm_ws(" ".join(fields["触发"])),
+                    "verify": norm_ws(" ".join(fields["验证"])),
+                    "avoid": norm_ws(" ".join(fields["别再来"]))})
     return out
 
 
@@ -502,6 +521,10 @@ def build_cards(lesson: dict, ctx: dict, slug: str) -> tuple[str, str]:
     src_ref = srcs[0] if srcs else ctx.get("source", "")
 
     cond_bits = []
+    # 卡式条目的「触发」就是**生效条件**的第一手材料：它写的是"任务里会出现什么现象"。
+    trig = norm_ws(lesson.get("trigger") or "")
+    if trig:
+        cond_bits.append(f"触发：{trig}")
     if applies:
         cond_bits.append(f"适用于 `{applies}`")
     if lesson.get("section"):
@@ -510,16 +533,23 @@ def build_cards(lesson: dict, ctx: dict, slug: str) -> tuple[str, str]:
         cond_bits.append(f"范围：{norm_ws(ctx['scope'])[:120]}")
     cond = "；".join(cond_bits) or "（按来源记录的范围）"
 
-    # 不适用条件：**边界** 只认正文里显式写的边界句（"不含…" "仅…" "仅当…"）；抓不到就如实说没声明。
-    # 第一版拿「遗留」小节充数，那讲的是"还没做的事"，不是"这条什么时候不成立"。
+    # 不适用条件 = 卡式条目的「别再来」（走不通的路 + 原因）+ 正文里显式写的边界句。
+    # 「遗留」小节不能充数：那讲的是"还没做的事"，不是"这条什么时候不成立"。
     boundary_lines = [b for b in (lesson.get("boundary") or [])
                       if re.search(r"(不含|仅|只在|不适用|例外|极限|边界)", b)]
+    bounds = []
+    avoid = norm_ws(lesson.get("avoid") or "")
+    if avoid:
+        bounds.append(f"别再来：{avoid}")
     if boundary_lines:
-        napp = norm_ws(" / ".join(first_sentence(b, 90) for b in boundary_lines[:2]))
+        bounds.append(norm_ws(" / ".join(first_sentence(b, 90) for b in boundary_lines[:2])))
+    if bounds:
+        napp = "；".join(bounds)
     else:
         napp = f"边界未在来源里显式声明；引用前先看 `{src_ref or '来源'}` 的「范围」与「遗留」两节"
 
-    verify = norm_ws(ctx.get("verify_anchor") or "")
+    # 卡式条目的「验证」优先于 ctx 的通用兜底（lessons 的 `verify_anchor` 由它填）。
+    verify = norm_ws(lesson.get("verify") or "") or norm_ws(ctx.get("verify_anchor") or "")
     if not verify:
         src_note = f"出处 {src_ref}" if src_ref else "未标出处"
         unknown = "记录未在本容器找到（可能已归档），" if "unknown" in ctx.get("source", "") else ""
@@ -688,7 +718,9 @@ def lessons_units(container: str, lp: str, domain: str) -> list[tuple[dict, dict
             status = "ok" if not entry["sources"] else "stale"
         out.append((entry, {"domain": domain, "source": src, "cited_by": cite,
                             "applies_to": "", "scope": "", "boundary": [],
-                            "verify_anchor": "", "src_bytes": src_bytes,
+                            # 卡式条目的「验证」作为锚点；没有就留空，由 build_cards 走通用兜底。
+                            "verify_anchor": norm_ws(entry.get("verify") or ""),
+                            "src_bytes": src_bytes,
                             "source_status": status,
                             "pointer_path": "", "full_rel": "",
                             "fallback_no": refs[0] if refs else ""}))

@@ -5333,6 +5333,16 @@ def main() -> int:
         ok("- [x] ship the thing" in idx, "todo marked done")
         r = run(tmp, "todo", "--drop-done")
         ok("- [x] ship the thing" not in read(os.path.join(tmp, CONTAINER, "README.md")), "todo --drop-done works")
+        # 多行待办：删勾选行时必须**连带缩进续行**（否则续行留下变孤儿，2026-10-18 实测）
+        run(tmp, "todo", "--add", "multi line todo")
+        idx_path = os.path.join(tmp, CONTAINER, "README.md")
+        write(idx_path, read(idx_path).replace(
+            "- [ ] multi line todo",
+            "- [ ] multi line todo\n  continuation line of the todo\n  another continuation"))
+        run(tmp, "todo", "--done", "multi line todo")
+        r = run(tmp, "todo", "--drop-done")
+        ok("continuation line of the todo" not in read(idx_path),
+           "todo --drop-done removes the indented continuation lines too", r.stdout)
 
         # append -----------------------------------------------------------
         r = run(tmp, "append", "2", "--section", "更正", "--text", "2026-09-14: changed mind", "--bullet")

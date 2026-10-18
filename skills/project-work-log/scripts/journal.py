@@ -3809,13 +3809,26 @@ def cmd_todo(args: argparse.Namespace) -> int:
         return 1
 
     if args.drop_done:
-        kept = [l for i, l in enumerate(lines) if not (span[1] <= i < span[2] and re.match(r"^\s*-\s*\[[xX]\]", l))]
-        removed = len(lines) - len(kept)
+        # 删勾选行时**必须连带缩进续行**（2026-10-18 修）：待办可以写成多行，原实现只删
+        # `- [x]` 那行，续行留成孤儿（实测漏在待办末尾四行，没有任何标记）。
+        out: list[str] = []
+        removed = 0
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if span[1] <= i < span[2] and re.match(r"^\s*-\s*\[[xX]\]", line):
+                removed += 1
+                i += 1
+                while i < len(lines) and lines[i].strip() and lines[i][0] in " \t":
+                    i += 1
+                continue
+            out.append(line)
+            i += 1
         if args.dry_run:
-            print(f"[dry-run] 将删除 {removed} 条已完成待办")
+            print(f"[dry-run] 将删除 {removed} 条已完成待办（含续行）")
             return 0
-        write_raw(index, "".join(kept))
-        print(f"已删除 {removed} 条已完成待办")
+        write_raw(index, "".join(out))
+        print(f"已删除 {removed} 条已完成待办（含续行）")
         return 0
 
     open_items, done_items = todo_items(journal)

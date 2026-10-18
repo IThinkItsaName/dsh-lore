@@ -62,11 +62,11 @@ npm test
 npm run test:skill-only
 
 # 6. 变异驱动（本机约 25 分钟，故意不进 npm 脚本）
-python -B tests/reverse-verify.py --root ../../logs/fixtures
+python -B tests/reverse-verify.py
 ```
 
 **判读只有一条**：结尾那行
-`114 条变异：N 条如期变红 / M 条没变红 / C 条相跑崩 / K 条替换源对不上或打偏`，
+`120 条变异：N 条如期变红 / M 条没变红 / C 条相跑崩 / K 条替换源对不上或打偏`，
 要 **M = 0、C = 0、K = 0**。每个计数含义不同，"不红"有三种，别混：
 
 | 样子 | 含义 | 怎么办 |

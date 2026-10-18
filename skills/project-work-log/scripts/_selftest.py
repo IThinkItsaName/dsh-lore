@@ -1129,6 +1129,16 @@ def appendix_phase(parent: str) -> None:
        "status --set clears only the continuations of the field it touched "
        "(indented sibling fields survive)", txt)
 
+    # 空行之后若仍是更深缩进，说明是多段值里的段落分隔：一起清（复核 nit，`0134` 后仍留）
+    blank = make_fixture("appendix-status-blank", skeleton(
+        status="- 阶段：v1\n\n  第一段续行\n\n  第二段续行\n- 迭代：1"))
+    r = run(blank, "status", "--set", "阶段=v2")
+    txt = ledger_text(blank)
+    ok("第一段续行" not in txt and "第二段续行" not in txt,
+       "status --set clears continuation paragraphs after blank lines too", txt)
+    ok("- 迭代：1" in txt,
+       "and stops at the next field instead of swallowing the block", txt)
+
     noop = make_fixture("appendix-noop-status", skeleton(status="- 阶段：v1"))
     before = ledger_text(noop)
     r = run(noop, "status", "--set", "阶段")
@@ -4632,6 +4642,60 @@ def card_phase(tmp: str) -> None:
        f"{len(ptrs)} vs {len(fulls)}")
     ok(all(os.path.getsize(os.path.join(cards, f)) > 300 for f in ptrs),
        "cards are not empty stubs")
+
+    # ── 边角：旧式字段 / 两字标题 / 半角句号 / 源列管道 / 空卡目录（2026-10-18）──
+    edge = os.path.join(tmp, "cards-edge")
+    econt = os.path.join(edge, CONTAINER)
+    write(os.path.join(econt, "0001-base.md"), card_record_with_bulk(
+        "0001", "边角来源", "边角夹具的来源记录。",
+        "正文写得足够长，确保这篇记录能过体量闸，给下面的经验条当出处。"))
+    write(os.path.join(econt, "lessons", "01-edge.md"),
+          "# 经验手册 · 01-edge\n\n"
+          "- **薄卡**：两字标题也应当出卡，正文写得足够长，确保体量闸不会把它丢掉。"
+          "（`wl/0001`）\n"
+          "  - **触发条件**：任务里出现「两字标题」这个现象。\n"
+          "  - **宿主判据原文**：宿主返回 code=OK。\n"
+          "  - **别再来**：把标题截成单字。\n"
+          "- **半角句点**：第一句以半角点收尾. 第二句继续说明细节，确保摘要之后还有正文"
+          "（`wl/0001`）最后以半角点收尾.\n")
+    r = run(edge, CONTAINER, "--all", "--write", "--project", "edge", tool=tool)
+    ok(r.returncode == 0, "the edge fixtures project cleanly", r.stdout + r.stderr)
+    ecards = os.path.join(econt, "memory-cards")
+
+    def full_by_title(title: str) -> str:
+        for fn in sorted(os.listdir(ecards)) if os.path.isdir(ecards) else []:
+            if fn.endswith(".full.md"):
+                text = read(os.path.join(ecards, fn))
+                if re.search(rf"(?m)^# 功能名\n{re.escape(title)}$", text):
+                    return text
+        return ""
+
+    thin = full_by_title("薄卡")
+    ok(bool(thin), "a two-character Chinese title still produces a card (threshold 2)", thin or r.stdout)
+    exec_sec = (re.search(r"(?m)^# 执行\n(.*?)(?=\n# |\Z)", thin, re.S).group(1)
+                if thin else "")
+    ok("触发条件" not in exec_sec and "宿主判据" not in exec_sec,
+       "legacy 触发条件 / 宿主判据 sub-items are not flattened into 执行", exec_sec)
+    ok("两字标题" in thin and "宿主返回 code=OK" in thin,
+       "they are mapped into 生效条件 / 验证方式 instead of being dropped", thin)
+    half = full_by_title("半角句点")
+    ok(bool(half) and not re.search(r"(?m)^\.", half),
+       "a half-width `.` at a sentence end does not leak as its own line (L1)", half)
+
+    write(os.path.join(ecards, "pipe.pointer.md"),
+          "---\nid: wl999-pipe\ntags: [dsh-lore, test]\nsource: work_log/a|b.md\n---\n\n"
+          "# 功能名\n管道源\n\n# 生效条件\nx\n\n# 执行\nx\n")
+    run(edge, CONTAINER, "--index-only", "--write", tool=tool)
+    eidx = read(os.path.join(ecards, "INDEX.md"))
+    ok("a\\|b" in eidx, "the index source column escapes pipes (N1)", eidx)
+
+    emptyroot = os.path.join(tmp, "cards-empty")
+    os.makedirs(os.path.join(emptyroot, CONTAINER), exist_ok=True)
+    r = run(emptyroot, CONTAINER, "--index-only", "--write", tool=tool)
+    eidx0 = read(os.path.join(emptyroot, CONTAINER, "memory-cards", "INDEX.md"))
+    ok("卡 0 张" in eidx0 and "一行 ≈ 0 B" not in eidx0
+       and "归属与边界：还没有卡" in eidx0 and "所有卡都有" not in eidx0,
+       "an empty card dir reports no 0 B line and no vacuous all-cards claim (N2)", eidx0)
 
     # 卡正文**不许有一行以「。」开头**（2026-10-17 复核）：`ccg()` 算剩余正文时用的是
     # `_trim_ellipsis(摘要)` 的长度，而那个函数把句末「。」剥掉了 —— 切出来的 `rest`

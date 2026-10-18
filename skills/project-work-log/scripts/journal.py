@@ -3498,9 +3498,21 @@ def cmd_status(args: argparse.Namespace) -> int:
                 if m and m.group(2).strip() in touched:
                     base = _indent_width(lines[i])
                     j = i + 1
-                    while (j < span[2] and lines[j].strip()
-                           and _indent_width(lines[j]) > base):
-                        j += 1
+                    while j < span[2]:
+                        if not lines[j].strip():
+                            # 空行本身不是续行；但它**后面**若还是更深缩进，说明这是
+                            # 多段值里的段落分隔，一起清掉（2026-10-18 复核 nit）。
+                            k = j + 1
+                            while k < span[2] and not lines[k].strip():
+                                k += 1
+                            if k < span[2] and _indent_width(lines[k]) > base:
+                                j = k
+                                continue
+                            break
+                        if _indent_width(lines[j]) > base:
+                            j += 1
+                            continue
+                        break
                     if j > i + 1:
                         removed = j - i - 1
                         del lines[i + 1:j]

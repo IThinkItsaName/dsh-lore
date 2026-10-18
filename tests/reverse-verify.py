@@ -502,6 +502,26 @@ MUTATIONS: list[tuple] = [
      "                    base = _indent_width(lines[i])", "                    base = -1",
      "status --set clears only the continuations of the field it touched "
      "(indented sibling fields survive)"),
+    ("appendix", "空行后的续段不再清（多段值留下尾巴）",
+     "                            if k < span[2] and _indent_width(lines[k]) > base:",
+     "                            if False:",
+     "status --set clears continuation paragraphs after blank lines too"),
+    ("card", "旧式缩进字段又被并进 body（执行被污染）",
+     "            elif lm:", "            elif False:",
+     "legacy 触发条件 / 宿主判据 sub-items are not flattened into 执行", CARD_SRC),
+    ("card", "两字中文标题又被门槛丢掉",
+     "or len(title) < 2", "or len(title) < 4",
+     "a two-character Chinese title still produces a card (threshold 2)", CARD_SRC),
+    ("card", "半角句号又漏剥（卡里多一行句号）",
+     '                    rest = n_body[len(n_sum):].lstrip("。….").lstrip()',
+     '                    rest = n_body[len(n_sum):].lstrip("。…").lstrip()',
+     "a half-width `.` at a sentence end does not leak as its own line (L1)", CARD_SRC),
+    ("card", "INDEX 源列不再转义管道（表格被劈开）",
+     '        src = src.replace("|", "\\\\|")', "        src = src",
+     "the index source column escapes pipes (N1)", CARD_SRC),
+    ("card", "空卡目录又写 0 B 与恒真的全卡断言",
+     "    if not rows:", "    if False:",
+     "an empty card dir reports no 0 B line and no vacuous all-cards claim (N2)", CARD_SRC),
 
     # ── gates：两道门禁（`check --lint` 合并 / 默认不合并 / 提示 / 合并的两处易错点）──
     # 这一相的核心不变量：**默认判决不变，合并只在显式要求时发生**，且合并后
@@ -873,9 +893,9 @@ def real_memory_fingerprint() -> tuple:
 def main() -> int:
     ap = argparse.ArgumentParser(description="把 memory_phase 的断言逐条弄红一次")
     ap.add_argument("--root", default=os.path.join(WORKSPACE, "logs", "fixtures"),
-                    help="夹具父目录（必须已存在）。默认是作者工作区顶层那个 logs/fixtures（属于"
-                         "可丢弃的运行产物，不进记录容器；夹具不随包发布，所以在仓库镜像里跑"
-                         "必须显式给这一项，例如 --root <pkg>/tests/fixtures）")
+                    metavar="P",
+                    help="夹具父目录（不存在会自动建；只在这里放 reverse-verify-<pid> 副本）。"
+                         "默认是仓库上一层的 logs/fixtures；该位置不可写时显式给一个可写目录")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--phase", choices=sorted(PHASES), default=None,
@@ -933,10 +953,12 @@ def main() -> int:
                 sources[name] = fh.read()
 
     base = os.path.abspath(args.root)
-    if not os.path.isdir(base):
-        print(f"ERROR: --root 不是一个已存在的目录：{base}")
-        print("       夹具是作者工作区的数据，不随包发布；在仓库镜像里跑要显式指定，例如")
-        print("       python tests/reverse-verify.py --root <夹具父目录>（见 RELEASING.md 的检查点 6）。")
+    created_base = not os.path.isdir(base)
+    try:
+        os.makedirs(base, exist_ok=True)
+    except OSError as exc:
+        print(f"ERROR: --root 不存在且建不出来：{base}（{exc.__class__.__name__}）")
+        print("       显式给一个可写目录，例如 --root %TEMP%\\dsh-fixtures。")
         return 2
     # 按 PID 隔离：同一时刻只跑一相时无所谓，但"后台跑着整相、前台再跑一相"就会撞——
     # 实测撞过（`os.makedirs` 报 FileExistsError，因为两边共用同一个目录）。
@@ -1151,6 +1173,11 @@ def main() -> int:
         print("  ! 没变红：" + m_)
     if not args.keep:
         shutil.rmtree(scratch_root, ignore_errors=True)
+        if created_base:
+            try:
+                os.rmdir(base)   # 自动建的父目录：空了就收掉，别留垃圾
+            except OSError:
+                pass
     else:
         print(f"（临时目录保留在 {scratch_root}）")
 

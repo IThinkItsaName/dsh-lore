@@ -52,6 +52,12 @@ FENCE_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
 # 字段行与它的续行都**不进 body** —— 否则 full 卡的「执行」会把
 # `… - 触发：… - 验证：… - 别再来：…` 连成一行（2026-10-18 审查 M3）。
 CARD_FIELD_RE = re.compile(r"^(?:[ \t]{2,}|\t)- (?P<field>触发|验证|别再来)[ \t]*[：:][ \t]*(?P<text>.*)$")
+# 旧写法（卡式字段出现之前）：缩进的 `- **触发条件…**：…`。标签带粗体，卡式正则不命中；
+# 以前这类子条目会被整段并进 body、最后压进卡的「执行」（`0130` 相邻项，2026-10-18 修）。
+LEGACY_FIELD_RE = re.compile(
+    r"^(?:[ \t]{2,}|\t)- \*\*(?P<label>[^*]+?)\*\*[ \t]*[：:][ \t]*(?P<text>.*)$")
+LEGACY_FIELD_MAP = (("触发", "触发"), ("验证", "验证"), ("别再来", "别再来"),
+                    ("避免", "别再来"), ("宿主判据", "验证"), ("判据", "验证"))
 CARD_FIELDS = ("触发", "验证", "别再来")
 # 归档层目录名。`--include-archive` 扫的就是它下面（见 `all_records`）。
 ARCHIVE_DIR = "archive"
@@ -363,9 +369,23 @@ def parse_lessons(path: str) -> list[dict]:
         current = ""
         while j < len(lines) and lines[j].startswith(("  ", "\t")):
             fm = CARD_FIELD_RE.match(lines[j])
+            lm = LEGACY_FIELD_RE.match(lines[j])
             if fm:
                 current = fm.group("field")
                 fields[current].append(fm.group("text").strip())
+            elif lm:
+                # 旧式字段：按标签前缀归到卡式字段；认不出的仍留在 body（不静默丢字）。
+                target = ""
+                for prefix, field in LEGACY_FIELD_MAP:
+                    if lm.group("label").strip().startswith(prefix):
+                        target = field
+                        break
+                if target:
+                    current = target
+                    fields[target].append(lm.group("text").strip())
+                else:
+                    body_lines.append(lines[j].strip())
+                    current = ""
             elif current and lines[j].startswith(("    ", "\t\t")):
                 # 字段的续行（比字段缩进更深）：并进那个字段，别当正文。
                 fields[current].append(lines[j].strip())
@@ -376,8 +396,9 @@ def parse_lessons(path: str) -> list[dict]:
         body = "\n".join(body_lines).strip()
         # 体量闸量的是"这条经验有多少可读内容"，不是"主行多长"：三字段已经从 body 移走，
         # 只量 body 会让「短主行 + 三字段齐全」的卡被静默丢掉（2026-10-18 复核 low）。
+        # 标题门槛 2：中文两字标题（「薄卡」）是合法结论；1 字多半是噪声（2026-10-18）。
         field_size = sum(len(norm_ws(" ".join(fields[k]))) for k in CARD_FIELDS)
-        if len(body) + field_size < 24 or len(title) < 4:
+        if len(body) + field_size < 24 or len(title) < 2:
             continue
         src = sorted(set(SOURCE_REF_RE.findall(body)))
         out.append({"title": title, "body": body, "sources": src, "volume": volume,
@@ -607,7 +628,9 @@ def build_cards(lesson: dict, ctx: dict, slug: str) -> tuple[str, str]:
                 n_sum = _trim_ellipsis(norm_ws(head["执行"]))
                 n_body = norm_ws(extra_exec)
                 if n_sum and n_body.startswith(n_sum):
-                    rest = n_body[len(n_sum):].lstrip("。…").lstrip()
+                    # `_trim_ellipsis` 去掉了句末的 `。`/`.`；切片起点要跳过它，
+                    # 否则卡里会多出一行孤零零的句号（L1：半角 `.` 以前漏了，2026-10-18）
+                    rest = n_body[len(n_sum):].lstrip("。….").lstrip()
                     if rest:
                         out.append(rest)
                 else:
@@ -891,10 +914,18 @@ def printable_index(rows: list[dict], project: str, domain: str = "") -> str:
     nob = [r for r in rows if r["no_boundary"]]
     table = []
     for r in rows:
+        # 源列不截断，但**必须**转义管道：`_clip` 会转义，而这里绕过了它（N1，2026-10-18）
         src = (r["source"] or "（未标）") + (" [源未找到]" if r["stale"] else "")
+        src = src.replace("|", "\\|")
         table.append(f"| `{r['id']}` | {r['domain']} | {_clip(r['title'], 44)} | "
                      f"{_clip(r['exec'], 56)} | {_clip(r['cond'], 40)} | {src} | {r['bytes']} |")
     avg = round(sum(len(l.encode("utf-8")) for l in table) / len(table)) if table else 0
+    body_line = (
+        f"- 体量：INDEX 一行 ≈ {avg} B（本表实测），**先读这张表再决定读哪张卡**；一张卡 pointer "
+        f"{min((r['bytes'] for r in rows), default=0)}–{max((r['bytes'] for r in rows), default=0)} B，"
+        f"真源在「源」列那一行。"
+        if rows else "- 体量：还没有卡（本目录里没有本工具投的卡）。"
+    )
     out = [
         "# 记忆卡索引（memory-cards/INDEX.md）",
         "",
@@ -902,9 +933,12 @@ def printable_index(rows: list[dict], project: str, domain: str = "") -> str:
         f"> 项目 `{project or '（未标注）'}` · 项目域 `{domain or '（未标注）'}` · "
         f"卡 {len(rows)} 张（只算本工具投的） · 域：{dom_txt}",
         "",
-        f"- 体量：INDEX 一行 ≈ {avg} B（本表实测），**先读这张表再决定读哪张卡**；一张卡 pointer "
-        f"{min((r['bytes'] for r in rows), default=0)}–{max((r['bytes'] for r in rows), default=0)} B，"
-        f"真源在「源」列那一行。",
+        body_line,
+    ]
+    if not rows:
+        # 空目录不再写「所有卡都…」这种对 0 张卡恒真的话（N2，2026-10-18）
+        return "\n".join(out + ["- 归属与边界：还没有卡。"]) + "\n"
+    out += [
         f"- 归属：{len(stale)} 张的源记录不在本容器（`[源未找到]`）——卡本身没错，错的是追溯链。"
         if stale else "- 归属：全部卡的源记录都在本容器内。",
         f"- 边界：{len(nob)} 张**没有**显式声明的「不适用条件」（卡里如实写了「边界未在来源里显式声明」，"

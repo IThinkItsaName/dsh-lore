@@ -367,6 +367,28 @@ async function call(method, body) {
 }
 
 
+/* ---- 8b. SETTINGS.md 的字段表不能与 Config 漂移（2026-10-18 复核 low） ---- */
+{
+  // 根目录那份 SETTINGS.md 是给人读的，之前没有任何测试读它：Config 加了
+  // `sessionsCrossWorkspace` 之后它仍写 13 个字段，直到复核才发现。只核对
+  // 「已知配置键」那一节里的表行，别的表格（环境变量、验证记录）不掺进来。
+  const doc = readFileSync(`${PKG}/SETTINGS.md`, 'utf8')
+  const section = doc.split('## 已知配置键')[1]?.split('\n## ')[0] ?? ''
+  const documented = new Set()
+  for (const line of section.split('\n')) {
+    const m = /^\|\s*`([A-Za-z][A-Za-z0-9]*)`\s*\|/.exec(line)
+    if (m) documented.add(m[1])
+  }
+  const declared = new Set(Object.keys(mod.Config.dict))
+  const missing = [...declared].filter((key) => !documented.has(key))
+  const extra = [...documented].filter((key) => !declared.has(key))
+  ok(missing.length === 0, 'SETTINGS.md 的配置键表列全了 Config 的每个字段',
+    `缺：${missing.join(', ') || '无'}`)
+  ok(extra.length === 0, 'SETTINGS.md 的配置键表没有 Config 不认识的字段',
+    `多：${extra.join(', ') || '无'}`)
+}
+
+
 /* ==========================================================================================
  * The official path: when the host provides `configEditor`, the profile patch is the store.
  *

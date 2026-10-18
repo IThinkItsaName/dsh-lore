@@ -30,7 +30,7 @@ const ctx = {
 mod.apply(ctx, {})
 
 
-ok(providers.length === 2 + extraBundledSkills().length,
+ok(providers.length === 1 + extraBundledSkills().length,
    'apply() registers one provider per skill bundle on disk',
    String(providers.length))
 ok(logs.filter(([level]) => level === 'error').length === 0, 'apply() logged no error',
@@ -112,8 +112,8 @@ ok(worklogDef.content.includes('## 铁律'), 'worklog: body contains the skill s
 ok(worklogDef.content.includes('scripts/journal.py'),
    'worklog: body still points at scripts/journal.py, which resourceBase resolves')
 
-const guidDef = await checkProvider(providers[1], 'reliability-guidelines')
-ok(guidDef.content.includes('八条准则'), 'guidelines: zh body contains the eight principles')
-ok(guidDef.content.includes('默认强约束'), 'guidelines: body frames itself as a strong default')
+for (const [index, name] of extraBundledSkills().entries()) {
+  await checkProvider(providers[1 + index], name)
+}
 
 report('every provider output satisfies the rules the registry applies') 

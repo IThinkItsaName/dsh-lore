@@ -127,7 +127,7 @@
 
 | 分页 | 装什么 |
 |---|---|
-| **技能** | `skillEnabled`、`guidelinesEnabled`、`guidelinesLanguage`，以及收在「路径」折叠区里的 `skillDir` / `guidelinesDir` |
+| **技能** | `skillEnabled`（开关），以及收在「路径」折叠区里的 `skillDir` |
 | **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable` 三个开关，加**最后一栏路径框 `memoryDir`**（「记忆存放位置」），外加一个只读的「当前状态」折叠区 |
 | **高级** | `verbose`、`modelInvocable`、`userInvocable`、`sessionsCrossWorkspace` |
 
@@ -136,10 +136,7 @@
 | 设置项 | 类型 | 默认 | 位置 | 谁读它 | 改完何时生效 |
 |---|---|---|---|---|---|
 | `skillEnabled` | 开关 | 开 | 技能 | **插件**（每次 `list()`/`get()` 现读） | 即时 |
-| `guidelinesEnabled` | 开关 | 开 | 技能 | **插件**（同上） | 即时 |
-| `guidelinesLanguage` | 分段控件：中文 / English | 中文 | 技能 | **插件**（同上） | 即时 |
 | `skillDir` | 文本框 | 包内默认 | 技能 › 路径（默认收起） | **插件**（同上） | 即时 |
-| `guidelinesDir` | 文本框 | 包内默认 | 技能 › 路径（默认收起） | **插件**（同上） | 即时 |
 | `memoryEnabled` | 开关 | 开 | 记忆 | **插件**（挂载时决定那两段注入注册不注册；工具本身按调用现判） | **需重启** |
 | `memoryInjectIndex` | 开关 | 开 | 记忆 | **插件**（**每次装配现读**） | **即时** |
 | `memoryPersonalSearchable` | 开关 | 关 | 记忆 | **插件**（用时现读） | **即时** |
@@ -155,8 +152,8 @@
 
 **`memoryInjectIndex` 是第一个"注册了但按装配现判"的键**（2026-09-30 改）：section 只要
 `memoryEnabled` 为真就注册，开关在 `text` 函数里读。改之前它在挂载期读，而界面写着"即时生效" ——
-**可点、说会生效、实际要重启**，正是本页最该避免的那种东西。2026-10-14 起技能那 8 项也走了同一条路
-（provider 常驻注册，开关/目录/语言按调用现读），于是规则推广成一句话：
+**可点、说会生效、实际要重启**，正是本页最该避免的那种东西。2026-10-14 起技能那 5 项也走了同一条路
+（provider 常驻注册，开关/目录按调用现读），于是规则推广成一句话：
 **只有"注册不注册"这件事需要重启，其余都是现读** —— 今天属于前者的只有 `memoryEnabled` 与 `verbose`。
 
 **记忆那几项此前没有登记在规格里**（当时是三个开关；`memoryDir` 是 0.8.1 才有的第四个）
@@ -184,8 +181,8 @@ profile patch，也没有任何界面展示或提交它们；`projectDefaults()`
 
 1. **只有"要不要注册"需要重启**，而**2026-10-14 起只剩两条**属于这一类：
    `memoryEnabled`（两个注入都不注册）与 `verbose`（诊断在装载时装配）。
-   `skillEnabled` / `guidelinesEnabled` / `modelInvocable` / `userInvocable` / `sessionsCrossWorkspace` /
-   `skillDir` / `skillFile` / `guidelinesDir` / `guidelinesLanguage` / `memoryDir` **都改成用到时现读** ——
+   `skillEnabled` / `modelInvocable` / `userInvocable` / `sessionsCrossWorkspace` /
+   `skillDir` / `skillFile` / `memoryDir` **都改成用到时现读** ——
    依据是 `cordis/README.md` §Volatile configuration（只变 `.volatile()` 字段时 Loader
    **不重挂载**，把新值提交进运行中的引用并发 `loader/volatile-update`）与官方 cookbook
    「在操作开始时读取 `.get()`」。技能那几项的落地方式见 `lib/index.js` 的 `createProvider`：
@@ -202,7 +199,6 @@ profile patch，也没有任何界面展示或提交它们；`projectDefaults()`
 4. **改名类（`container`/`lessons`）是破坏性的**：已有项目改名后 `journal.py`
    **找不到记录，而且不会说"你是不是改名了"**，只会报"找不到容器"。这条坑我们踩过同类。
    （页脚那句说明保留了这个警告，因为改动它们的地方是 `journal.py config`。）
-5. **`guidelinesLanguage` 只影响准则那份技能**（`worklog` 技能本身是中文写死的）。
 
 ### 设置存在哪：两种宿主，两个落点
 
@@ -214,8 +210,8 @@ profile patch，也没有任何界面展示或提交它们；`projectDefaults()`
 **有 editor 时分层由宿主解析**：profile patch（用户层）> 本包行配置 > 内置默认。
 
 **没有 editor 时插件自己合**：`设置文件 > 行配置 > 内置默认`。**文件必须赢，这不是
-口味问题**：bundle 补丁里写死了 `guidelinesEnabled` / `guidelinesLanguage` / `skillDir` /
-`guidelinesDir` 四个键，如果行配置赢，那个文件就是死的。
+口味问题**：bundle 补丁里写死了 `skillDir` 与三个开关（`modelInvocable` / `userInvocable` /
+`verbose`），如果行配置赢，那个文件就是死的。
 
 **旧文件一次性迁进 patch**（四条规矩见 `SETTINGS.md`），然后改名成
 `settings.json.migrated` 留档。
@@ -306,7 +302,7 @@ window.__ModuleLoader__.load({
 
 > **已被取代（2026-09-29）**：下面这段是**旧**设计（设置页分区）。现在的挂载点是
 > **本 bundle 那一页**的 `plugins.bundle.config`（keyed，`key` = 包名），而且**不是写死
-> namespace 的** —— 卡片按这一行投影出来的 **`value`**（生效配置）是否带齐那 14 个字段来认领
+> namespace 的** —— 卡片按这一行投影出来的 **`value`**（生效配置）是否带齐那 11 个字段来认领
 > 自己那一行（`ns` 是部署相关的）。
 > **代价（2026-09-30，`work_log/07-rename-070/0062`）**：判据要"集齐全部字段"，所以**改了 `Config` 的字段集之后、
 > 在 DSH 重启之前，卡片会消失**（运行中的宿主还发着旧 schema）。症状只有"这一页没有东西"，
@@ -400,7 +396,7 @@ peerDependencies），后半句"不必走"也只是当年的权宜 —— 现在
 > 全都断言得到（152 条）。仍属于"只能由人看"的只剩**排版与视觉**。
 
 **渲染效果只能由人刷新页面确认。** 所以按"最小可用先行"推进：
-先只做 `guidelinesEnabled` + `guidelinesLanguage` 两个控件，跑通再加别的。
+先只做 `skillEnabled` 一个控件，跑通再加别的。
 
 ## 六、机制查证结果
 

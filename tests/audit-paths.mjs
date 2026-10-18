@@ -1,16 +1,16 @@
 // Path-consistency check for the skill docs, plus the script-free variant.
 //
-// The two skills ship in one bundle and reference each other's paths, so a rename
-// can leave one pointing at a directory that no longer exists. That happened once
-// (the container moved to work_log/ while the guidelines still said journal/) and
-// nothing caught it. This check pins it.
+// The container name is declared in the skill and again in the script-free variant, so a rename
+// can leave one pointing at a directory that no longer exists. That happened once (the container
+// moved to work_log/ while the script-free variant still said journal/) and nothing caught it.
+// This check pins it.
 //
 // The second half audits `skill-only/project-work-log/` — the script-free variant.
 // That variant's whole promise is that it carries the METHODOLOGY without the
 // toolbox, so what needs pinning is the inverse of the usual check: it must not
 // name a script, and it must not silently lose the concepts. It also has to agree
-// with the main skill about the container name, for the same reason the guidelines
-// do, and `dist/` has to be the rebuild of the source, not a stale copy.
+// with the main skill about the container name, and `dist/` has to be the rebuild
+// of the source, not a stale copy.
 //
 //   node tests/audit-paths.mjs
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
@@ -19,7 +19,6 @@ import { ok, skip, report, problems } from './_report.mjs'
 import { PKG } from './_pkg.mjs'
 
 const SKILL = `${PKG}/skills/project-work-log`
-const GUIDELINES = `${PKG}/skills/reliability-guidelines`
 const ONLY_SRC = `${PKG}/skill-only/project-work-log`
 const ONLY_DIST = `${PKG}/dist/skill-only/project-work-log`
 
@@ -106,12 +105,6 @@ ok(problems.length === 0, 'no stale old-layout references outside back-compat te
 const skillText = readFileSync(`${SKILL}/SKILL.md`, 'utf8')
 const declared = /一个容器目录\*\*\s*`([^`]+)`/.exec(skillText)?.[1]
 ok(declared === 'work_log/', 'the worklog skill declares work_log/ as the container', String(declared))
-
-for (const [label, file] of [['zh', `${GUIDELINES}/SKILL.md`], ['en', `${GUIDELINES}/en/SKILL.md`]]) {
-  const text = readFileSync(file, 'utf8')
-  ok(text.includes(`\`${declared}\``),
-     `guidelines (${label}) reference the same container the worklog skill declares`)
-}
 
 /* ======================================================================
  * The script-free variant (`skill-only/`).

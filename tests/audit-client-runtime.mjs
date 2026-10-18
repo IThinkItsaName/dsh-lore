@@ -279,7 +279,6 @@ const REAL_SCHEMA_ENVELOPE = {
 /** The values a projected row carries — the config's own defaults, keyed by field name. */
 const PROJECTED_DEFAULTS = {
   skillDir: '', skillFile: 'SKILL.md', skillEnabled: true, modelInvocable: true, userInvocable: true, verbose: false,
-  guidelinesEnabled: true, guidelinesDir: '', guidelinesLanguage: 'zh',
   memoryEnabled: true, memoryInjectIndex: true, memoryPersonalSearchable: false,
   sessionsCrossWorkspace: true,
 }
@@ -312,11 +311,12 @@ let clientExports = null
     seen.join(','))
   ok(typeof clientExports.claimNamespace === 'function',
     'the namespace claim is exported (the test drives it directly)')
-  // 十四：2026-10-14 加 `memoryDir`、2026-10-18 加 `sessionsCrossWorkspace`。
-  // **这个数字每加一个字段都要跟着改**，而且它与 `lib/index.js` 的 `Config` 是同一件事
-  // —— 下面那条"exactly the volatile fields"才是真判据。
-  ok(Array.isArray(clientExports.FORM_FIELDS) && clientExports.FORM_FIELDS.length === 14,
-    'the claim fingerprint is exported and names fourteen fields',
+  // 十一：2026-10-14 加 `memoryDir`、2026-10-18 加 `sessionsCrossWorkspace`；
+  // 同日摘出 `reliability-guidelines` 后移除了 `guidelinesEnabled` / `guidelinesDir` /
+  // `guidelinesLanguage`。**这个数字每加一个字段都要跟着改**，而且它与 `lib/index.js` 的
+  // `Config` 是同一件事 —— 下面那条"exactly the volatile fields"才是真判据。
+  ok(Array.isArray(clientExports.FORM_FIELDS) && clientExports.FORM_FIELDS.length === 11,
+    'the claim fingerprint is exported and names eleven fields',
     JSON.stringify(clientExports.FORM_FIELDS))
   ok(clientExports.STATUS_URL === '/plugins/dsh-lore/status.json',
     'the read-only status endpoint is the only HTTP surface the client has',
@@ -564,7 +564,7 @@ function makeUseHook(store) {
 
 /* ================== 3. apply(): mount and unmount by claim ================== */
 {
-  const world = createWorld({ [SERVED_NS]: { value: { guidelinesEnabled: true }, base: {} } })
+  const world = createWorld({ [SERVED_NS]: { value: { skillEnabled: true }, base: {} } })
   clientExports.apply(world.ctx)
 
   ok(world.bound.length === 0,
@@ -646,18 +646,16 @@ const SEED = {
   value: {
     skillDir: 'skills/project-work-log', skillFile: 'SKILL.md', skillEnabled: true,
     modelInvocable: true, userInvocable: true, verbose: false,
-    guidelinesEnabled: false, guidelinesDir: 'skills/reliability-guidelines', guidelinesLanguage: 'en',
     memoryEnabled: true, memoryInjectIndex: true, memoryPersonalSearchable: false,
     sessionsCrossWorkspace: true,
   },
   base: {
     skillDir: 'skills/project-work-log', skillFile: 'SKILL.md', skillEnabled: true,
     modelInvocable: true, userInvocable: true, verbose: false,
-    guidelinesEnabled: true, guidelinesDir: 'skills/reliability-guidelines', guidelinesLanguage: 'zh',
     memoryEnabled: true, memoryInjectIndex: true, memoryPersonalSearchable: false,
     sessionsCrossWorkspace: true,
   },
-  user: { guidelinesEnabled: false },
+  user: {},
 }
 
 /** A world with our namespace served and the card mounted. */
@@ -711,9 +709,9 @@ function mountCard({ seed = SEED, statusFetch = null, extra = {} } = {}) {
 
     // A foreign namespace must stay quiet: only a row carrying our distinctive fields is ours.
     warn.length = 0
-    const other = createWorld({ [SERVED_NS]: { value: { guidelinesEnabled: true }, base: {} } })
+    const other = createWorld({ [SERVED_NS]: { value: { skillEnabled: true }, base: {} } })
     clientExports.apply(other.ctx)
-    other.mirror.publish({ namespaces: [{ ns: SERVED_NS, value: { guidelinesEnabled: true } }] })
+    other.mirror.publish({ namespaces: [{ ns: SERVED_NS, value: { skillEnabled: true } }] })
     ok(warn.length === 0, 'a foreign namespace produces no warning at all', JSON.stringify(warn))
   } finally {
     console.warn = saved
@@ -808,32 +806,22 @@ const openDisclosure = async (index = 0) => {
     'the panel points back at its tab with aria-labelledby',
     String(panels[0].props['aria-labelledby']))
 
-  /* ---- the 技能 panel: two switches, the language control, the paths ---- */
+  /* ---- the 技能 panel: one switch, one path ---- */
   const skillsSwitches = getSwitches(loaded)
-  ok(skillsSwitches.length === 2, 'the 技能 panel holds two switches', String(skillsSwitches.length))
-  ok(skillsSwitches.map((node) => node.props.label).join(',') === '启用工作记录技能,启用可靠性准则技能',
-    'the switches are skillEnabled / guidelinesEnabled, with localized copy (not the raw key)',
-    skillsSwitches.map((node) => node.props.label).join(','))
-  ok(skillsSwitches.map((node) => node.props.checked).join(',') === 'true,false',
-    'they reflect the LIVE values the host projected (each skill is switchable on its own)',
-    skillsSwitches.map((node) => node.props.checked).join(','))
-  ok(skillsSwitches.every((node) => node.props.disabled === false),
-    'a writable form leaves both switches enabled')
-  ok(skillsSwitches.every((node) => typeof node.props.onChange === 'function'),
-    'the switches are controlled')
-
-  const language = getSegments(loaded)[0]
-  ok(getSegments(loaded).length === 1, 'the 技能 panel carries exactly one SegmentedControl',
+  ok(skillsSwitches.length === 1, 'the 技能 panel holds one switch', String(skillsSwitches.length))
+  ok(skillsSwitches[0]?.props.label === '启用工作记录技能',
+    'the switch is skillEnabled, with localized copy (not the raw key)',
+    String(skillsSwitches[0]?.props.label))
+  ok(skillsSwitches[0]?.props.checked === true,
+    'it reflects the LIVE value the host projected',
+    String(skillsSwitches[0]?.props.checked))
+  ok(skillsSwitches[0]?.props.disabled === false,
+    'a writable form leaves the switch enabled')
+  ok(typeof skillsSwitches[0]?.props.onChange === 'function',
+    'the switch is controlled')
+  ok(getSegments(loaded).length === 0,
+    'the 技能 panel carries no language control any more',
     getSegments(loaded).map((node) => node.props.id).join(','))
-  ok(language?.props.id === 'dsh-lore-guidelines-language',
-    'it is the language control', String(language?.props.id))
-  ok(language.props.value === 'en', 'it reflects the projected language', String(language.props.value))
-  ok(language.props.options.map((option) => option.value).join(',') === 'zh,en',
-    'the options are zh and en in that order')
-  ok(language.props.options.map((option) => option.label).join(',') === '中文,English',
-    'the option labels are the two language names, each in its own language')
-  ok(typeof language.props.label === 'string' && language.props.label !== 'guidelinesLanguage.label',
-    'the language control carries a localized accessible name', String(language.props.label))
 
   const pathsDisclosure = getDisclosures(loaded)[0]
   ok(pathsDisclosure !== null && pathsDisclosure !== undefined,
@@ -847,22 +835,20 @@ const openDisclosure = async (index = 0) => {
   await openDisclosure(0)
   const opened = runtime.tree
   const inputs = getInputs(opened)
-  ok(inputs.length === 2, 'opening 路径 shows exactly two text inputs', String(inputs.length))
-  ok(inputs.map((node) => node.props.id).join(',') === 'dsh-lore-skillDir,dsh-lore-guidelinesDir',
-    'the two inputs are the two path fields', inputs.map((node) => node.props.id).join(','))
-  ok(inputs.map((node) => node.props['aria-label']).join('|') === '工作记录技能目录|准则技能目录',
-    'each input carries a localized accessible name',
-    inputs.map((node) => node.props['aria-label']).join('|'))
+  ok(inputs.length === 1, 'opening 路径 shows exactly one text input', String(inputs.length))
+  ok(inputs[0].props.id === 'dsh-lore-skillDir',
+    'the input is the work-log skill path field', String(inputs[0].props.id))
+  ok(inputs[0].props['aria-label'] === '工作记录技能目录',
+    'the input carries a localized accessible name',
+    String(inputs[0].props['aria-label']))
   ok(inputs[0].props.value === '',
     'an un-overridden field shows EMPTY (blank means "use the layer below")',
     JSON.stringify(inputs[0].props.value))
   ok(inputs[0].props.placeholder === 'skills/project-work-log',
     'and shows the value it would fall back to as its placeholder',
     String(inputs[0].props.placeholder))
-  ok(inputs[1].props.placeholder === 'skills/reliability-guidelines',
-    'the guidelines directory does too', String(inputs[1].props.placeholder))
   ok(markedRows(opened).length === 0,
-    'neither path field shows an override badge while neither is overridden',
+    'the path field shows no override badge while it is not overridden',
     String(markedRows(opened).length))
 
   /* ---- no control for the project-side keys, in any tab ---- */
@@ -969,12 +955,6 @@ const openDisclosure = async (index = 0) => {
     'and the card re-renders from the host answer (not from an optimistic local copy)',
     String(getSwitches(runtime.tree)[0].props.checked))
   ok(textOf(runtime.tree).includes('已保存'), 'the card reports the save as done')
-
-  const language = getSegments(runtime.tree)[0]
-  language.props.onChange('zh')
-  await settle()
-  ok(JSON.stringify(form.mutations[1]) === JSON.stringify([{ op: 'set', path: ['guidelinesLanguage'], value: 'zh' }]),
-    'choosing a language issues a set of that field', JSON.stringify(form.mutations[1]))
 }
 
 /* ---- 4d. the path fields commit on blur, not per keystroke ---- */
@@ -1036,16 +1016,16 @@ const openDisclosure = async (index = 0) => {
   ok(markedRows(runtime.tree).length === 0, 'the override badge is gone')
 
   /* the explicit reset button */
-  const field2 = getInputs(runtime.tree)[1]
+  const field2 = getInputs(runtime.tree)[0]
   field2.props.onChange({ target: { value: '/tmp/guides' } })
-  getInputs(runtime.tree)[1].props.onBlur()
+  getInputs(runtime.tree)[0].props.onBlur()
   await settle()
   const resetButton = find(runtime.tree, (node) => node.type === 'button' && textOf(node).includes('恢复默认'))
   ok(resetButton !== null, 'an overridden field offers a 恢复默认 control')
   resetButton.props.onClick()
   await settle()
   ok(JSON.stringify(mounted.form.mutations[mounted.form.mutations.length - 1])
-    === JSON.stringify([{ op: 'unset', path: ['guidelinesDir'] }]),
+    === JSON.stringify([{ op: 'unset', path: ['skillDir'] }]),
     'the reset control unsets that field',
     JSON.stringify(mounted.form.mutations[mounted.form.mutations.length - 1]))
 }

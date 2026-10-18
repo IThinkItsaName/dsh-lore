@@ -106,7 +106,7 @@ const ctx = {
 }
 mod.apply(ctx, {})
 
-ok(creates.length === 2 + extraBundledSkills().length,
+ok(creates.length === 1 + extraBundledSkills().length,
    'apply() calls registerProvider once per skill bundle on disk',
    `${creates.length} calls, ${extraBundledSkills().length} extra bundles`)
 ok(!logs.some(([l]) => l === 'E'), 'apply() logged no error', JSON.stringify(logs))

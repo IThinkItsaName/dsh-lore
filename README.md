@@ -11,6 +11,10 @@
 三层可以只用一层；不限编程（软件、研究、写作、运营都能用）。术语与验证口径见
 [`references/conventions.md`](skills/project-work-log/references/conventions.md)。
 
+> **2026-10-18 起，`reliability-guidelines` 已拆为独立技能**，不再随本包分发，也不再由插件
+> 注册或提供 `guidelinesEnabled` / `guidelinesLanguage` / `guidelinesDir` 设置。本包仍带
+> `project-work-log` 与 `client-require-whitelist` 两个技能。
+
 > 本仓库的约定、文档与脚本由 **DeepSeek Flash 系列模型**整理生成（未经人工逐条校验），使用时请自行甄别。
 > 曾用名 `dsh-worklog`（2026-09-30 改名）；环境变量仍是 `DSH_WORKLOG_*`，技能名 `project-work-log`、
 > 工具名 `worklog_memory` 未变。

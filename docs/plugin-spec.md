@@ -73,8 +73,8 @@ profile patch（用户层，卡片写这里）  >  本包的行配置  >  内置
 settings.json（手工编辑）  >  row config（cordis.patch.yml）  >  内置默认
 ```
 
-**为什么第二种里"文件赢"而不是"row 赢"**：bundle 补丁里写死了 `guidelinesEnabled` /
-`guidelinesLanguage` / `skillDir` / `guidelinesDir` 四个键。如果 row 赢，那个文件就是死的。
+**为什么第二种里"文件赢"而不是"row 赢"**：bundle 补丁里写死了
+`skillDir` 与三个开关（`modelInvocable` / `userInvocable` / `verbose`）。如果 row 赢，那个文件就是死的。
 
 **`Config` 与 `settings.json` 的关系（已变）**：`Config` 是**唯一**的声明处 ——
 字段必须先在那里声明，才有官方通道可走。`settings.json` 只是**没有

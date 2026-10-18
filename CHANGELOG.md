@@ -20,6 +20,14 @@
 
 DSH 里新工作区不必再建 `AGENTS.md`；skill-only / 非 DSH 场景仍用模板 §10 的文件钩子。
 
+### 移除：可靠性准则技能拆出为独立 skill
+
+`reliability-guidelines` 不再随本包提交，也不再由插件注册；`guidelinesEnabled` /
+`guidelinesDir` / `guidelinesLanguage` 三个设置键与设置页控件一并移除。技能源码移到
+`.pi/skills/reliability-guidelines/`，独立发布副本在 `publish/reliability-guidelines/`
+（**尚未发布**）。升级后旧 profile patch 里若还留着这三个键，会被当作不认识的键忽略并打一行
+警告，不影响装载。
+
 ### 修复：`worklog_memory` 描述不再声称「唯一读路」
 
 原文写 “reachable only through this tool”，与 `plugin-spec.md` §二 的实测纠正冲突：在

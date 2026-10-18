@@ -121,16 +121,6 @@ ok(parsed.name === 'project-work-log', 'parses the worklog skill name', parsed.n
 ok(parsed.description.length > 20, 'parses a non-trivial description', `${parsed.description.length} chars`)
 ok(!parsed.description.includes('---'), 'description excludes the closing fence')
 
-const zhText = readFileSync(`${PKG}/skills/reliability-guidelines/SKILL.md`, 'utf8')
-const enText = readFileSync(`${PKG}/skills/reliability-guidelines/en/SKILL.md`, 'utf8')
-const zh = mod.parseSkillFrontmatter(zhText, 'guidelines zh')
-const en = mod.parseSkillFrontmatter(enText, 'guidelines en')
-ok(zh.name === 'reliability-guidelines', 'parses the zh guidelines name', zh.name)
-ok(en.name === 'reliability-guidelines', 'parses the en guidelines name', en.name)
-ok(zh.description !== en.description, 'the two language copies are different documents')
-ok(zh.description.includes('八条'), 'the zh copy is Chinese', zh.description.slice(0, 30))
-ok(/[Ee]ight/.test(en.description), 'the en copy is English', en.description.slice(0, 40))
-
 const good = (front) => `---\n${front}\n---\n\n# body\n`
 ok(mod.parseSkillFrontmatter(good('name: a-b\ndescription: d')).name === 'a-b', 'accepts a minimal block')
 ok(mod.parseSkillFrontmatter('\ufeff---\nname: a-b\ndescription: d\n---\n').name === 'a-b', 'tolerates a BOM')
@@ -165,12 +155,12 @@ ok(mod.stripFrontmatter(worklogText).startsWith('# 项目长期工作记录'), '
 ok(mod.stripFrontmatter('no frontmatter here') === 'no frontmatter here',
    'stripFrontmatter is a no-op without frontmatter')
 
-/* ------------------------------------------- default mount: two providers */
+/* ------------------------------- default mount: one explicit provider + extras */
 
 const ctxA = fakeCtx()
 mod.apply(ctxA, {})
-ok(ctxA.providers.length === 2 + extraBundledSkills().length,
-   'default config mounts one provider per bundle on disk (worklog + guidelines + extras)',
+ok(ctxA.providers.length === 1 + extraBundledSkills().length,
+   'default config mounts one provider for the configured skill plus every extra bundle',
    `${ctxA.providers.length} providers, ${extraBundledSkills().length} extra bundles`)
 ok(errorsIn(ctxA).length === 0, 'no error logged on a healthy bundle', JSON.stringify(ctxA.logs))
 
@@ -201,12 +191,13 @@ ok(memoryTool?.output?.schema?.additionalProperties === false
    'its output schema compiles (explicit additionalProperties, text required)',
    JSON.stringify(memoryTool?.output?.schema ?? null))
 
-const [pWorklog, pGuidelines] = mountAll(ctxA)
+const [pWorklog, ...pExtras] = mountAll(ctxA)
 ok(pWorklog.name === 'worklog-bundle', 'the worklog provider has its own name', String(pWorklog.name))
-ok(pGuidelines.name === 'worklog-guidelines', 'the guidelines provider has its own name',
-   String(pGuidelines.name))
-ok(pWorklog.name !== pGuidelines.name, 'the two provider names are distinct (the registry requires it)')
-ok(pWorklog.name !== 'runtime' && pGuidelines.name !== 'runtime', 'neither uses the reserved "runtime"')
+ok(pWorklog.name !== 'runtime', 'it does not use the reserved "runtime"')
+ok(pExtras.length === extraBundledSkills().length,
+   'every extra bundle got its own provider', `${pExtras.length} providers`)
+ok(pExtras.every((provider) => provider.name !== pWorklog.name),
+   'the worklog and extra provider names are distinct (the registry requires it)')
 
 /* ---- Bundled skills: one provider per bundle in `skills/`, and each bundle's own
    frontmatter invocation policy survives this path.
@@ -219,7 +210,7 @@ ok(pWorklog.name !== 'runtime' && pGuidelines.name !== 'runtime', 'neither uses 
    break the "off by default" promise: `createProvider` ANDs the config switches with the
    *frontmatter*, so `disable-model-invocation: true` must still come through as
    `modelInvocable: false` on the candidate the registry sees. ---- */
-const extraProviders = mountAll(ctxA).slice(2)
+const extraProviders = mountAll(ctxA).slice(1)
 ok(extraProviders.length === extraBundledSkills().length,
    'every extra bundle on disk got its own provider',
    `${extraProviders.length} providers for ${extraBundledSkills().join(', ') || '(none)'}`)
@@ -237,7 +228,10 @@ for (const provider of extraProviders) {
    `value.then(...)` whenever a signal is present. A synchronous `list()`/`get()`
    therefore crashes the run with `promise.then is not a function` — the bug that
    broke the random_solve workspace. These two checks pin the fix. ---- */
-for (const [label, provider] of [['worklog', pWorklog], ['guidelines', pGuidelines]]) {
+for (const [label, provider] of [
+  ['worklog', pWorklog],
+  ...pExtras.map((provider) => [provider.name, provider]),
+]) {
   const listValue = provider.list({ cwd: 'X', scope: {} })
   ok(isPromise(listValue), `${label}: list() returns a promise (the registry calls .then on it)`,
      `got ${typeof listValue}`)
@@ -250,7 +244,7 @@ for (const [label, provider] of [['worklog', pWorklog], ['guidelines', pGuidelin
 // And the full round trip through the registry's exact call shape must not throw.
 let contractThrew = ''
 try {
-  for (const provider of [pWorklog, pGuidelines]) {
+  for (const provider of [pWorklog, ...pExtras]) {
     const obs = await registryCall(provider.list.bind(provider), { cwd: 'X', scope: {} })
     ok(obs.complete === true, `${provider.name}: list() survives waitWithAbort`)
     const def = await registryCall(provider.get.bind(provider), obs.candidates[0], { cwd: 'X', scope: {} })
@@ -275,7 +269,6 @@ ok(contractThrew === '', 'the registry call shape does not throw', contractThrew
 /* ---- candidate and definition contract, for each provider ---- */
 for (const [label, provider, expectedName] of [
   ['worklog', pWorklog, 'project-work-log'],
-  ['guidelines', pGuidelines, 'reliability-guidelines'],
 ]) {
   const obs = await provider.list()
   ok(Array.isArray(obs.candidates) && obs.complete === true,
@@ -302,95 +295,10 @@ for (const [label, provider, expectedName] of [
 
 function norm(p) { return String(p ?? '').replaceAll('\\', '/') }
 
-/* ---- CROSS-SKILL CONSISTENCY -------------------------------------------
-   Both skills ship in one bundle, and the guidelines point at the record
-   container that project-work-log owns. When the layout changed to work_log/,
-   the guidelines kept saying `journal/` — a real drift nothing caught. These
-   checks make the two files agree. */
-{
-  const zhText = readFileSync(`${PKG}/skills/reliability-guidelines/SKILL.md`, 'utf8')
-  const enText = readFileSync(`${PKG}/skills/reliability-guidelines/en/SKILL.md`, 'utf8')
-  const worklogText = readFileSync(`${PKG}/skills/project-work-log/SKILL.md`, 'utf8')
-
-  // The worklog skill's declared container name, taken from the doc itself.
-  const declared = /一个容器目录\*\*\s*`([^`]+)`/.exec(worklogText)?.[1]
-  ok(declared === 'work_log/', 'project-work-log declares work_log/ as the container',
-     String(declared))
-
-  // The guidelines must name that same container, in both languages.
-  ok(zhText.includes(`\`${declared}\``),
-     'guidelines (zh) reference the container project-work-log declares',
-     `looking for \`${declared}\``)
-  ok(enText.includes(`\`${declared}\``),
-     'guidelines (en) reference the container project-work-log declares')
-
-  // And must not present the OLD container as the place to write.
-  ok(!/工作记录（`journal\/`）/.test(zhText),
-     'guidelines (zh) no longer tell you to write into journal/')
-  ok(!/work record \(`journal\/`\)/.test(enText),
-     'guidelines (en) no longer tell you to write into journal/')
-  // `journal.py` is a script name, not a directory, so it may still appear.
-  ok(zhText.includes('journal.py'), 'guidelines still name the journal.py tool correctly')
-}
-
-/* ---- language selection ---- */
-async function guidelinesBodyFor(config) {
-  const ctx = fakeCtx()
-  mod.apply(ctx, config)
-  const provider = mountAll(ctx)[1]
-  if (provider === undefined) return undefined
-  return (await provider.get((await provider.list()).candidates[0])).content
-}
-
-const bodyEn = await guidelinesBodyFor({ guidelinesLanguage: 'en' })
-ok(bodyEn?.includes('Facts over guesses') === true, 'guidelinesLanguage=en serves the English copy',
-   bodyEn?.slice(0, 60))
-const bodyZh = await guidelinesBodyFor({ guidelinesLanguage: 'zh' })
-ok(bodyZh?.includes('事实优先') === true, 'guidelinesLanguage=zh serves the Chinese copy')
-ok(bodyZh?.includes('八条准则') === true, 'the Chinese copy is the cleaned-up rewrite')
-const bodyTypo = await guidelinesBodyFor({ guidelinesLanguage: 'eng' })
-ok(bodyTypo?.includes('事实优先') === true,
-   'an unrecognized language falls back to Chinese rather than serving nothing')
-
-/* ---- the rewritten authority clause ---- */
-// Markdown wraps lines and the guidelines open with a blockquote, so compare on
-// text with quote markers and whitespace normalized away.
-const flat = (s) => String(s ?? '')
-  .split('\n').map((l) => l.replace(/^\s*>\s?/, '')).join('\n')
-  .replace(/\s+/g, ' ')
-ok(flat(bodyZh).includes('默认强约束'), 'the zh copy frames itself as a strong default')
-ok(flat(bodyZh).includes('你的显式决定优先于这些默认值'), 'the zh copy states the user outranks it')
-ok(flat(bodyZh).includes('不是"拒绝用户"的授权'), 'the zh copy drops the refuse-the-user licence')
-ok(flat(bodyEn).includes('strong default'), 'the en copy frames itself as a strong default')
-ok(flat(bodyEn).includes('Your explicit decision outranks these defaults'),
-   'the en copy states the user outranks it')
-ok(flat(bodyEn).includes('not a licence to refuse the user'),
-   'the en copy drops the refuse-the-user licence')
-
-/* ---- disabling the guidelines: **注册常驻、服务为空**（2026-10-14 起）----
-   改前是"关掉就不注册那个 provider"。那个写法让开关必须重启才生效（注册与否是装载期事实），
-   所以改成常驻注册 + `list()` 报空目录；断言于是从"少一个 provider"改成"服务技能数不变"。 */
-const ctxOff = fakeCtx()
-mod.apply(ctxOff, { guidelinesEnabled: false })
-ok(ctxOff.providers.length === 2 + extraBundledSkills().length,
-   'guidelinesEnabled=false keeps the provider registered (switch is read live, not at mount)',
-   String(ctxOff.providers.length))
-{
-  const [offMain, offGuidelines] = mountAll(ctxOff)
-  const offMainCatalog = await offMain.list({ cwd: 'X', scope: {} })
-  const offGuidelinesCatalog = await offGuidelines.list({ cwd: 'X', scope: {} })
-  ok(offMainCatalog.candidates.length === 1,
-     'the work-log skill is still served when only the guidelines are off',
-     JSON.stringify(offMainCatalog.candidates.map((c) => c.name)))
-  ok(offGuidelinesCatalog.candidates.length === 0 && offGuidelinesCatalog.complete === true,
-     'the guidelines provider reports an EMPTY catalog (complete), so the skill really is gone',
-     JSON.stringify(offGuidelinesCatalog))
-}
-
 /* ---- disabling the work-log skill itself (the memory half stays up) ---- */
 const ctxSkillOff = fakeCtx()
 mod.apply(ctxSkillOff, { skillEnabled: false })
-ok(ctxSkillOff.providers.length === 2 + extraBundledSkills().length,
+ok(ctxSkillOff.providers.length === 1 + extraBundledSkills().length,
    'skillEnabled=false keeps the work-log provider registered too',
    String(ctxSkillOff.providers.length))
 {
@@ -414,10 +322,9 @@ ok(ctxSkillOff.registeredTools.length === 1,
     return { get: () => value, set: (next) => { value = next } }
   }
   const skillEnabled = cell(true)
-  const guidelinesEnabled = cell(true)
   const ctxLive = fakeCtx()
-  mod.apply(ctxLive, { skillDir: 'skills/project-work-log', skillEnabled, guidelinesEnabled })
-  const [liveMain, liveGuidelines] = mountAll(ctxLive)
+  mod.apply(ctxLive, { skillDir: 'skills/project-work-log', skillEnabled })
+  const [liveMain] = mountAll(ctxLive)
   const before = await liveMain.list({ cwd: 'X', scope: {} })
   ok(before.candidates.length === 1, 'live: the skill is served before the change')
 
@@ -426,11 +333,6 @@ ok(ctxSkillOff.registeredTools.length === 1,
   ok(after.candidates.length === 0,
      'live: flipping skillEnabled takes effect on the NEXT list() — no restart',
      JSON.stringify(after.candidates.map((c) => c.name)))
-
-  guidelinesEnabled.set(false)
-  const guidelinesAfter = await liveGuidelines.list({ cwd: 'X', scope: {} })
-  ok(guidelinesAfter.candidates.length === 0,
-     'live: flipping guidelinesEnabled likewise takes effect immediately')
 
   skillEnabled.set(true)
   const back = await liveMain.list({ cwd: 'X', scope: {} })
@@ -469,17 +371,17 @@ ok(!ctxQuiet.logs.some((entry) => String(entry[1]).startsWith('worklog[trace] ')
 }
 
 /* ---- liveness: a provider re-reads, so an edit changes the body ---- */
-const guidPath = `${PKG}/skills/reliability-guidelines/SKILL.md`
-const before = (await pGuidelines.get((await pGuidelines.list()).candidates[0])).content.length
+const worklogPath = `${PKG}/skills/project-work-log/SKILL.md`
+const before = (await pWorklog.get((await pWorklog.list()).candidates[0])).content.length
 try {
-  writeFileSync(guidPath, `${zhText}\n<!-- liveness probe -->\n`)
-  const after = (await pGuidelines.get((await pGuidelines.list()).candidates[0])).content.length
+  writeFileSync(worklogPath, `${worklogText}\n<!-- liveness probe -->\n`)
+  const after = (await pWorklog.get((await pWorklog.list()).candidates[0])).content.length
   ok(after > before, 'get() re-reads the file, so an edit appears without a host restart',
      `${before} -> ${after}`)
 } finally {
-  writeFileSync(guidPath, zhText)
+  writeFileSync(worklogPath, worklogText)
 }
-ok(readFileSync(guidPath, 'utf8') === zhText, 'the harness restored the guidelines file')
+ok(readFileSync(worklogPath, 'utf8') === worklogText, 'the harness restored the worklog file')
 
 /* ---- config coercion ---- */
 const ctxB = fakeCtx()
@@ -491,54 +393,39 @@ ok(defB.invocation.modelInvocable === true, 'config leaves the model surface int
 
 const ctxC = fakeCtx()
 mod.apply(ctxC, { modelInvocable: 'yes', bogusKey: 1 })
-ok(ctxC.providers.length === 2 + extraBundledSkills().length,
+ok(ctxC.providers.length === 1 + extraBundledSkills().length,
    'a non-boolean / unknown config value does not break the mount')
 ok(ctxC.logs.some(([level, m]) => level === 'warn' && m.includes('bogusKey')),
    'unknown config keys are reported', JSON.stringify(ctxC.logs))
 
 const ctxD = fakeCtx()
 mod.apply(ctxD, null)
-ok(ctxD.providers.length === 2 + extraBundledSkills().length,
+ok(ctxD.providers.length === 1 + extraBundledSkills().length,
    'a null config does not break the mount')
 
 const ctxE = fakeCtx()
-mod.apply(ctxE, { skillDir: `${PKG}/no/such/dir`, guidelinesDir: `${PKG}/no/such/dir` })
+mod.apply(ctxE, { skillDir: `${PKG}/no/such/dir` })
 // 2026-10-14 起 provider **常驻注册**（开关与路径现读），所以"文件不在"不再表现为
-// "一个 provider 都没有"，而是"两个显式 provider 都在、但服务 0 个 + 装载期各报一条错"。
-// 注意随包 bundle 那一路：`skills/` 是**按 `skillDir` 的父目录**枚举的，两个显式目录都
-// 指向不存在的路径时父目录也不存在，于是 extras 自然为 0（这是 `listBundledSkills` 的既有行为）。
-ok(ctxE.providers.length === 2,
-   'missing bundles still register their two explicit providers (registration is not file-gated)',
+// "一个 provider 都没有"，而是"显式 provider 还在、但服务 0 个 + 装载期报一条错"。
+// 注意随包 bundle 那一路：`skills/` 是**按 `skillDir` 的父目录**枚举的，目录不存在，
+// 于是 extras 自然为 0（这是 `listBundledSkills` 的既有行为）。
+ok(ctxE.providers.length === 1,
+   'a missing bundle still registers its provider (registration is not file-gated)',
    String(ctxE.providers.length))
 {
   const catalogs = []
   for (const provider of mountAll(ctxE)) catalogs.push((await provider.list({})).candidates.length)
-  ok(catalogs[0] === 0 && catalogs[1] === 0,
-     'and neither of them serves a skill when its directory does not exist',
+  ok(catalogs[0] === 0,
+     'and it serves no skill when its directory does not exist',
      JSON.stringify(catalogs))
 }
-ok(errorsIn(ctxE).length === 2, 'both missing bundles are reported, not swallowed',
+ok(errorsIn(ctxE).length === 1, 'the missing bundle is reported, not swallowed',
    JSON.stringify(ctxE.logs))
-
-const ctxF = fakeCtx()
-mod.apply(ctxF, { skillDir: `${PKG}/no/such/dir` })
-ok(ctxF.providers.length === 2,
-   'a missing worklog bundle does not stop the guidelines mounting (both providers register)',
-   String(ctxF.providers.length))
-{
-  const [, guidelinesProvider] = mountAll(ctxF)
-  const catalog = await guidelinesProvider.list({})
-  ok(catalog.candidates.length === 1,
-     'and the guidelines skill is still served while the work-log directory is broken',
-     JSON.stringify(catalog.candidates.map((c) => c.name)))
-}
 
 const ctxG = fakeCtx()
 mod.apply(ctxG, { verbose: true })
 ok(ctxG.logs.some(([level, m]) => level === 'info' && m.includes('project-work-log')),
    'verbose logs the worklog skill')
-ok(ctxG.logs.some(([level, m]) => level === 'info' && m.includes('reliability-guidelines')),
-   'verbose logs the guidelines skill')
 
 /* ---- DEGRADED CONTEXTS ------------------------------------------------
    `ctx.logger` is not something this plugin can rely on: only `skills` is

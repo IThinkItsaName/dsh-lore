@@ -201,7 +201,7 @@ for (const path of [ISOLATED_SETTINGS_FILE, ISOLATED_MEMORY_ROOT, ISOLATED_DSH_H
 }
 
 /*
- * Extra skill bundles this package ships beside the two it mounts by name.
+ * Extra skill bundles this package ships beside the one it mounts by name.
  *
  * The harnesses assert how many providers `apply()` registers, and the first version of that
  * assertion said "2" outright — so it went red the moment a third bundle was added, which says
@@ -209,8 +209,7 @@ for (const path of [ISOLATED_SETTINGS_FILE, ISOLATED_MEMORY_ROOT, ISOLATED_DSH_H
  * directory keeps the assertion about the invariant that matters ("one provider per bundle on
  * disk") instead of about today's arithmetic.
  *
- * `project-work-log` and `reliability-guidelines` are mounted by name (the latter only when
- * `guidelinesEnabled`), so they are not "extra".
+ * `project-work-log` is mounted by name, so it is not "extra".
  */
 export function extraBundledSkills() {
   const skillsRoot = join(PKG, 'skills')
@@ -224,6 +223,6 @@ export function extraBundledSkills() {
     return []
   }
   return names
-    .filter((name) => name !== 'project-work-log' && name !== 'reliability-guidelines')
+    .filter((name) => name !== 'project-work-log')
     .sort()
 }

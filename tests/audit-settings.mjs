@@ -166,11 +166,11 @@ async function call(method, body) {
 
 /* ---- 4. there is no write verb, and the file is untouchable ---- */
 {
-  writeFileSync(settingsPath, JSON.stringify({ guidelinesEnabled: false }), 'utf8')
+  writeFileSync(settingsPath, JSON.stringify({ verbose: false }), 'utf8')
   const before = readFileSync(settingsPath, 'utf8')
   for (const [method, payload] of [
-    ['POST', JSON.stringify({ guidelinesEnabled: true })],
-    ['PUT', JSON.stringify({ guidelinesEnabled: true })],
+    ['POST', JSON.stringify({ verbose: true })],
+    ['PUT', JSON.stringify({ verbose: true })],
     ['PATCH', '{}'],
     ['DELETE', undefined],
   ]) {
@@ -234,8 +234,8 @@ async function call(method, body) {
   ok(eff.skillFile === 'SKILL.md',
     'effectiveSettings resolves skillFile (apply() reads it; no surface offers a control for it)',
     String(eff.skillFile))
-  ok(eff.guidelinesEnabled === true && eff.guidelinesLanguage === 'zh',
-    'and the two guideline defaults', `${eff.guidelinesEnabled}/${eff.guidelinesLanguage}`)
+  ok(eff.skillEnabled === true && eff.userInvocable === true,
+    'and the work-log defaults', `${eff.skillEnabled}/${eff.userInvocable}`)
 
   // The point of the split, and the check whose absence let it drift: `effective`
   // is the options apply() reads, so a stored project-side default in it would be
@@ -311,56 +311,41 @@ async function call(method, body) {
 
   const row = {
     skillDir: 'skills/project-work-log',
-    guidelinesEnabled: true,
-    guidelinesLanguage: 'zh',
-    guidelinesDir: 'skills/reliability-guidelines',
+    skillEnabled: true,
   }
 
   // The row says ON, the file says OFF: the file must win, or a headless user's
   // hand-edited file would be inert — this bundle's patch declares every one of
   // these keys outright.
-  writeFileSync(settingsPath, JSON.stringify({ guidelinesEnabled: false }), 'utf8')
+  writeFileSync(settingsPath, JSON.stringify({ skillEnabled: false }), 'utf8')
   const fileOff = runApply(row)
-  ok((await served(fileOff)).join(',') === 'project-work-log,client-require-whitelist',
-    'the settings file beats the row config (file false with row true → guidelines not served)',
+  ok((await served(fileOff)).join(',') === extraBundledSkills().join(','),
+    'the settings file beats the row config (file false with row true → skill not served)',
     `${(await served(fileOff)).join(',')}（providers=${fileOff.creates.length}）`)
   ok(fileOff.errors.length === 0, 'apply() logged no error', JSON.stringify(fileOff.logs))
 
-  writeFileSync(settingsPath, JSON.stringify({ guidelinesEnabled: true }), 'utf8')
-  const fileOn = runApply({ ...row, guidelinesEnabled: false })
-  ok((await served(fileOn)).length === 2 + extraBundledSkills().length,
-    'the settings file beats the row config (file true with row false → two skills)',
+  writeFileSync(settingsPath, JSON.stringify({ skillEnabled: true }), 'utf8')
+  const fileOn = runApply({ ...row, skillEnabled: false })
+  ok((await served(fileOn)).length === 1 + extraBundledSkills().length,
+    'the settings file beats the row config (file true with row false → the skill is served)',
     `${(await served(fileOn)).join(',')}`)
 
-  writeFileSync(settingsPath, JSON.stringify({ guidelinesLanguage: 'en' }), 'utf8')
-  const rowOnly = runApply({ ...row, guidelinesEnabled: false })
-  ok((await served(rowOnly)).join(',') === 'project-work-log,client-require-whitelist',
-    'a key the file does not state still comes from the row config (row false → guidelines not served)',
+  writeFileSync(settingsPath, JSON.stringify({ userInvocable: false }), 'utf8')
+  const rowOnly = runApply({ ...row, skillEnabled: false })
+  ok((await served(rowOnly)).join(',') === extraBundledSkills().join(','),
+    'a key the file does not state still comes from the row config (row false → skill not served)',
     `${(await served(rowOnly)).join(',')}（providers=${rowOnly.creates.length}）`)
-
-  // And the file's language actually selects the English bundle.
-  const both = runApply(row)
-  const provider = both.creates[1]({ signal: new AbortController().signal, invalidate: () => {} })
-  const catalog = await provider.list()
-  const enPath = String(catalog.candidates?.[0]?.path).replaceAll('\\', '/')
-  ok(enPath.includes('/en/'),
-    'the file\'s guidelinesLanguage=en selects the en/ bundle', enPath)
-
-  writeFileSync(settingsPath, JSON.stringify({ guidelinesLanguage: 'zh' }), 'utf8')
-  const bothZh = runApply(row)
-  const providerZh = bothZh.creates[1]({ signal: new AbortController().signal, invalidate: () => {} })
-  const catalogZh = await providerZh.list()
-  const zhPath = String(catalogZh.candidates?.[0]?.path).replaceAll('\\', '/')
-  ok(!zhPath.includes('/en/'),
-    'the file\'s guidelinesLanguage=zh selects the zh bundle', zhPath)
 }
 
 /* ---- 8. the patch row and the documented config surface still agree ---- */
 {
   const patch = readFileSync(`${PKG}/cordis.patch.yml`, 'utf8')
-  for (const key of ['guidelinesEnabled', 'guidelinesLanguage', 'skillDir', 'guidelinesDir']) {
+  for (const key of ['skillDir', 'modelInvocable', 'userInvocable', 'verbose']) {
     ok(patch.includes(`${key}:`), `the bundle patch still declares ${key}`,
       key)
+  }
+  for (const key of ['guidelinesEnabled', 'guidelinesLanguage', 'guidelinesDir']) {
+    ok(!patch.includes(`${key}:`), `the bundle patch no longer declares ${key}`, key)
   }
   ok(!patch.includes('container:') && !patch.includes('lessons:') && !patch.includes('mode:'),
     'and it declares none of the project-side keys (those are not plugin configuration)')
@@ -406,7 +391,7 @@ async function call(method, body) {
 /** A `configEditor` fake: two layers, because the real one has two and the difference is the bug.
  *
  * `entry.options.config` is the config of whichever patch CREATED the row — for this bundle that
- * is its own `insert:` in `cordis.patch.yml`, which declares seven of our keys. `configuration()`
+ * is its own `insert:` in `cordis.patch.yml`, which declares four of our keys. `configuration()`
  * reports `override`: the profile patch's own `config:` block, i.e. what the USER has stated.
  *
  * This fake used to keep only the first, and default it to `{}` — which hid the distinction
@@ -415,7 +400,6 @@ async function call(method, body) {
  */
 const BUNDLE_LAYER = {
   skillDir: 'skills/project-work-log', modelInvocable: true, userInvocable: true, verbose: false,
-  guidelinesEnabled: true, guidelinesDir: 'skills/reliability-guidelines', guidelinesLanguage: 'zh',
 }
 
 function fakeEditor(override = {}, entryConfig = BUNDLE_LAYER) {
@@ -443,7 +427,7 @@ function fakeEditor(override = {}, entryConfig = BUNDLE_LAYER) {
   // store. It is CORRUPT on purpose — a status read that still consulted it would
   // report an error and log a warning, both of which are asserted absent below.
   writeFileSync(settingsPath, '{ not json at all', 'utf8')
-  const editor = fakeEditor({ guidelinesLanguage: 'en', verbose: true })
+  const editor = fakeEditor({ userInvocable: false, verbose: true })
   const warnings = []
   const withEditor = createStatusRouteHandler((level, message) => warnings.push([level, message]), { configEditor: editor })
 
@@ -462,7 +446,7 @@ function fakeEditor(override = {}, entryConfig = BUNDLE_LAYER) {
 
   // A write verb is refused here too, and nothing reaches the editor.
   const postRes = fakeResponse()
-  await withEditor(fakeRequest('POST', JSON.stringify({ guidelinesLanguage: 'zh' })), postRes)
+  await withEditor(fakeRequest('POST', JSON.stringify({ userInvocable: true })), postRes)
   ok(postRes.status === 405, 'a save attempt through HTTP is refused on the official path too',
     String(postRes.status))
   ok(editor.calls.length === 0, 'and no write reached configEditor',
@@ -493,17 +477,17 @@ function fakeEditor(override = {}, entryConfig = BUNDLE_LAYER) {
     JSON.stringify(logs))
 
   /* ---- migration: a pre-Config settings file is folded into the patch, once ---- */
-  // The regression this block exists for: the bundle's own `insert:` states seven of our keys, and
+  // The regression this block exists for: the bundle's own `insert:` states four of our keys, and
   // the migration's guard MUST NOT read that as "the profile already owns them" — that is what made
   // it archive the file without migrating. `fakeEditor({})` is exactly that profile shape: bundle
   // layer populated, user layer empty.
-  writeFileSync(settingsPath, JSON.stringify({ mode: 'digest', guidelinesLanguage: 'en' }), 'utf8')
+  writeFileSync(settingsPath, JSON.stringify({ mode: 'digest', userInvocable: false }), 'utf8')
   const moving = fakeEditor({})
   const outcome = await mod.migrateLegacySettings(moving, () => {})
   ok(moving.calls.length === 1,
     'a populated BUNDLE layer does not stop the migration (the bug that shipped)',
     `${outcome} / ${moving.calls.length} edit call(s)`)
-  ok(moving.calls[0]?.next?.guidelinesLanguage === 'en',
+  ok(moving.calls[0]?.next?.userInvocable === false,
     'the file\u2019s value is what gets written', JSON.stringify(moving.calls[0]?.next))
   ok(!('mode' in (moving.calls[0]?.next ?? {})),
     'a project-side key is NOT migrated (it is not in Config, so the patch must not carry it)',
@@ -519,19 +503,19 @@ function fakeEditor(override = {}, entryConfig = BUNDLE_LAYER) {
 
   // An empty string means "use the default" in the legacy file but "explicitly empty" in the patch,
   // and `resolveSkillDir('')` resolves to the PACKAGE ROOT — carrying it over would break the mount.
-  writeFileSync(settingsPath, JSON.stringify({ skillDir: '', guidelinesDir: '  ', verbose: true }), 'utf8')
+  writeFileSync(settingsPath, JSON.stringify({ skillDir: '', verbose: true }), 'utf8')
   rmSync(`${settingsPath}.migrated`, { force: true })
   const blanks = fakeEditor({})
   const blanksOutcome = await mod.migrateLegacySettings(blanks, () => {})
-  ok(!('skillDir' in (blanks.calls[0]?.next ?? {})) && !('guidelinesDir' in (blanks.calls[0]?.next ?? {})),
+  ok(!('skillDir' in (blanks.calls[0]?.next ?? {})),
     'empty/blank strings are not migrated (they would become an explicit empty override)',
     `${blanksOutcome} / ${JSON.stringify(blanks.calls[0]?.next)}`)
   ok(blanks.calls[0]?.next?.verbose === true, 'while a usable value beside them still migrates')
 
   // A profile that already states a key wins: migration must never overwrite an explicit value.
-  writeFileSync(settingsPath, JSON.stringify({ guidelinesLanguage: 'en' }), 'utf8')
+  writeFileSync(settingsPath, JSON.stringify({ userInvocable: false }), 'utf8')
   rmSync(`${settingsPath}.migrated`, { force: true })
-  const owner = fakeEditor({ guidelinesLanguage: 'zh' })
+  const owner = fakeEditor({ userInvocable: true })
   const owned = await mod.migrateLegacySettings(owner, () => {})
   ok(owner.calls.length === 0, 'an existing profile value is never overwritten by the file', owned)
   ok(existsSync(`${settingsPath}.migrated`),
@@ -539,7 +523,7 @@ function fakeEditor(override = {}, entryConfig = BUNDLE_LAYER) {
     owned)
 
   // "I cannot tell what the user stated" must never be read as "the user stated nothing".
-  writeFileSync(settingsPath, JSON.stringify({ guidelinesLanguage: 'en' }), 'utf8')
+  writeFileSync(settingsPath, JSON.stringify({ userInvocable: false }), 'utf8')
   rmSync(`${settingsPath}.migrated`, { force: true })
   const blind = fakeEditor({})
   delete blind.configuration
@@ -553,7 +537,7 @@ function fakeEditor(override = {}, entryConfig = BUNDLE_LAYER) {
 
   // And a failed write leaves the file exactly where it was: a half-migrated store is worse than
   // no migration, because the next mount would read neither copy with confidence.
-  writeFileSync(settingsPath, JSON.stringify({ guidelinesLanguage: 'en' }), 'utf8')
+  writeFileSync(settingsPath, JSON.stringify({ userInvocable: false }), 'utf8')
   const broken = fakeEditor({})
   broken.edit = async () => { throw new Error('profile write failed') }
   const failed = []

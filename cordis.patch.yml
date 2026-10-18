@@ -3,11 +3,7 @@
 #
 # Skills that ship with this bundle (one provider each; any further bundle placed under
 # `skills/` is served too — see `apply()`):
-#   - `project-work-log`       — the work-record system (journal + ledger + lessons).
-#   - `reliability-guidelines` — eight working principles, applied in the projects
-#                                that install this plugin. Disable with
-#                                `guidelinesEnabled: false`; pick the language with
-#                                `guidelinesLanguage: 'zh' | 'en'`.
+#   - `project-work-log` — the work-record system (journal + ledger + lessons).
 #
 # ── Why the override below is required ─────────────────────────────────────────
 # `dsh-base` declares `skill-filesystem`; `dsh-web-app` then disables it. The
@@ -40,8 +36,3 @@
         modelInvocable: true
         userInvocable: true
         verbose: false
-        guidelinesEnabled: true
-        guidelinesDir: 'skills/reliability-guidelines'
-        # 'zh' (default) or 'en'. A profile's own patch layer is applied after
-        # every bundle layer, so it can override this per profile.
-        guidelinesLanguage: 'zh'

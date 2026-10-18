@@ -98,7 +98,7 @@ ok(inserts >= 1, 'the patch inserts this package row', `${inserts} inserts`)
 
 /* 3. every bundle the patch declares actually exists */
 const skillDir = `${PKG}/skills/project-work-log`
-for (const [label, key] of [['skillDir', 'skillDir'], ['guidelinesDir', 'guidelinesDir']]) {
+for (const [label, key] of [['skillDir', 'skillDir']]) {
   const dir = new RegExp(`${key}:\\s*['"]?([^'"\\n]+)['"]?`).exec(patch)?.[1]
   ok(typeof dir === 'string' && dir !== '', `the patch declares ${label}`, String(dir))
   if (typeof dir === 'string' && dir !== '') {
@@ -106,14 +106,10 @@ for (const [label, key] of [['skillDir', 'skillDir'], ['guidelinesDir', 'guideli
     ok(existsSync(`${PKG}/${dir}/SKILL.md`), `${label} holds a SKILL.md`)
   }
 }
+ok(!/guidelines(?:Enabled|Dir|Language)\s*:/.test(patch),
+   'the patch no longer declares the removed guidelines settings')
 
-/* 4. the guidelines ship both languages, and only the selected one is scanned */
-const gDir = `${PKG}/skills/reliability-guidelines`
-ok(existsSync(`${gDir}/SKILL.md`), 'the guidelines bundle holds the zh SKILL.md')
-ok(existsSync(`${gDir}/en/SKILL.md`), 'the guidelines bundle holds the en SKILL.md')
-ok(!existsSync(`${gDir}/en/SKILL.md.keep`), 'no stray marker files in the guidelines bundle')
-
-/* 5. the plugin module loads and parses both bundles */
+/* 4. the plugin module loads and parses the bundle */
 // The plugin imports `@deepseek-ai/schemastery` and `@deepseek-ai/dsh-tools`. Those come from
 // the host (`dsh-app-boot` supplies the installation's packages to Node's resolvers — see
 // `dsh-ref/PLUGIN-AUTHORING.md` §4.3), so a bare `node` run needs `_pkg.mjs`'s resolver hook
@@ -130,9 +126,5 @@ ok(typeof mod.Config?.toJSON === 'function',
 const parsed = mod.parseSkillFrontmatter(readFileSync(`${skillDir}/SKILL.md`, 'utf8'))
 ok(parsed.name === 'project-work-log', 'the plugin parses the worklog skill name', parsed.name)
 ok(parsed.description.length > 0, 'the plugin parses a description')
-const gParsed = mod.parseSkillFrontmatter(readFileSync(`${gDir}/SKILL.md`, 'utf8'))
-ok(gParsed.name === 'reliability-guidelines', 'the plugin parses the guidelines skill name', gParsed.name)
-const gEn = mod.parseSkillFrontmatter(readFileSync(`${gDir}/en/SKILL.md`, 'utf8'))
-ok(gEn.name === 'reliability-guidelines', 'the English copy declares the same skill name', gEn.name)
 
 report('all bundle manifest checks passed') 

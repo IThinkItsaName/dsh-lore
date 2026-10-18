@@ -108,6 +108,9 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 5. **验证要有可核对的内容**（数字 / 百分比 / 命令 / 引用输出 / 表格 / 对照）与结果；
    没做的必须写明"未覆盖 + 原因"。光说"完成了""应该没问题"不算验证，**只写设置不写结果也不算**。
 6. **经验必有来源**：lessons 每条带 `（wl/NNNN）`（日期式容器写文件名），来源不存在就不许写。
+   **复发过或代价极大**的写成卡式条目（主行 + 缩进子条目 `触发 / 验证 / 别再来`）；
+   触发词写任务里会出现的**现象词**，不写学科名。`check` 只认缩进子条目这一种形制，
+   旧条目里的「触发条件」不会被命中（见 `conventions.md`「经验层」）。
 7. **台账最多一个 `## 当前状态`**：有就校验新鲜度，**没有不算错**（状态也可以写在每篇开头）；
    换新块时旧块整段剪到 `work_log/STATE-HISTORY.md`。
 8. **编号式容器：编号永不复用、归档不改号**；归档只 move + 改链接。日期式容器没有编号，这条不适用。
@@ -160,10 +163,13 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
 2. 没有则按 `references/templates.md` 落盘（容器名默认 `work_log/`，可用 `--work-log NAME` 改）：
    - `work_log/README.md`（台账模板）
    - `work_log/lessons/README.md` + `work_log/lessons/01-<topic>.md`（先建 3–5 个与本项目相关的分册）
+   - `work_log/_inbox.md`（踩坑收件箱；模板见 `templates.md` §9）
    - `work_log/STATE-HISTORY.md`（`ARCHIVE.md` **不用建**：归档明细归
     `work_log/archive/README.md`，那个文件在第一次归档时由 `archive --stage` 自动建）
    - 有日志/运行产物的项目同时建 `work_log/logs/<来源>/`（见下「日志归位」）
    - 在项目根 `README.md` 加一行指向 `work_log/README.md`
+   - **问一次**：要不要把「经验层」钩子写进本项目的 `AGENTS.md` / `CLAUDE.md`（模板见
+    `templates.md` §10）。**不自动写** —— 不同宿主认的指令文件不同，得到答复再落盘。
    - **可选**：`work_log/.config.json` —— 项目配置文件，写默认档位与旧记录清单。
      不想写就不写：缺它等于全部用内置默认。要写就用 `config --write`，别手抄。
 3. 跑一次 `journal.py check --strict` 确认骨架自洽（此时 0 篇记录也应通过）。
@@ -196,7 +202,10 @@ description: 为长期项目建立并维护工作记录体系（过程记录 + �
    `核对 / 验证`、`交付物与指纹`、`环境`、`阻塞 / 等待`、`精细度`），并让日期不早于最新一篇记录。
    台账里**没有**状态块不算错——状态也可以写在每篇开头的引用块里（`> 状态：… ｜ 工具：… ｜ 产物：…`）。
    字段名按台账写法原样保留 —— `--set "核对=…"` 会落到 `核对 / 验证` 上（短名可识别），不要手改成新字段。
-4. **经验**：本轮若有可复用结论，写进 `work_log/lessons/` 对应分册并回填来源（编号式 `（wl/NNNN）`、
+4. **经验**：在说出「完成 / 搞定了 / 修好了」**之前**，先看 `work_log/_inbox.md` ——
+   够格的（复发过的 / 代价大的）整理进 `work_log/lessons/` 对应分册并删掉那一行，小意外留着下次；
+   卡式条目用 `lesson add --trigger … --verify … --avoid …` 生成。
+   本轮若有可复用结论而 inbox 没记，直接写也照旧：写进分册并回填来源（编号式 `（wl/NNNN）`、
    日期式写文件名）。
 5. **校验**：`python scripts/journal.py check --strict <项目根>`。
    旧记录不会因此变红——见下「渐进原则」。
@@ -299,6 +308,9 @@ python scripts/journal.py config --set mode=digest   # 改一项，保留其余�
 python scripts/journal.py todo --add "…" | --done "子串" | --drop-done
 python scripts/journal.py index sync --stage "B. 迭代"            # 补漏掉的索引行
 python scripts/journal.py lesson add --volume 04-verification-and-safety.md --source 152 --text "…"
+python scripts/journal.py lesson add --volume 01-host.md --source 152 --text "…" \
+        --trigger "改完 lib/client.js，邻居界面丢样式" --verify "querySelectorAll('style:not([data-plugin])').length === 0" \
+        --avoid "把标记写成 data-plugin-css（不在宿主判据里）"   # 卡式条目：触发 / 验证 / 别再来
 python scripts/journal.py append 42 --section 更正 --text "…" --bullet
 
 # —— 整理与清理：只搬不删，全部支持 --dry-run ——
@@ -346,7 +358,7 @@ python scripts/journal.py promote suggest                                   # �
 
 **本技能的核心是约定，脚本只是加速器。** 环境里没有 Python 也能完整使用，只是费手：
 
-1. **建结构**：按 [references/templates.md](references/templates.md) 手工落这几个文件：`work_log/README.md`、`work_log/STATE-HISTORY.md`、`work_log/lessons/README.md`。（已有旧体系就沿用旧名，见「目录布局」的回退顺序。`work_log/archive/README.md` 要等第一次归档才需要，见第 5 条。）
+1. **建结构**：按 [references/templates.md](references/templates.md) 手工落这几个文件：`work_log/README.md`、`work_log/STATE-HISTORY.md`、`work_log/lessons/README.md`、`work_log/_inbox.md`。（已有旧体系就沿用旧名，见「目录布局」的回退顺序。`work_log/archive/README.md` 要等第一次归档才需要，见第 5 条。）
    项目配置文件 `work_log/.config.json` 也是手写一个 JSON 就行；**不写就等于全部内置默认**。
 2. **写记录**：按记录模板写入口字段，加一个验证类小节；标题按容器选定的一种约定写
    （编号式 `# NNN · 标题` / 日期式 `# YYYY-MM-DD 标题`）。
@@ -388,6 +400,8 @@ python scripts/journal.py promote suggest                                   # �
 | 篇号当迭代号引用 | 引用歧义（`变更集` 与篇号**从不对应**，实测 0 例相等） | 迭代号只写迭代字段，回指一律 `wl/NNNN` |
 | README 与 SUMMARY 各写一份数字 | 改一处漏一处 | 复盘并入 `work_log/lessons/99-retrospectives.md`，数字只留一份 |
 | lessons 写结论不带来源 | 追不回证据、无法证伪 | 每条带 `（wl/NNNN）`（日期式写文件名），`check` 校验来源存在 |
+| 把「收尾补写经验」当唯一采集点 | 实测两次都没自发；坑的细节已经忘了 | 踩坑**当场**往 `work_log/_inbox.md` 记一行，收尾整理；说「完成」之前先看 inbox |
+| 卡式条目写成「触发 / 验证」只写一半 | 有触发没验证 = 下次照样不知道成了没有 | `check` 只认缩进子条目且要求成对；`--strict` 下直接判红 |
 | 直接抹掉被推翻的旧结论 | 丢失演进与纠错价值 | 追加 `## 更正` 段 |
 | 让新规格一上来就把老记录全判红 | 用户面对一片红，然后学会忽略这个工具 | 渐进原则：旧记录只报 info（`LEGACY.md` / `--legacy`）；新记录才判 error |
 | 把软件术语当成通用要求（如"验证必须有命令"） | 研究/写作类项目无法满足，规则被架空 | 验证口径是"可核对的内容"：数字、百分比、命令、引用输出、表格都算 |

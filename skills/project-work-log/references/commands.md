@@ -129,8 +129,8 @@ python scripts/journal.py snapshot --entries 20 --out SNAP.md
 | `new` | 生成下一篇记录，可选自动进索引 | `new --title "…" --iter 154 --insert --stage "A. 起步"` |
 | `mode` | **记录精细度**（一篇 = 什么）：查看 / 切换档位 | `mode` / `mode --set digest --why "阶段收口"` |
 | `config` | **项目配置文件**（`<容器>/.config.json`）：看生效值与来源 / 写出 / 改一项 | `config` / `config --write` / `config --set mode=digest` |
-| `status` | 当前状态块：查看 / 改字段 / 改日期 / 归档旧块 | `status --set "核对=抽样 30 条全部通过" --date` / `status --roll` |
-| `todo` | 滚动待办：加 / 勾选 / 清理已完成 | `todo --add "…"` / `todo --done "子串"` / `todo --drop-done` |
+| `status` | 当前状态块：查看 / 改字段 / 改日期 / 归档旧块（**改值时连带清掉该字段的旧续行**） | `status --set "核对=抽样 30 条全部通过" --date` / `status --roll` |
+| `todo` | 滚动待办：加 / 勾选 / 清理已完成（**删勾选行时连带缩进续行；有未完成子项的已完成父项整条保留并 WARN**） | `todo --add "…"` / `todo --done "子串"` / `todo --drop-done` |
 | `index sync` | 把漏进索引的根目录记录补成表行（方面取自「结论：」，可用 `--aspect` 覆盖） | `index sync --stage "B. 迭代" --aspect 验证` |
 | `lesson add` | 往经验分册追加一条并**校验来源存在**；可选卡式三字段 | `lesson add --volume 02-verification.md --source 53 --topic 方法论 --text "…"` |
 | `append` | 给某篇追加小节（更正 / 遗留更新） | `append 42 --section 更正 --text "…" --bullet` |

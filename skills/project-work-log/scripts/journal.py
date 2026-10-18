@@ -3480,9 +3480,9 @@ def cmd_status(args: argparse.Namespace) -> int:
             lines.insert(end, f"- {key}：{val}{nl_of(text)}")
             span = (span[0], span[1], span[2] + 1)
             changed.append(key + "(新增)")
-        # **第二遍：清掉被改字段的续行**（2026-10-18 修）。字段的值可以写成多行（缩进续行），
-        # 而上面只替换了首行 —— 旧值的尾巴会留在新值下面，块里同时印着新旧两段状态。
-        # 判据：被 touched 的字段行之后、紧跟着的缩进行（且不是新的 `- 字段`）都算续行。
+        # **第二遍：清掉被改字段的续行**（2026-10-18 修）。字段的值可以写成多行（缩进续行，
+        # 包括缩进的列表），而上面只替换了首行 —— 旧值的尾巴会留在新值下面。
+        # 边界只认**顶格**的 `- `：缩进的 `- ` 是字段内容，不是下一个字段（复核 low）。
         if touched:
             i = span[1]
             while i < span[2]:
@@ -3491,7 +3491,7 @@ def cmd_status(args: argparse.Namespace) -> int:
                     j = i + 1
                     while (j < span[2] and lines[j].strip()
                            and lines[j][0] in " \t"
-                           and not re.match(r"^\s*-\s", lines[j])):
+                           and not re.match(r"^-\s", lines[j])):
                         j += 1
                     if j > i + 1:
                         removed = j - i - 1
@@ -3505,7 +3505,8 @@ def cmd_status(args: argparse.Namespace) -> int:
             if not changed and not args.date:
                 print("WARN: 没有任何字段会被更新（--set 的 key 都对不上，或没写成 key=value）；真跑也是这个结果")
                 return 1
-            print("[dry-run] 将更新：" + (", ".join(changed) if changed else "（只改了日期）"))
+            print("[dry-run] 将更新（并清掉被改字段的旧续行）："
+                  + (", ".join(changed) if changed else "（只改了日期）"))
             return 0
         if not changed and not args.date:
             # 空手而归就别改文件、别报成功（2026-10-15 修）：原实现在这里照样 write_raw，
@@ -3809,26 +3810,38 @@ def cmd_todo(args: argparse.Namespace) -> int:
         return 1
 
     if args.drop_done:
-        # 删勾选行时**必须连带缩进续行**（2026-10-18 修）：待办可以写成多行，原实现只删
-        # `- [x]` 那行，续行留成孤儿（实测漏在待办末尾四行，没有任何标记）。
+        # 删勾选行时**连带缩进续行**（2026-10-18 修），但**绝不能连未完成的子待办一起删**：
+        # 父项勾了、子项还没做时整条保留并 WARN（复核 medium 实测：D1/D2 被静默删掉）。
         out: list[str] = []
         removed = 0
+        kept: list[str] = []
         i = 0
         while i < len(lines):
             line = lines[i]
             if span[1] <= i < span[2] and re.match(r"^\s*-\s*\[[xX]\]", line):
-                removed += 1
-                i += 1
-                while i < len(lines) and lines[i].strip() and lines[i][0] in " \t":
-                    i += 1
+                j = i + 1
+                while j < len(lines) and lines[j].strip() and lines[j][0] in " \t":
+                    j += 1
+                block = lines[i:j]
+                pending = [b for b in block[1:] if re.match(r"^\s*-\s*\[ \]", b)]
+                if pending:
+                    out.extend(block)
+                    kept.append(f"第 {i + 1} 行（{len(pending)} 条未完成子项）")
+                else:
+                    removed += 1
+                i = j
                 continue
             out.append(line)
             i += 1
         if args.dry_run:
             print(f"[dry-run] 将删除 {removed} 条已完成待办（含续行）")
+            if kept:
+                print("[dry-run] 保留（有未完成子项）：" + "、".join(kept))
             return 0
         write_raw(index, "".join(out))
         print(f"已删除 {removed} 条已完成待办（含续行）")
+        if kept:
+            print("WARN: 以下已完成待办的子项还没做完，整条保留：" + "、".join(kept))
         return 0
 
     open_items, done_items = todo_items(journal)

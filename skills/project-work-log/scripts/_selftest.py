@@ -1109,6 +1109,16 @@ def appendix_phase(parent: str) -> None:
     ok("- 迭代：1" in txt and txt.index("- 迭代：1") > txt.index("- 阶段："),
        "the next field survives the continuation cleanup and keeps its order", txt)
 
+    # 字段值是**缩进列表**时也要清（缩进的 `- ` 是内容，不是下一个字段；2026-10-18 复核 low）
+    lst = make_fixture("appendix-status-list",
+                       skeleton(status="- 产出：旧产出坐标\n  - 旧产出子项 A\n  - 旧产出子项 B\n- 迭代：1"))
+    r = run(lst, "status", "--set", "产出=新产出坐标")
+    txt = ledger_text(lst)
+    ok("旧产出子项" not in txt,
+       "status --set clears an indented list value too (a `  - ` line is content, not a field)", txt)
+    ok("- 迭代：1" in txt and "- 产出：新产出坐标" in txt,
+       "the list cleanup leaves the field value and the next field intact", txt)
+
     noop = make_fixture("appendix-noop-status", skeleton(status="- 阶段：v1"))
     before = ledger_text(noop)
     r = run(noop, "status", "--set", "阶段")
@@ -1121,10 +1131,11 @@ def appendix_phase(parent: str) -> None:
     # ① 的后半：dry-run 与真跑**同判**（第二轮审查 §附录 (a) 的小瑕疵）--------
     now = ledger_text(noop)
     r = run(noop, "status", "--dry-run", "--set", "阶段")
-    ok(r.returncode == 1 and "没有任何字段会被更新" in r.stdout and "将更新：" not in r.stdout,
+    ok(r.returncode == 1 and "没有任何字段会被更新" in r.stdout and "将更新" not in r.stdout,
        "status --dry-run 空手而归：也退 1，不再打印一句空的「将更新」", r.stdout)
     r = run(noop, "status", "--dry-run", "--set", "阶段=v3")
-    ok(r.returncode == 0 and "[dry-run] 将更新：阶段" in r.stdout and ledger_text(noop) == now,
+    ok(r.returncode == 0 and "[dry-run] 将更新（并清掉被改字段的旧续行）：阶段" in r.stdout
+       and ledger_text(noop) == now,
        "status --dry-run 真会改的那种照旧退 0、并且不写盘", r.stdout)
 
     # ② `--done` 的空串 ----------------------------------------------------
@@ -5024,6 +5035,49 @@ def card_phase(tmp: str) -> None:
        r15.stderr[-300:])
 
 
+def todo_phase(parent: str) -> None:
+    """todo 增删：多行待办连续行一起删；已完成父项下有未完成子项时整条保留。
+
+    为什么单独一相：这几条断言原来内联在 `main()` 里，变异驱动跑不到（起飞前检查会拒绝
+    只在 `main()` 里出现的期望字样）。挪进相里之后，「删续行」与「不连坐未完成子项」
+    两条才有资格进变异矩阵。
+    """
+    proj = os.path.join(parent, "todofix")
+    os.makedirs(os.path.join(proj, CONTAINER))
+    write(os.path.join(proj, CONTAINER, "README.md"), fmt_ledger([], status="2026-09-20"))
+    idx_path = os.path.join(proj, CONTAINER, "README.md")
+
+    run(proj, "todo", "--add", "ship the thing")
+    r = run(proj, "todo", "--done", "ship the thing")
+    ok(r.returncode == 0, "todo --done exits 0", r.stdout + r.stderr)
+    ok("- [x] ship the thing" in read(idx_path), "todo marked done")
+    r = run(proj, "todo", "--drop-done")
+    ok("- [x] ship the thing" not in read(idx_path), "todo --drop-done works")
+
+    # 多行待办：删勾选行时必须**连带缩进续行**（否则续行留下变孤儿，2026-10-18 实测）
+    run(proj, "todo", "--add", "multi line todo")
+    write(idx_path, read(idx_path).replace(
+        "- [ ] multi line todo",
+        "- [ ] multi line todo\n  continuation line of the todo\n  another continuation"))
+    run(proj, "todo", "--done", "multi line todo")
+    r = run(proj, "todo", "--drop-done")
+    ok("continuation line of the todo" not in read(idx_path),
+       "todo --drop-done removes the indented continuation lines too", r.stdout)
+
+    # 未完成的子待办不能被父项连坐删除（2026-10-18 复核 medium，实测会静默丢数据）
+    run(proj, "todo", "--add", "parent task")
+    write(idx_path, read(idx_path).replace(
+        "- [ ] parent task",
+        "- [ ] parent task\n  - [ ] child one\n  - [ ] child two"))
+    run(proj, "todo", "--done", "parent task")
+    r = run(proj, "todo", "--drop-done")
+    txt = read(idx_path)
+    ok("- [x] parent task" in txt and "child one" in txt and "child two" in txt,
+       "a completed parent with open sub-todos is kept wholesale (no data loss)", txt)
+    ok("WARN" in r.stdout and "未完成子项" in r.stdout,
+       "and the refusal is reported, not silent", r.stdout)
+
+
 def lesson_phase(parent: str) -> None:
     """卡式经验条目：三个 CLI 字段、2 空格缩进、dry-run 一致、CRLF，以及 `check` 的配对形制。
 
@@ -5325,24 +5379,7 @@ def main() -> int:
         ok("- 环境：py3.14" in sidx.splitlines(), "new field starts on its own line", sidx)
         ok("：py3.14" not in sidx.replace("- 环境：py3.14", ""), "new field did not glue onto the previous line", sidx)
 
-        # todo -------------------------------------------------------------
-        run(tmp, "todo", "--add", "ship the thing")
-        r = run(tmp, "todo", "--done", "ship the thing")
-        ok(r.returncode == 0, "todo --done exits 0", r.stdout + r.stderr)
-        idx = read(os.path.join(tmp, CONTAINER, "README.md"))
-        ok("- [x] ship the thing" in idx, "todo marked done")
-        r = run(tmp, "todo", "--drop-done")
-        ok("- [x] ship the thing" not in read(os.path.join(tmp, CONTAINER, "README.md")), "todo --drop-done works")
-        # 多行待办：删勾选行时必须**连带缩进续行**（否则续行留下变孤儿，2026-10-18 实测）
-        run(tmp, "todo", "--add", "multi line todo")
-        idx_path = os.path.join(tmp, CONTAINER, "README.md")
-        write(idx_path, read(idx_path).replace(
-            "- [ ] multi line todo",
-            "- [ ] multi line todo\n  continuation line of the todo\n  another continuation"))
-        run(tmp, "todo", "--done", "multi line todo")
-        r = run(tmp, "todo", "--drop-done")
-        ok("continuation line of the todo" not in read(idx_path),
-           "todo --drop-done removes the indented continuation lines too", r.stdout)
+        # todo 的增删断言已挪进 `todo_phase`（内联在 main() 里驱动跑不到）-------
 
         # append -----------------------------------------------------------
         r = run(tmp, "append", "2", "--section", "更正", "--text", "2026-09-14: changed mind", "--bullet")
@@ -5427,6 +5464,9 @@ def main() -> int:
 
         # 卡式经验条目（三字段 / 缩进 / dry-run / CRLF / check 配对）------------
         lesson_phase(tmp)
+
+        # 待办增删（多行待办 / 未完成子项不被连坐）----------------------------
+        todo_phase(tmp)
 
         # 目标文件（<容器>/目标.md，可选）------------------------------------
         goals_phase(tmp)

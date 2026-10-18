@@ -73,6 +73,8 @@ PHASES: dict[str, str] = {
     "numbering": "numbering_phase",
     "config": "config_phase",
     "lesson": "lesson_phase",
+    "todo": "todo_phase",
+    "appendix": "appendix_phase",
     "gates": "gate_phase",
     "links": "link_phase",
     "mode": "mode_phase",
@@ -484,6 +486,18 @@ MUTATIONS: list[tuple] = [
      '        if avoid:\n            out.append("# 别再来")\n            out.append(avoid)\n            out.append("")',
      '        if False:\n            out.append("# 别再来")\n            out.append(avoid)\n            out.append("")',
      "the lesson's 别再来 is projected into its own section", CARD_SRC),
+
+    # ── todo / appendix：多行续行的清理（2026-10-18 复核）────────────────────
+    ("todo", "todo --drop-done 不再清缩进续行（留下孤儿）",
+     '                while j < len(lines) and lines[j].strip() and lines[j][0] in " \\t":',
+     '                while False:',
+     "todo --drop-done removes the indented continuation lines too"),
+    ("todo", "已完成父项下有未完成子项也照样删（数据静默丢失）",
+     "                if pending:", "                if False:",
+     "a completed parent with open sub-todos is kept wholesale (no data loss)"),
+    ("appendix", "status --set 不再清旧续行（多行值留下尾巴）",
+     "        if touched:", "        if False:",
+     "status --set drops the old continuation lines (no stale tail under the new value)"),
 
     # ── gates：两道门禁（`check --lint` 合并 / 默认不合并 / 提示 / 合并的两处易错点）──
     # 这一相的核心不变量：**默认判决不变，合并只在显式要求时发生**，且合并后

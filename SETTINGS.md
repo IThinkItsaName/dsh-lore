@@ -19,7 +19,7 @@
 
 ## 配置存在哪：profile patch 是**正式位置**（2026-09-29 起）
 
-插件导出 `Config`（**13 个**字段，全部 `.volatile()`），所以设置归**宿主**管：
+插件导出 `Config`（**14 个**字段，全部 `.volatile()`），所以设置归**宿主**管：
 
 | 宿主 | 存哪 | 谁写 |
 |---|---|---|
@@ -153,7 +153,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 
 ## 已知配置键
 
-`Config` 声明了 **13 个**字段，全部 `.volatile()`。卡片上有控件的是其中 **12 个**：
+`Config` 声明了 **14 个**字段，全部 `.volatile()`。卡片上有控件的是其中 **13 个**：
 `skillFile` 只能由行配置给（卡片没有它的控件，所以任何界面都不会把它改掉或删掉）。
 
 | 键 | 类型 | 默认 | 卡片上 | 说明 | 改完生效 |
@@ -171,9 +171,10 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 | `memoryInjectIndex` | boolean | `true` | 「记忆」 | 是否把索引段注入提示词。**每次装配现读**（2026-09-30 之前它在挂载期读，界面却写着"即时生效"）。 | 即时 |
 | `memoryPersonalSearchable` | boolean | `false` | 「记忆」 | 个人目录是否可被检索（用时现读）。 | 即时 |
 | `memoryDir` | string | 空 | 「记忆」（最后一栏） | 全局记忆根。空 = `<用户主目录>/dsh-lore-memory`；**相对路径按用户主目录解析**（上面两条路径按包根算，不一样）。非空时压过 `$DSH_WORKLOG_MEMORY`。装载时**与每次配置变更时**都记进设置文件，`journal.py` 才读得到同一个根（见 `lib/index.js` 的 `mirrorMemoryDir`）。 | 即时 |
+| `sessionsCrossWorkspace` | boolean | `true` | 「高级」 | 是否允许 `sessions` 的 `scope:"all"`（跨工作区**只读**列标题）。关掉后该 scope 被明确拒绝，默认 scope 不受影响；**发送仍只到工作区粒度**。用时现读。 | 即时 |
 
 > **只有"要不要注册"这件事需要重启，而 2026-10-14 起只剩两条**：`memoryEnabled`
-> （两段注入注册不注册是装载期事实）与 `verbose`（诊断在装载时装配）。其余 **11 条都是用到时现读** ——
+> （两段注入注册不注册是装载期事实）与 `verbose`（诊断在装载时装配）。其余 **12 条都是用到时现读** ——
 > 拨完下一次工具调用 / 下一次装配就是新行为，**不需要重启**。
 
 ## 项目侧默认值：不提供控件
@@ -212,7 +213,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 宿主给每个带 `.volatile()` 字段的插件投影一份"设置命名空间"，id 是
 `entry.options.id` —— 那是**部署相关**的：本机是 `include:dsh-lore`，换个挂法就变。
 所以卡片不写死 id，而是**按字段集认领**：看这一行投影出来的 **`value`**（那份生效配置）
-是否同时带齐我们那 13 个名字（`lib/client.js` 的 `FORM_FIELDS`）。
+是否同时带齐我们那 14 个名字（`lib/client.js` 的 `FORM_FIELDS`）。
 
 > **为什么是 `value` 而不是 `schema`（2026-09-29 在真实宿主上量出来的）**：宿主发的 `schema`
 > 是 schemastery 的**重水合信封** `{uid, refs}`，字段名躺在 `refs[<uid>].dict` 里 ——
@@ -257,7 +258,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 |---|---|
 | **技能** | `guidelinesEnabled`（开关）、`guidelinesLanguage`（中文 / English 分段控件），以及收在「路径」折叠区里的 `skillDir` 与 `guidelinesDir` |
 | **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable` 三个开关，加最后一栏路径框 `memoryDir`（「记忆存放位置」）；再收一个「当前状态」折叠区（只读，见下） |
-| **高级** | `verbose`、`modelInvocable`、`userInvocable` —— 三个开关 |
+| **高级** | `verbose`、`modelInvocable`、`userInvocable`、`sessionsCrossWorkspace` —— 四个开关 |
 
 「路径」与「当前状态」用 `DisclosureRow`（默认收起）：前者是装载参数（不常改），
 后者不属于这一页的语义但很有用（"我到底登记没登记"）。收起时内容**不在渲染树里**。
@@ -298,14 +299,14 @@ GET /plugins/dsh-lore/status.json   → { source, path, memory, error }
 | `Config` 被宿主认成 `schema`（字段带 `x-cordis.volatile: true`） | **已验证**（活体 `Config.listConfigs{name:"dsh-lore"}`） |
 | 值能被官方通道写进 profile patch 并读回 | **已验证**（`apply()` 的选项、卡片显示的值同源） |
 | 只改 `.volatile()` 字段时宿主**不重挂载** | **已验证**：Loader 把新值提交进运行中的引用并发一次 `loader/volatile-update`（`cordis/README.md` §Volatile configuration；官方 cookbook 的口径是"在操作开始时读 `.get()`"） |
-| 我们的选项**改完即时生效** | **11 条是，2 条不是**（见下表） |
+| 我们的选项**改完即时生效** | **12 条是，2 条不是**（见下表） |
 
 **两条读法要分清**（2026-10-14 收敛后的口径）：
 
 | 类 | 键 | 改完 |
 |---|---|---|
 | 装载期事实（"注册不注册"） | `memoryEnabled`、`verbose` | **需重启 DSH** |
-| 用时现读 | 其余 **11 条**：技能那 8 项 + `memoryInjectIndex`、`memoryPersonalSearchable`、`memoryDir` | 即时生效 |
+| 用时现读 | 其余 **12 条**：技能那 8 项 + `memoryInjectIndex`、`memoryPersonalSearchable`、`memoryDir`、`sessionsCrossWorkspace` | 即时生效 |
 
 技能那 8 项的落地方式：provider **常驻注册**，开关 / 目录 / 语言在每次 `list()`/`get()` 里现读
 （`lib/index.js` 的 `live()` 与 `livePaths()`），关掉的技能报**空目录**；调用许可在投影候选时现读。

@@ -381,12 +381,20 @@ promote suggest [--all]
   侦察面因此从"默认不列"变成"默认不列、显式一步才列，且始终带归属"；
   这是用户在自己的多工作区机器上明确要求的能力。
   设置页的「允许跨工作区查看会话」（高级页，默认开）是它的开关：关掉后 `all` 被拒绝。
+  跨区行里，标题按**不可信输入**处理（生成文本，可能带换行/伪行；输出前压成单行，footer 标
+  `untrusted input`）；id 对 `send.session` 无效（只收本区），对宿主会话工具也**不能越权**——
+  `session_search` / `session_event_search` 的 `authorizeTarget` 按 caller `cwd` 拒绝非本区 id
+  （代码核过，真机未复验）。越权面由宿主工具那道 cwd 授权挡，不靠"不输出 id"。
 
 **与会话搜索的关系（2026-10-18 定）**：实验性会话搜索（`session_search` / `session_event_search`
 等 5 个只读工具）按**内容/事件**检索、始终限制在 caller `cwd`；`sessions` 只列**标题/id**，供
 `send.session` 选目标。两者是分层关系（实验包自带 isolated `sessionQuery` 与 `:memory:` 索引，
 与宿主的 base `sessionQuery` 互不影响），**不合并、也不互斥**；`sessions` 的输出末尾用一句
 路由把"按内容找"指向 `session_search`。
+
+**扫描上限（2026-10-18）**：`sessions` 的扫描有上限——`workspace` 取前 30 条、`all` 取前 60 条
+候选，最后都只返回 **20 行**；落在上限之外的匹配不会出现，footer 不重复这个数字（免得每次输出
+都长）。要更全的结果，用 `session_search` 的游标/分页语义，而不是把这里当搜索引擎。
 
 **已归档的会话不列**（2026-10-17 补）：宿主的 `sessionController.list()` 返回的是完整语料
 （live + persisted），归档集合在 `workspaceRegistry.archivedSessionIds` 里、由界面那侧隐藏；

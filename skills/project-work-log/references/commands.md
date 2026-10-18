@@ -143,7 +143,7 @@ python scripts/journal.py snapshot --entries 20 --out SNAP.md
   引用会**始终**补上——即使正文里已经提到别的 `wl/NNNN`。
 - `lesson add` 的三个卡式参数都是可选的：`--trigger`（触发条件，写任务里会出现的现象词）、
   `--verify`（验证方式）、`--avoid`（走不通的路 + 原因，**可重复**，写入时用「；」连接）。
-  生成的是"主行 + 缩进 2 空格的三条子条目"；不传任何一个时输出与旧版逐字节一致。
+  生成的是"主行 + 缩进子条目（2 空格或 1 个 tab）"；不传任何一个时输出与旧版逐字节一致。
   **空白值与多行值在落盘前拒绝**（多行会写坏缩进形制）；`--avoid` 可以单独给。
   `check` **按条目**校验触发与验证成对，只写一个报 WARN（`--strict` 判红），并给出条目起始行号：
   `lesson add --volume 01-host.md --source 152 --text "……" --trigger "改完 lib/client.js，邻居界面丢样式" --verify "无主 style 计数为 0" --avoid "写成 data-plugin-css（不在宿主判据里）"`

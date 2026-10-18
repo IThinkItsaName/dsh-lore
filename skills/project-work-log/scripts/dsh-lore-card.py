@@ -45,7 +45,9 @@ DUP_THRESHOLD = 0.72
 _ID_SAFE = re.compile(r"[^a-z0-9-]+")
 # lessons 条目：`- **标题**：正文…` / `- **标题**：正文` 之后可有 2 空格缩进的子项
 # （有些条目写成 `- **id**\n  applies-to: …` 的字段块，不存在于 lessons 正文，留作兼容）
-LESSON_RE = re.compile(r"^- \*\*(?P<title>[^*]+)\*\*[：:]\s*(?P<body>.*)$")
+LESSON_RE = re.compile(r"^(?:[-*+]|\d{1,9}[.)]) \*\*(?P<title>[^*]+)\*\*[：:]\s*(?P<body>.*)$")
+# 围栏代码块：里面的示例不是条目（与 `journal.py` 的 `card_shape_issues` 同一套规则）。
+FENCE_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
 # 卡式条目的三个子字段（`0127` 起）。缩进 ≥2、字段名后接全/半角冒号。
 # 字段行与它的续行都**不进 body** —— 否则 full 卡的「执行」会把
 # `… - 触发：… - 验证：… - 别再来：…` 连成一行（2026-10-18 审查 M3）。
@@ -328,7 +330,20 @@ def parse_lessons(path: str) -> list[dict]:
     所以 id 由「分册号 + 标题哈希」推出：同一条复现得到同一个 id，不同条不会撞。
     """
     text = read(path)
-    lines = text.splitlines()
+    # 围栏代码块整段丢掉：里面是**示例**，不是条目（否则示例会被投影成真卡、进 INDEX）。
+    # 与 `journal.py` 的 `card_shape_issues` 同一套规则；两个消费者的判据不能再分叉。
+    lines: list[str] = []
+    fence: str | None = None
+    for raw in text.splitlines():
+        fm = FENCE_RE.match(raw)
+        if fence is None and fm:
+            fence = fm.group(1)[0]
+            continue
+        if fence is not None:
+            if fm and fm.group(1)[0] == fence:
+                fence = None
+            continue
+        lines.append(raw)
     volume = os.path.basename(path)
     out: list[dict] = []
     for i, ln in enumerate(lines):

@@ -4557,9 +4557,17 @@ def card_phase(tmp: str) -> None:
           "  - 验证：querySelectorAll('style:not([data-plugin])').length === 0\n"
           "  - 别再来：把标记写成 data-plugin-css（不在宿主判据里）\n"
           "- **薄卡也有内容**：短。（`wl/0001`）\n"
-          "  - 触发：薄卡触发\n"
-          "  - 验证：薄卡验证\n"
-          "  - 别再来：薄卡反面\n")
+          "  - 触发：薄卡的触发条件刻意写长一点，确保断言的余量明显而不是一个字符\n"
+          "  - 验证：薄卡的验证方式也写长一点，确保体量闸不是靠一个字符过关\n"
+          "  - 别再来：薄卡的反面清单同样写长一点，避免断言在门槛附近翻面\n"
+          "```markdown\n"
+          "- **围栏里的示例条目**：这段在围栏代码块里，只是示例，不该被投影成卡。（`wl/0001`；"
+          + CARD_QUOTE + "）\n"
+          "  - 触发：示例触发\n"
+          "  - 验证：示例验证\n"
+          "```\n"
+          "* **星号条目也要投影**：星号写的条目与短横线写法同义，检查认它、投影也必须认它。"
+          "（`wl/0001`；" + CARD_QUOTE + "）\n")
 
     tool = os.path.join(HERE, "dsh-lore-card.py")
     ok(os.path.isfile(tool), "dsh-lore-card.py ships next to journal.py", tool)
@@ -4654,6 +4662,11 @@ def card_phase(tmp: str) -> None:
        f"{len(fulls)} full 卡里没找到薄卡靶子")
     ok("触发：" not in card_sec.get("执行", "") and "验证：" not in card_sec.get("执行", ""),
        "the card fields no longer leak into the 执行 section", card_sec.get("执行", "")[:200])
+    all_cards = "\n".join(read(os.path.join(cards, fn)) for fn in fulls)
+    ok("围栏里的示例条目" not in all_cards,
+       "a fenced example lesson is not projected into a card", all_cards[:100])
+    ok("星号条目也要投影" in all_cards,
+       "a star-bullet lesson is projected too (same marker set as check)", all_cards[:100])
 
     body = read(os.path.join(cards, ptrs[0])) if ptrs else ""
     ok("domain:selftest-project" in body and "condition_space" in body,

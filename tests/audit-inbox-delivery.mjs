@@ -221,6 +221,25 @@ if (!hasPython) {
   ok(!textSent.text.includes('缓存键要带上环境维度'),
     'the tool answer does not echo the body back through the prompt', textSent.text)
 
+  // (a2) `from-session`: **只有同工作区直投**才写发件会话 id。跨工作区的信只到工作区粒度，
+  //      把发件会话带过去等于泄露一截对方的侦察面（2026-10-18 复核 low）。
+  ok(first[0]?.meta['from-session'] === undefined,
+    'a cross-workspace letter does not carry the sender conversation id',
+    JSON.stringify(first[0]?.meta))
+  const directSent = await tool.execute({
+    operation: 'send', workspace: WS_A, to: WS_A, text: '直投：来源会话要写进信头。',
+  })
+  ok(directSent.ok === true, 'a same-workspace direct letter is written', directSent.text)
+  const dropDir = join(WS_A, '.lore-inbox')
+  const dropNames = existsSync(dropDir) ? readdirSync(dropDir).filter((name) => name.endsWith('.md')) : []
+  const directText = dropNames
+    .map((name) => readFileSync(join(dropDir, name), 'utf8'))
+    .find((text) => text.includes('直投：来源会话要写进信头。')) ?? ''
+  const directMeta = mod.inboxSplit(directText).meta
+  ok(directMeta['from-session'] === 'session-this',
+    'a same-workspace direct letter carries the sender conversation id',
+    JSON.stringify(directMeta))
+
   // (b) replying: `thread` is the id of the message being answered.
   const reply = await tool.execute({
     operation: 'send', workspace: WS_A, text: '回信：已经加上了。', thread: first[0].meta.id,

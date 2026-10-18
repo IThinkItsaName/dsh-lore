@@ -2703,7 +2703,7 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
                 for start, have, miss in card_shape_issues(text):
                     rep.add("WARN", where,
                             f"第 {start} 行起的条目有 `{have}：` 却缺 `{miss}：` 子条目"
-                            f"（两者必须成对，缩进 2 空格）")
+                            f"（两者必须成对，缩进 2 空格或 1 个 tab）")
     return rep
 
 

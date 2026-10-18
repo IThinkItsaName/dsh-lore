@@ -217,6 +217,11 @@ def link_targets(text: str) -> list[str]:
     return [t for t in (link_target(m) for m in LINK_RE.finditer(text)) if t]
 
 CITE_RE = re.compile(r"wl/(\d+)")
+# 卡式经验条目的形制：**缩进 ≥2 空格**的「触发：」「验证：」子条目。
+# 只认这一种写法 —— 旧条目里的「- **触发条件…**」不命中，避免把老记录判红。
+# 用 `[ \t]` 而不是 `\s`：`\s` 会把换行也算进去，`^\s{2,}` 能跨行匹配到别处的缩进。
+CARD_TRIGGER_RE = re.compile(r"^[ \t]{2,}- 触发[ \t]*[：:]", re.M)
+CARD_VERIFY_RE = re.compile(r"^[ \t]{2,}- 验证[ \t]*[：:]", re.M)
 # 状态块标题后面的日期括号：全角 `（…）` 与半角 `(…)` 都要认（英文台账用半角）。
 DATE_PAREN_RE = re.compile(r"[（(][^）)\r\n]*[）)]")
 # 模板里的日期占位符：识别它是为了"刚初始化"和"真的没写日期"能分开。
@@ -2633,6 +2638,14 @@ def check(root: str, journal_arg: str | None, lessons_arg: str | None, strict: b
                 for c in cites:
                     if int(c) not in entries:
                         rep.add("WARN", where, f"来源 `wl/{c}` 在记录目录里不存在")
+                # 卡式条目的触发 / 验证必须成对：只写一个，下次就只剩半边线索。
+                # 只认缩进子条目这一种形制 —— 旧条目里的「触发条件」不命中（见 CARD_*_RE）。
+                has_trig = bool(CARD_TRIGGER_RE.search(text))
+                has_ver = bool(CARD_VERIFY_RE.search(text))
+                if has_trig != has_ver:
+                    have, miss = ("触发", "验证") if has_trig else ("验证", "触发")
+                    rep.add("WARN", where,
+                            f"卡式条目有 `{have}：` 却缺 `{miss}：` 子条目（两者必须成对，缩进 2 空格）")
     return rep
 
 
@@ -4390,28 +4403,37 @@ def cmd_lesson(args: argparse.Namespace) -> int:
     cite = f"`wl/{args.source:04d}`"
     if cite not in line:
         line = line.rstrip("。.") + f"（{cite}）"
-    payload = line + nl
+    # 卡式条目 = 主行 + 缩进 2 空格的子条目。三个参数都不传时 payloads 只有主行，
+    # 输出与旧行为**逐字节一致**（这条由自测的旧断言守着）。
+    payloads = [line + nl]
+    if args.trigger:
+        payloads.append(f"  - 触发：{args.trigger.strip()}{nl}")
+    if args.verify:
+        payloads.append(f"  - 验证：{args.verify.strip()}{nl}")
+    avoids = [a.strip() for a in (args.avoid or []) if a.strip()]
+    if avoids:
+        payloads.append(f"  - 别再来：{'；'.join(avoids)}{nl}")
     if args.topic:
         span = find_section(lines, 2, args.topic)
         if span:
-            insert_at_end_of_section(lines, span[1], span[2], [payload])
+            insert_at_end_of_section(lines, span[1], span[2], payloads)
             action = f"追加到 `{args.topic}`"
         else:
             if lines and lines[-1].strip():
                 lines.append(nl)
-            lines += [f"## {args.topic}{nl}", nl, payload]
+            lines += [f"## {args.topic}{nl}", nl, *payloads]
             action = f"新建小节 `{args.topic}`"
     else:
         if lines and lines[-1].strip():
             lines.append(nl)
-        lines.append(payload)
+        lines += payloads
         action = "追加到文件末尾"
     if args.dry_run:
-        print(f"[dry-run] {rel(root, path)}：{action}\n{payload.strip()}")
+        print(f"[dry-run] {rel(root, path)}：{action}\n{''.join(payloads).strip()}")
         return 0
     write_raw(path, "".join(lines))
     print(f"{rel(root, path)}：{action}")
-    print(payload.strip())
+    print("".join(payloads).strip())
     return 0
 
 
@@ -7071,6 +7093,12 @@ mode 同样只提供**新项目的初始档位**：台账 `## 当前状态` 有 
     p_ladd.add_argument("--topic", default=None)
     p_ladd.add_argument("--source", type=int, required=True, help="篇号（wl/NNNN）")
     p_ladd.add_argument("--text", required=True)
+    p_ladd.add_argument("--trigger", default=None,
+                        help="卡式条目：触发条件（写任务里会出现的现象词，不写学科名）")
+    p_ladd.add_argument("--verify", default=None,
+                        help="卡式条目：验证方式（怎么确认这次真的成了；别拿「没报错」当成了）")
+    p_ladd.add_argument("--avoid", action="append", default=None,
+                        help="卡式条目：一条走不通的路 + 原因；可重复，写入时用「；」连接")
     p_ladd.add_argument("--dry-run", action="store_true")
     p_ladd.set_defaults(func=cmd_lesson)
 

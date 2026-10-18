@@ -72,6 +72,7 @@ PHASES: dict[str, str] = {
     "memory": "memory_phase",
     "numbering": "numbering_phase",
     "config": "config_phase",
+    "lesson": "lesson_phase",
     "gates": "gate_phase",
     "links": "link_phase",
     "mode": "mode_phase",
@@ -466,6 +467,16 @@ MUTATIONS: list[tuple] = [
      "    if not os.path.isfile(cfg.path):",
      "    if os.path.isfile(cfg.path):",
      "config: a missing config file is not an error"),
+
+    # ── lesson：卡式经验条目（缩进形制 / check 配对）────────────────────────────
+    # 这一相守的是"卡式条目是**缩进 2 空格**的子条目"与"触发 / 验证必须成对"两条形制。
+    # 前者错了会让 `check` 的正则认不出来（静默失效），后者错了会让半边线索溜进门禁。
+    ("lesson", "卡式子条目缩进从 2 空格缩成 1（check 的正则就认不到了）",
+     '  - 触发：', '  -触发：',
+     "lesson add writes the 触发 sub-item with a 2-space indent"),
+    ("lesson", "check 不再管触发 / 验证是否成对",
+     'if has_trig != has_ver:', 'if False:',
+     "check warns when a card has 触发 but no 验证"),
 
     # ── gates：两道门禁（`check --lint` 合并 / 默认不合并 / 提示 / 合并的两处易错点）──
     # 这一相的核心不变量：**默认判决不变，合并只在显式要求时发生**，且合并后

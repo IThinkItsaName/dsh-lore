@@ -4931,6 +4931,116 @@ def card_phase(tmp: str) -> None:
        r15.stderr[-300:])
 
 
+def lesson_phase(parent: str) -> None:
+    """卡式经验条目：三个 CLI 字段、2 空格缩进、dry-run 一致、CRLF，以及 `check` 的配对形制。
+
+    为什么单独一相：`lesson add` 的旧断言内联在 `main()` 里，变异驱动跑不到（见
+    reverse-verify 的「起飞前检查」）。这一相把卡式形制的四条断言收进可执行的函数，
+    `PHASES` 里登记 `lesson` 之后才有"没见它红过不算数"的资格。
+    """
+    proj = os.path.join(parent, "lessoncard")
+    os.makedirs(os.path.join(proj, CONTAINER, "lessons"))
+    write(os.path.join(proj, CONTAINER, "README.md"),
+          fmt_ledger(["0001-work.md"], status="2026-09-20"))
+    write(os.path.join(proj, CONTAINER, "0001-work.md"),
+          entry("0001", "work", "2026-09-20", "1"))
+    write(os.path.join(proj, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
+    vol_path = os.path.join(proj, CONTAINER, "lessons", "01-topic.md")
+    write(vol_path, "# 01 · T\n\n来源：wl/0001。\n\n## 子主题\n\n"
+                    "- **s**：a。根因：b。做法：c。（`wl/0001`）\n")
+
+    # 1) 三个字段 → 主行 + 三条缩进 2 空格的子条目（`--avoid` 重复用「；」连接） -----
+    r = run(proj, "lesson", "add", "--volume", "01-topic.md", "--source", "1",
+            "--text", "样式会被认领",
+            "--trigger", "改完 lib/client.js，邻居界面丢样式",
+            "--verify", "无主 style 计数为 0",
+            "--avoid", "写成 data-plugin-css（不在宿主判据里）",
+            "--avoid", "改别人的 style 标签（要写死别人的 id）")
+    ok(r.returncode == 0, "lesson add with card flags exits 0", r.stdout + r.stderr)
+    vol = read(vol_path)
+    lines = vol.splitlines()
+    ok("- 样式会被认领（`wl/0001`）" in lines,
+       "lesson add keeps the source citation on the main line", vol)
+    ok("  - 触发：改完 lib/client.js，邻居界面丢样式" in lines,
+       "lesson add writes the 触发 sub-item with a 2-space indent", vol)
+    ok("  - 验证：无主 style 计数为 0" in lines,
+       "lesson add writes the 验证 sub-item with a 2-space indent", vol)
+    ok("  - 别再来：写成 data-plugin-css（不在宿主判据里）；改别人的 style 标签（要写死别人的 id）" in lines,
+       "repeated --avoid values are joined with 全角分号", vol)
+
+    # 2) 不传卡式参数 → 输出与旧行为一致（只有主行，引用照样补上） ------------------
+    r = run(proj, "lesson", "add", "--volume", "01-topic.md", "--source", "1",
+            "--text", "旧形状")
+    vol = read(vol_path)
+    ok(r.returncode == 0 and "- 旧形状（`wl/0001`）" in vol.splitlines(),
+       "lesson add without card flags still appends the legacy one-liner", vol)
+    ok("  - 触发：旧形状" not in vol, "no card sub-items are invented when no flags are given", vol)
+
+    # 3) `--dry-run`：不写盘，且打印的载荷与真实写入逐字一致 ----------------------
+    before = read(vol_path)
+    card_args = ("lesson", "add", "--volume", "01-topic.md", "--source", "1",
+                 "--text", "卡二", "--trigger", "t2", "--verify", "v2")
+    r = run(proj, *card_args, "--dry-run")
+    ok(read(vol_path) == before, "lesson add --dry-run leaves the volume unchanged",
+       read(vol_path)[-300:])
+    printed = r.stdout.split("\n", 1)[1].strip() if "\n" in r.stdout else ""
+    run(proj, *card_args)
+    appended = read(vol_path)[len(before):].strip()
+    # 比**行内容**，不比换行风格：Windows 的 `print` 会把 `\n` 翻成 `\r\n`，
+    # 而文件里是 `nl_of()` 决定的换行 —— 拿 stdout 的字节直接和文件字节比，
+    # 验的其实是控制台翻译层，不是本命令的载荷。缩进与中文标点仍逐字比。
+    ok(bool(printed) and printed.splitlines() == appended.splitlines(),
+       "the --dry-run payload is line-for-line identical to what a real write appends",
+       f"printed={printed!r} appended={appended!r}")
+
+    # 4) CRLF 保真：写入的那几行也不许把整份文件改成 LF ---------------------------
+    write(vol_path, read(vol_path).replace("\n", "\r\n"))
+    r = run(proj, "lesson", "add", "--volume", "01-topic.md", "--source", "1",
+            "--text", "crlf卡", "--trigger", "t3", "--verify", "v3")
+    raw = read_bytes(vol_path)
+    ok(r.returncode == 0 and b"\r\n" in raw,
+       "lesson add keeps a CRLF volume CRLF", raw[-300:])
+    ok(raw.replace(b"\r\n", b"").count(b"\n") == 0,
+       "lesson add introduces no lone LF into a CRLF volume", raw[-300:])
+
+    # 5) 来源校验不因卡式参数而放松 ---------------------------------------------
+    r = run(proj, "lesson", "add", "--volume", "01-topic.md", "--source", "999",
+            "--text", "bad", "--trigger", "t", "--verify", "v")
+    ok(r.returncode != 0, "lesson add still rejects an unknown source with card flags",
+       r.stdout + r.stderr)
+
+    # 6) `check` 的形制检查：只认缩进子条目，且触发 / 验证必须成对 ----------------
+    cproj = os.path.join(parent, "cardcheck")
+    os.makedirs(os.path.join(cproj, CONTAINER, "lessons"))
+    write(os.path.join(cproj, CONTAINER, "README.md"),
+          fmt_ledger(["0001-work.md"], status="2026-09-20"))
+    write(os.path.join(cproj, CONTAINER, "0001-work.md"),
+          entry("0001", "work", "2026-09-20", "1"))
+    write(os.path.join(cproj, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
+    write(os.path.join(cproj, CONTAINER, "lessons", "01-topic.md"),
+          "# 01 · T\n\n- **成对**：x。（`wl/0001`）\n  - 触发：t\n  - 验证：v\n")
+    write(os.path.join(cproj, CONTAINER, "lessons", "02-trig.md"),
+          "# 02 · T\n\n- **缺一半**：x。（`wl/0001`）\n  - 触发：只有触发\n")
+    write(os.path.join(cproj, CONTAINER, "lessons", "03-verify.md"),
+          "# 03 · T\n\n- **缺另一半**：x。（`wl/0001`）\n  - 验证：只有验证\n")
+    write(os.path.join(cproj, CONTAINER, "lessons", "04-old.md"),
+          "# 04 · T\n\n- **旧条**：x。（`wl/0001`）\n  - **触发条件（最容易忽略的一条）**：y。\n")
+    r = run(cproj, "check")
+    ok(r.returncode == 0, "check passes when a card misses one half (it is only a WARN)",
+       r.stdout)
+    ok("02-trig.md" in r.stdout and "卡式条目有 `触发：` 却缺 `验证：`" in r.stdout,
+       "check warns when a card has 触发 but no 验证", r.stdout)
+    ok("03-verify.md" in r.stdout and "卡式条目有 `验证：` 却缺 `触发：`" in r.stdout,
+       "check warns in the other direction too", r.stdout)
+    ok("04-old.md" not in r.stdout,
+       "the old-style 触发条件 sub-item is not mistaken for the card format", r.stdout)
+    ok("01-topic.md" not in r.stdout,
+       "a complete card is not flagged", r.stdout)
+    r = run(cproj, "check", "--strict")
+    ok(r.returncode != 0 and "卡式条目有 `触发：` 却缺 `验证：`" in r.stdout,
+       "check --strict turns the card WARN into an ERROR", r.stdout)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="journal.py 自测")
     ap.add_argument("--root", default=None,
@@ -5163,6 +5273,9 @@ def main() -> int:
 
         # 项目配置文件（<容器>/.config.json）---------------------------------
         config_phase(tmp)
+
+        # 卡式经验条目（三字段 / 缩进 / dry-run / CRLF / check 配对）------------
+        lesson_phase(tmp)
 
         # 目标文件（<容器>/目标.md，可选）------------------------------------
         goals_phase(tmp)

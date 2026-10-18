@@ -132,7 +132,7 @@ python scripts/journal.py snapshot --entries 20 --out SNAP.md
 | `status` | 当前状态块：查看 / 改字段 / 改日期 / 归档旧块 | `status --set "核对=抽样 30 条全部通过" --date` / `status --roll` |
 | `todo` | 滚动待办：加 / 勾选 / 清理已完成 | `todo --add "…"` / `todo --done "子串"` / `todo --drop-done` |
 | `index sync` | 把漏进索引的根目录记录补成表行（方面取自「结论：」，可用 `--aspect` 覆盖） | `index sync --stage "B. 迭代" --aspect 验证` |
-| `lesson add` | 往经验分册追加一条并**校验来源存在** | `lesson add --volume 02-verification.md --source 53 --topic 方法论 --text "…"` |
+| `lesson add` | 往经验分册追加一条并**校验来源存在**；可选卡式三字段 | `lesson add --volume 02-verification.md --source 53 --topic 方法论 --text "…"` |
 | `append` | 给某篇追加小节（更正 / 遗留更新） | `append 42 --section 更正 --text "…" --bullet` |
 
 约定要点：
@@ -141,6 +141,11 @@ python scripts/journal.py snapshot --entries 20 --out SNAP.md
 - `status --set "核对=…"` 会落到台账上已有的 `核对 / 验证` 字段（短名可识别），**不会**多长出一个平行字段；
   `阶段` / `交付物` 同理。名字对不上任何既有字段时才会新增。- `lesson add` 的 `--source` 必须指向真实存在的篇号，否则拒绝写入（防止无主结论）；
   引用会**始终**补上——即使正文里已经提到别的 `wl/NNNN`。
+- `lesson add` 的三个卡式参数都是可选的：`--trigger`（触发条件，写任务里会出现的现象词）、
+  `--verify`（验证方式）、`--avoid`（走不通的路 + 原因，**可重复**，写入时用「；」连接）。
+  生成的是"主行 + 缩进 2 空格的三条子条目"；不传任何一个时输出与旧版逐字节一致。
+  `check` 会校验触发与验证成对，只写一个报 WARN（`--strict` 判红）：
+  `lesson add --volume 01-host.md --source 152 --text "……" --trigger "改完 lib/client.js，邻居界面丢样式" --verify "无主 style 计数为 0" --avoid "写成 data-plugin-css（不在宿主判据里）"`
 - `append` 若目标小节已存在则追加到该小节末尾，不会重复建标题。
 - `new` 的可选参数：`--slug`（文件名后缀；**纯中文标题**会退化成 `<篇号>.md`）、
   `--date`、`--cmd`（写进「方式：」的默认命令）、`--stage`（配合 `--insert` 选索引小节）。

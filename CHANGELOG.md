@@ -20,6 +20,13 @@
 
 DSH 里新工作区不必再建 `AGENTS.md`；skill-only / 非 DSH 场景仍用模板 §10 的文件钩子。
 
+### 修复：`worklog_memory` 描述不再声称「唯一读路」
+
+原文写 “reachable only through this tool”，与 `plugin-spec.md` §二 的实测纠正冲突：在
+`workspace-write` 下 `read` 也能读记忆根。描述现在改为覆盖**跨工作区层**
+（memory / inbox / sessions），并明确它**不管理**工作区自己的 `work_log/` 台账；`workspace`
+的用法只留在参数说明里。描述 **1,042 → 909 B**（−133 B）。
+
 ## [0.9.2] - 2026-10-18
 
 ### 修复：收尾批（旧式子条目 / 两字标题 / L1·N1·N2 / 空行续行 / 测试默认值）

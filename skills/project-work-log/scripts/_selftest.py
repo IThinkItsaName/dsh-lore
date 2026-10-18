@@ -3798,6 +3798,23 @@ def _memory_phase(parent: str) -> None:
        "inbox: --outbox 不往共享信箱里写一条", str(before_shared))
     ok(JOURNAL.inbox_split(read(os.path.join(outbox, direct_files[0])))[1].strip() == "直投正文",
        "inbox: --outbox 的信仍是同一份头部 + 正文")
+    # --- 直投信的来源（2026-10-18 用户提出）：from-session + 直投专用 note ---------
+    source_meta = None
+    r = run(base, "inbox", "put", "带来源的直投", "--outbox", outbox,
+            "--from-session", "session-abc123", "--memory", field_mem)
+    ok(r.returncode == 0, "inbox: --from-session 被接受", r.stdout + r.stderr)
+    for name in sorted(n for n in os.listdir(outbox) if n.endswith(".md")):
+        meta, letter_body = JOURNAL.inbox_split(read(os.path.join(outbox, name)))
+        if letter_body.strip() == "带来源的直投":
+            source_meta = meta
+    ok(source_meta is not None and source_meta.get("from-session") == "session-abc123",
+       "inbox: 直投信头写了发件会话（归档后仍能追溯来源）", str(source_meta))
+    ok(source_meta is not None and "同工作区" in source_meta.get("note", ""),
+       "inbox: 直投信的 note 不再谎称『另一个工作区』", str(source_meta))
+    bad_from = run(base, "inbox", "put", "x", "--outbox", outbox,
+                   "--from-session", "not a session id", "--memory", field_mem)
+    ok(bad_from.returncode == 1 and "from-session" in bad_from.stdout,
+       "inbox: 不像会话 id 的 --from-session 被拒绝", bad_from.stdout)
     # --- 主动送达的授权（2026-10-17）：默认关，开/关都要落盘，status 能读回来 ----
     sub_mem = os.path.join(base, "sub-mem")
     sub_path = os.path.join(sub_mem, JOURNAL.MEMORY_SUBSCRIPTIONS_NAME)
@@ -4529,15 +4546,20 @@ def card_phase(tmp: str) -> None:
           "记录被归档时指向它的卡应当能被查出来，而不是继续显示得像一条新鲜结论。"
           "（`wl/0003`；本条结论已进 lessons，可复用。）\n")
 
-    # 卡式条目（`0127`）：三字段必须被投影进「生效条件 / 验证方式 / 不适用条件」，
+    # 卡式条目（`0127`）：三字段必须被投影进「生效条件 / 验证方式 / 卡尾「别再来」」，
     # 而且**不许**再作为正文留在「执行」里（2026-10-18 审查 M3 的端到端靶子）。
+    # 第二条「薄卡」专打体量闸：主行只有 12 字符、三字段齐全 —— 只量 body 的实现会把它丢掉。
     topic_path = os.path.join(cont, "lessons", "01-topic.md")
     write(topic_path, read(topic_path) +
           "- **卡式条目的三字段**：正文说明这条经验为什么值得三个字段，以及它们各自该被"
           "投影到哪里，而不是连成一行塞进「执行」。（`wl/0001`；" + CARD_QUOTE + "）\n"
           "  - 触发：改完插件产物后邻居界面丢样式\n"
           "  - 验证：querySelectorAll('style:not([data-plugin])').length === 0\n"
-          "  - 别再来：把标记写成 data-plugin-css（不在宿主判据里）\n")
+          "  - 别再来：把标记写成 data-plugin-css（不在宿主判据里）\n"
+          "- **薄卡也有内容**：短。（`wl/0001`）\n"
+          "  - 触发：薄卡触发\n"
+          "  - 验证：薄卡验证\n"
+          "  - 别再来：薄卡反面\n")
 
     tool = os.path.join(HERE, "dsh-lore-card.py")
     ok(os.path.isfile(tool), "dsh-lore-card.py ships next to journal.py", tool)
@@ -4599,14 +4621,18 @@ def card_phase(tmp: str) -> None:
     ok(not any(p.startswith("wl0002") for p in ptrs),
        "no card slug derives from the too-short record", " ".join(ptrs)[:200])
 
-    # 卡式三字段（`0127` × 2026-10-18 审查 M3）：各归其位，且不许留在「执行」里。
+    # 卡式三字段（`0127` × 2026-10-18 审查 M3 + 复核 medium/low）：各归其位，
+    # 「别再来」单独成节、不污染「不适用条件」；薄主行靠三字段撑过体量闸。
     card_sec: dict[str, str] = {}
+    thin_card = False
     for fn in fulls:
         text = read(os.path.join(cards, fn))
         if "卡式条目的三字段" in text:
-            for key in ("生效条件", "执行", "验证方式", "不适用条件"):
+            for key in ("生效条件", "执行", "验证方式", "不适用条件", "别再来"):
                 m = re.search(rf"(?m)^#\s*{key}\s*$\n(.*?)(?=\n#\s|\Z)", text, re.S)
                 card_sec[key] = " ".join(m.group(1).split()) if m else ""
+        if "功能名" in text and "薄卡也有内容" in text:
+            thin_card = True
     ok(bool(card_sec), "a lesson card carrying 触发/验证/别再来 is projected",
        f"{len(fulls)} full 卡里没找到靶子")
     ok("触发：改完插件产物后邻居界面丢样式" in card_sec.get("生效条件", ""),
@@ -4614,8 +4640,18 @@ def card_phase(tmp: str) -> None:
     ok("querySelectorAll('style:not([data-plugin])')" in card_sec.get("验证方式", ""),
        "the lesson's 验证 is projected into 验证方式 (not the generic fallback)",
        card_sec.get("验证方式", "")[:200])
-    ok("别再来：把标记写成 data-plugin-css" in card_sec.get("不适用条件", ""),
-       "the lesson's 别再来 is projected into 不适用条件", card_sec.get("不适用条件", "")[:200])
+    ok("把标记写成 data-plugin-css" in card_sec.get("别再来", ""),
+       "the lesson's 别再来 is projected into its own section",
+       card_sec.get("别再来", "")[:200])
+    ok("别再来" not in card_sec.get("不适用条件", ""),
+       "别再来 no longer pollutes 不适用条件（它不是适用性边界）",
+       card_sec.get("不适用条件", "")[:200])
+    ok("边界未在来源里显式声明" in card_sec.get("不适用条件", ""),
+       "a card without a real boundary keeps the honest fallback",
+       card_sec.get("不适用条件", "")[:200])
+    ok(thin_card,
+       "a thin main line with all three fields still produces a card (size gate counts fields)",
+       f"{len(fulls)} full 卡里没找到薄卡靶子")
     ok("触发：" not in card_sec.get("执行", "") and "验证：" not in card_sec.get("执行", ""),
        "the card fields no longer leak into the 执行 section", card_sec.get("执行", "")[:200])
 
@@ -5051,6 +5087,12 @@ def lesson_phase(parent: str) -> None:
     ok(r.returncode != 0, "lesson add rejects a multi-line --verify", r.stdout + r.stderr)
     ok(read(vol_path) == before, "and it writes nothing when the card value has a newline",
        read(vol_path)[-200:])
+    # `splitlines()` 还认 U+2028 / VT 这些；只查 CR/LF 会让它们漏过去（复核 nit）。
+    r = run(proj, "lesson", "add", "--volume", "01-topic.md", "--source", "1",
+            "--text", "分隔符触发", "--trigger", "a\u2028b")
+    ok(r.returncode != 0, "lesson add rejects U+2028 inside a card value", r.stdout + r.stderr)
+    ok(read(vol_path) == before, "and it writes nothing when the separator is U+2028",
+       read(vol_path)[-200:])
     r = run(proj, "lesson", "add", "--volume", "01-topic.md", "--source", "1",
             "--text", "只有反面", "--avoid", "只给反面（没有触发/验证）")
     ok(r.returncode == 0 and "  - 别再来：只给反面（没有触发/验证）" in read(vol_path),
@@ -5073,9 +5115,18 @@ def lesson_phase(parent: str) -> None:
     write(os.path.join(cproj, CONTAINER, "lessons", "04-old.md"),
           "# 04 · T\n\n- **旧条**：x。（`wl/0001`）\n  - **触发条件（最容易忽略的一条）**：y。\n")
     # 05：同一份分册里「完整卡 + 半边卡」。按整份文件 `search` 的实现会静默放行（M1）。
-    write(os.path.join(cproj, CONTAINER, "lessons", "05-mixed.md"),
-          "# 05 · T\n\n- **完整**：x。（`wl/0001`）\n  - 触发：t\n  - 验证：v\n\n"
-          "- **半边**：y。（`wl/0001`）\n  - 触发：只有触发\n")
+    mixed = ("# 05 · T\n\n- **完整**：x。（`wl/0001`）\n  - 触发：t\n  - 验证：v\n\n"
+             "- **半边**：y。（`wl/0001`）\n  - 触发：只有触发\n")
+    write(os.path.join(cproj, CONTAINER, "lessons", "05-mixed.md"), mixed)
+    # 06：围栏代码块里的示例不是条目，别报 WARN。
+    write(os.path.join(cproj, CONTAINER, "lessons", "06-fence.md"),
+          "# 06 · T\n\n```markdown\n- **示例**：x。（`wl/0001`）\n  - 触发：示例里的触发\n```\n")
+    # 07：星号列表写的半边卡也要被认出来（只认顶格 `-` 的实现会把它并进上一条）。
+    write(os.path.join(cproj, CONTAINER, "lessons", "07-star.md"),
+          "# 07 · T\n\n* **星号半边**：x。（`wl/0001`）\n  - 触发：只有触发\n")
+    # 08：单 tab 缩进与 2 空格同权（check 与投影器用同一条判据）。
+    write(os.path.join(cproj, CONTAINER, "lessons", "08-tab.md"),
+          "# 08 · T\n\n- **tab 卡**：x。（`wl/0001`）\n\t- 触发：t\n\t- 验证：v\n")
     r = run(cproj, "check")
     ok(r.returncode == 0, "check passes when a card misses one half (it is only a WARN)",
        r.stdout)
@@ -5086,8 +5137,15 @@ def lesson_phase(parent: str) -> None:
     ok("05-mixed.md" in r.stdout,
        "a half card is caught even when the same volume also has a complete card (M1)",
        r.stdout)
-    ok("第 7 行起的条目有 `触发：` 却缺 `验证：`" in r.stdout,
+    half_line = mixed.splitlines().index("- **半边**：y。（`wl/0001`）") + 1
+    ok(f"第 {half_line} 行起的条目有 `触发：` 却缺 `验证：`" in r.stdout,
        "the warning names the line where the offending entry starts", r.stdout)
+    ok("06-fence.md" not in r.stdout,
+       "a fenced example is not treated as an entry", r.stdout)
+    ok("07-star.md" in r.stdout,
+       "a star-bullet half card is still caught", r.stdout)
+    ok("08-tab.md" not in r.stdout,
+       "a single-tab indent counts as a card indent (same rule as the projector)", r.stdout)
     ok("04-old.md" not in r.stdout,
        "the old-style 触发条件 sub-item is not mistaken for the card format", r.stdout)
     ok("01-topic.md" not in r.stdout,

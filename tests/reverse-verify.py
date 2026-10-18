@@ -480,10 +480,10 @@ MUTATIONS: list[tuple] = [
     ("lesson", "空白卡式值不再被拒绝（会写出空子条目）",
      "        if not raw.strip():", "        if False:",
      "lesson add rejects a whitespace-only --trigger"),
-    ("card", "卡式条目的「别再来」不再进不适用条件",
-     '    if avoid:\n        bounds.append(f"别再来：{avoid}")',
-     '    if False:\n        bounds.append(f"别再来：{avoid}")',
-     "the lesson's 别再来 is projected into 不适用条件", CARD_SRC),
+    ("card", "卡式条目的「别再来」不再单独成节（会被当成边界或丢掉）",
+     '        if avoid:\n            out.append("# 别再来")\n            out.append(avoid)\n            out.append("")',
+     '        if False:\n            out.append("# 别再来")\n            out.append(avoid)\n            out.append("")',
+     "the lesson's 别再来 is projected into its own section", CARD_SRC),
 
     # ── gates：两道门禁（`check --lint` 合并 / 默认不合并 / 提示 / 合并的两处易错点）──
     # 这一相的核心不变量：**默认判决不变，合并只在显式要求时发生**，且合并后

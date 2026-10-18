@@ -49,7 +49,7 @@ LESSON_RE = re.compile(r"^- \*\*(?P<title>[^*]+)\*\*[：:]\s*(?P<body>.*)$")
 # 卡式条目的三个子字段（`0127` 起）。缩进 ≥2、字段名后接全/半角冒号。
 # 字段行与它的续行都**不进 body** —— 否则 full 卡的「执行」会把
 # `… - 触发：… - 验证：… - 别再来：…` 连成一行（2026-10-18 审查 M3）。
-CARD_FIELD_RE = re.compile(r"^[ \t]+- (?P<field>触发|验证|别再来)[ \t]*[：:][ \t]*(?P<text>.*)$")
+CARD_FIELD_RE = re.compile(r"^(?:[ \t]{2,}|\t)- (?P<field>触发|验证|别再来)[ \t]*[：:][ \t]*(?P<text>.*)$")
 CARD_FIELDS = ("触发", "验证", "别再来")
 # 归档层目录名。`--include-archive` 扫的就是它下面（见 `all_records`）。
 ARCHIVE_DIR = "archive"
@@ -359,7 +359,10 @@ def parse_lessons(path: str) -> list[dict]:
                 current = ""
             j += 1
         body = "\n".join(body_lines).strip()
-        if len(body) < 24 or len(title) < 4:
+        # 体量闸量的是"这条经验有多少可读内容"，不是"主行多长"：三字段已经从 body 移走，
+        # 只量 body 会让「短主行 + 三字段齐全」的卡被静默丢掉（2026-10-18 复核 low）。
+        field_size = sum(len(norm_ws(" ".join(fields[k]))) for k in CARD_FIELDS)
+        if len(body) + field_size < 24 or len(title) < 4:
             continue
         src = sorted(set(SOURCE_REF_RE.findall(body)))
         out.append({"title": title, "body": body, "sources": src, "volume": volume,
@@ -533,18 +536,15 @@ def build_cards(lesson: dict, ctx: dict, slug: str) -> tuple[str, str]:
         cond_bits.append(f"范围：{norm_ws(ctx['scope'])[:120]}")
     cond = "；".join(cond_bits) or "（按来源记录的范围）"
 
-    # 不适用条件 = 卡式条目的「别再来」（走不通的路 + 原因）+ 正文里显式写的边界句。
-    # 「遗留」小节不能充数：那讲的是"还没做的事"，不是"这条什么时候不成立"。
+    # 不适用条件 = 正文里**显式写的边界句**（"不含…" "仅…" "仅当…"）；抓不到就如实说没声明。
+    # 「别再来」**不能**塞进这里：它讲的是"试过不通的路 + 原因"，不是"这条何时不成立"；
+    # 塞进来还会让 INDEX 的 `no_boundary` 把"没声明边界"误报成"有边界"（2026-10-18 复核 medium）。
+    # 它单独成卡尾一节，见下面的 `ccg()`。
     boundary_lines = [b for b in (lesson.get("boundary") or [])
                       if re.search(r"(不含|仅|只在|不适用|例外|极限|边界)", b)]
-    bounds = []
     avoid = norm_ws(lesson.get("avoid") or "")
-    if avoid:
-        bounds.append(f"别再来：{avoid}")
     if boundary_lines:
-        bounds.append(norm_ws(" / ".join(first_sentence(b, 90) for b in boundary_lines[:2])))
-    if bounds:
-        napp = "；".join(bounds)
+        napp = norm_ws(" / ".join(first_sentence(b, 90) for b in boundary_lines[:2]))
     else:
         napp = f"边界未在来源里显式声明；引用前先看 `{src_ref or '来源'}` 的「范围」与「遗留」两节"
 
@@ -597,6 +597,12 @@ def build_cards(lesson: dict, ctx: dict, slug: str) -> tuple[str, str]:
                         out.append(rest)
                 else:
                     out.append(n_body)
+            out.append("")
+        # 「别再来」独立成节：它是反面清单，不是适用性边界（见上面 napp 的注释）。
+        # 六要素校验只查六个键**存在**，多这一节不会被判缺；INDEX 也不读它。
+        if avoid:
+            out.append("# 别再来")
+            out.append(avoid)
             out.append("")
         return "\n".join(out).rstrip() + "\n"
 

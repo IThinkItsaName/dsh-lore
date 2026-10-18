@@ -534,6 +534,13 @@ CONFIG_FIELD_HELP = {
 }
 
 
+def _indent_width(line: str) -> int:
+    """行首缩进宽度（tab 记 4）。状态块续行的判据是「比字段行更深」，不是「有缩进」——
+    只比"有没有缩进"会把缩进写的兄弟字段当成续行删掉（2026-10-18 复核实测）。"""
+    lead = re.match(r"[ \t]*", line).group(0)
+    return len(lead.expandtabs(4))
+
+
 def _status_key_parts(key: str) -> list[str]:
     """把字段名切成可比较的片段：先按 `/`，再按 `与`（`交付物与指纹` 的两种写法）。"""
     parts: list[str] = []
@@ -3482,16 +3489,17 @@ def cmd_status(args: argparse.Namespace) -> int:
             changed.append(key + "(新增)")
         # **第二遍：清掉被改字段的续行**（2026-10-18 修）。字段的值可以写成多行（缩进续行，
         # 包括缩进的列表），而上面只替换了首行 —— 旧值的尾巴会留在新值下面。
-        # 边界只认**顶格**的 `- `：缩进的 `- ` 是字段内容，不是下一个字段（复核 low）。
+        # 续行判据 = **比字段行缩进更深**（不是"有缩进"）：只比有无缩进会把缩进写的
+        # 兄弟字段当成续行删掉（复核实测：`  - 阶段` 后面的 `  - 迭代` 被一起删）。
         if touched:
             i = span[1]
             while i < span[2]:
                 m = re.match(r"^(\s*-\s*)([^：:\r\n]+)[：:]", lines[i])
                 if m and m.group(2).strip() in touched:
+                    base = _indent_width(lines[i])
                     j = i + 1
                     while (j < span[2] and lines[j].strip()
-                           and lines[j][0] in " \t"
-                           and not re.match(r"^-\s", lines[j])):
+                           and _indent_width(lines[j]) > base):
                         j += 1
                     if j > i + 1:
                         removed = j - i - 1

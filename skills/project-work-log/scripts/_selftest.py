@@ -1119,6 +1119,16 @@ def appendix_phase(parent: str) -> None:
     ok("- 迭代：1" in txt and "- 产出：新产出坐标" in txt,
        "the list cleanup leaves the field value and the next field intact", txt)
 
+    # 缩进写的状态块：字段行自身缩进 2 格时，兄弟字段（同样 2 格）**不是续行**，
+    # 不能被连带删掉（2026-10-18 复查回归：续行判据只比"有无缩进"会删掉下一字段）。
+    ind = make_fixture("appendix-status-indented",
+                       skeleton(status="  - 阶段：v1\n  - 迭代：1\n  - 核对 / 验证：旧核对"))
+    r = run(ind, "status", "--set", "阶段=v2")
+    txt = ledger_text(ind)
+    ok("  - 阶段：v2" in txt and "  - 迭代：1" in txt and "  - 核对 / 验证：旧核对" in txt,
+       "status --set clears only the continuations of the field it touched "
+       "(indented sibling fields survive)", txt)
+
     noop = make_fixture("appendix-noop-status", skeleton(status="- 阶段：v1"))
     before = ledger_text(noop)
     r = run(noop, "status", "--set", "阶段")

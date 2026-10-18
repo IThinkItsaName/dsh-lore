@@ -498,6 +498,10 @@ MUTATIONS: list[tuple] = [
     ("appendix", "status --set 不再清旧续行（多行值留下尾巴）",
      "        if touched:", "        if False:",
      "status --set drops the old continuation lines (no stale tail under the new value)"),
+    ("appendix", "缩进状态块的兄弟字段被当成续行删掉（数据丢失回归）",
+     "                    base = _indent_width(lines[i])", "                    base = -1",
+     "status --set clears only the continuations of the field it touched "
+     "(indented sibling fields survive)"),
 
     # ── gates：两道门禁（`check --lint` 合并 / 默认不合并 / 提示 / 合并的两处易错点）──
     # 这一相的核心不变量：**默认判决不变，合并只在显式要求时发生**，且合并后

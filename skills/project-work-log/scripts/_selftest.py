@@ -352,7 +352,7 @@ def harness_fixture(name: str) -> str:
     **为什么要找而不是写死一个相对路径**：这份 `_selftest.py` 同时活在两种布局里 ——
     工作区源码树（`.pi/skills/project-work-log/scripts/`）与发布包
     （`<包>/skills/project-work-log/scripts/`）。2026-10-15 整理把 harness 塌成了一份：
-    源就在发布仓库里（`<工作区>/publish/worklog/tests/`），发布包那份是它自己
+    源就在技能仓库里（`publish/project-work-log/tests/`），发布包那份是它自己
     （`<包>/tests/`），顶层 `logs/` 下不再有 `tests/`。另外从 npm 装出来的副本可能
     **根本没有** `tests/`（它不属于插件运行时）。
     所以这里按候选顺序找，找不到就由调用方记一条 `SKIP` —— 不假装验过。
@@ -3886,6 +3886,27 @@ def _memory_phase(parent: str) -> None:
     r = run(base, "inbox", "status", "--root", base, "--memory", sub_mem)
     ok("主动送达：开" in r.stdout and entry.get("session", "") in r.stdout,
        "inbox: status 读回授权与收件会话", r.stdout)
+    # --- preset / rotate（2026-10-20）：CLI 与工具走同一张表；rotate 换空白收件会话 ----
+    r = run(base, "inbox", "subscribe", "--root", base, "--memory", sub_mem, "--preset", "review")
+    subs = _read_subs(sub_path)
+    entry = subs.get("workspaces", {}).get(JOURNAL.subscriptions_key(base), {})
+    ok(r.returncode == 0 and entry.get("preset") == "review",
+       "inbox: CLI --preset 落进授权表（CLI 不校验名册）", r.stdout + r.stderr)
+    r = run(base, "inbox", "status", "--root", base, "--memory", sub_mem)
+    ok("agent preset：review" in r.stdout, "inbox: status 显示收件会话的 preset", r.stdout)
+    old_session = entry.get("session")
+    r = run(base, "inbox", "subscribe", "--root", base, "--memory", sub_mem, "--rotate")
+    subs = _read_subs(sub_path)
+    entry = subs.get("workspaces", {}).get(JOURNAL.subscriptions_key(base), {})
+    ok(r.returncode == 0 and entry.get("session") not in ("", old_session)
+       and entry.get("deliveries") == 0 and entry.get("preset") == "review",
+       "inbox: --rotate 换新的空白收件会话、保留 preset、清零推送计数", r.stdout + r.stderr)
+    r = run(base, "inbox", "subscribe", "--root", base, "--memory", sub_mem, "--off", "--rotate")
+    subs = _read_subs(sub_path)
+    entry = subs.get("workspaces", {}).get(JOURNAL.subscriptions_key(base), {})
+    ok(r.returncode == 2 and "rotate" in r.stderr and entry.get("active") is True,
+       "inbox: --off 与 --rotate 同时给会被拒绝（不静默忽略 rotate）",
+       r.stdout + r.stderr)
     r = run(base, "inbox", "unsubscribe", "--root", base, "--memory", sub_mem)
     ok(r.returncode == 0 and "已撤销" in r.stdout, "inbox: unsubscribe 撤销授权", r.stdout)
     subs = _read_subs(sub_path)
@@ -4153,7 +4174,7 @@ def numbering_phase(parent: str) -> None:
     """写盘原义性、两条占号路径、`new --dry-run` 的预报（F6/F7、第三轮 N-A/N-B）。
 
     **为什么单独一个相**：这些断言原来内联在 `main()` 里，而
-    `publish/worklog/tests/reverse-verify.py` 只按 `PHASES` 里登记的函数跑相 ——
+    `publish/project-work-log/tests/reverse-verify.py` 只按 `PHASES` 里登记的函数跑相 ——
     内联断言它根本跑不到。第三轮新加的三条变异因此只能报
     "MISS：期望的标签没变红；红了 0 条"，测了等于没测。
     搬出来登记进 `PHASES`，变异才算真的被覆盖。

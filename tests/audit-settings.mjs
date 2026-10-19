@@ -522,6 +522,16 @@ function fakeEditor(override = {}, entryConfig = BUNDLE_LAYER) {
     'the file is still archived (the user layer is the authority, so there is nothing to carry)',
     owned)
 
+  // `skillEnabled` was missing from `KNOWN_CONFIG_KEYS`, so `migratableSettingsKeys()` did not
+  // list it either: a profile override `skillEnabled:false` was not "owned", migration called
+  // `edit()` with the legacy value, and the card's setting was silently lost. Pin the ownership.
+  writeFileSync(settingsPath, JSON.stringify({ skillEnabled: true }), 'utf8')
+  rmSync(archived, { force: true })
+  const skillOwner = fakeEditor({ skillEnabled: false })
+  const skillOwned = await mod.migrateLegacySettings(skillOwner, () => {})
+  ok(skillOwner.calls.length === 0 && existsSync(archived),
+    'a profile-owned skillEnabled is never overwritten by the legacy file', skillOwned)
+
   // "I cannot tell what the user stated" must never be read as "the user stated nothing".
   writeFileSync(settingsPath, JSON.stringify({ userInvocable: false }), 'utf8')
   rmSync(`${settingsPath}.migrated`, { force: true })

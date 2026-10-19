@@ -280,7 +280,7 @@ memory publish | collect [--dry-run] | add | search | index [--check] | lint [--
 dream [ROOT] [--dry-run] [--force] | dream --accept [--in FILE] | dream --check [--strict]
 inbox put [--text T | --file F] [--thread ID] | list [--json] | take NAME [--into-record TITLE] [--keep]
 inbox sweep [--older-than N] [--apply] | count
-inbox subscribe [--off] | unsubscribe | status            # 收件方的主动送达授权（[ROOT] 是工作区）
+inbox subscribe [--off] [--preset ID] [--rotate] | unsubscribe | status   # 收件方的主动送达授权（[ROOT] 是工作区）
 promote suggest [--all]
 ```
 
@@ -301,7 +301,7 @@ promote suggest [--all]
 | 模式 | 机制 | 何时用 |
 |---|---|---|
 | **被动**（默认） | `PromptContext` 尾注入一行「待收 N 条」，等收件方下次开会话或自己来查 | 绝大多数情况 |
-| **主动**（逐工作区显式开关） | 收件方在自己的工作区跑 `journal.py inbox subscribe`（写 `<记忆根>/inbox-subscriptions.json`：固定 `session` id + 已推送条数）。发件方 `worklog_memory` 的 `send` 带 `to` 时：`ctx.sessionController.create({ cwd, sessionId })` → `resolveAgent(sessionId)` → `agent.followup(createUserMessage(...))`（与 `dsh-schedule` 同一条投递路）→ `sessions.flush`，推的是**不含正文**的提醒 | 确实需要对方**现在**动起来 |
+| **主动**（逐工作区显式开关） | 收件方在自己的工作区跑 `journal.py inbox subscribe [--preset ID]`（写 `<记忆根>/inbox-subscriptions.json`：固定 `session` id + 已推送条数 + 可选 `preset`）。发件方 `worklog_memory` 的 `send` 带 `to` 时：先 `resolveAgent(sessionId)`（"Resolve or resume"）→ **只有 `session/not-found` 才** `create({ cwd/workspaceId, sessionId, agentPreset })`（`agentPreset` 仅当订阅里钉了 `preset`）→ `agent.followup(createUserMessage(...))`（与 `dsh-schedule` 同一条投递路）→ `sessions.flush`，推的是**不含正文**的提醒 | 确实需要对方**现在**动起来 |
 
 **主动模式的代价必须写在这里**：它会在你不在场时**花额度**、并且**在没有上下文的情况下自作主张**。所以它默认关，且是**收件方工作区**的授权，不是发件方能决定的。
 
@@ -317,8 +317,15 @@ promote suggest [--all]
    那是查询能力，不是投递能力 —— 投递仍走这一条。）
    （这条只管**跨工作区**；同一工作区内的会话是用户自己的，见本节末「2026-10-17 重新明确」①。）
 3. **收件会话可复用，且应当复用**。一个工作区一个固定的「收件箱会话」，用**固定 id** 幂等获取
-   （命中就 `resume`，不存在才 `create`）—— 于是"每来一条就新建一个"从设计上不可能发生，
-   也避免"把该工作区所有 session 都拉起一遍"。
+   （先 `resolveAgent` 恢复；只有 `session/not-found` 才 `create`）—— 于是"每来一条就新建一个"
+   从设计上不可能发生，也避免"把该工作区所有 session 都拉起一遍"。
+   **2026-10-19 修**：原先先 `create` 再 resolve，而宿主的 `create({sessionId})` 只在会话**还是空白**
+   时才复用；已经开过轮次时会另 mint 一个 id。旧写法忽略返回值，于是首次投递之后每条提醒都可能
+   顺手多建一个空白会话、而提醒仍发给旧会话。现在改为 resolve-first。
+   **preset**：订阅表可存一个可选 `preset`，只在**新建**收件会话时传给宿主（`agentPreset`）；
+   已经开始的会话换不了 preset（宿主 `agent-preset/locked`），改完用 `subscribe --rotate`
+   （工具 `rotate: true`）换一个新的空白收件会话，下一条提醒就会用它新建。
+   发送方**不能**替收件方指定 preset —— 它属于收件方授权的一部分。
 4. **消息是不可信的 `user/message`**。明确**禁止**写成 `developer/message` 或 `system/message`：
    那会把另一个工作区的文字**提升成指令**。它是一条"来自 X 的消息，等你看"，受**收件方**策略约束。
 5. **被动模式也只注入计数，正文永不进提示词**。宿主在尾部运行时上下文里加的只有一行
@@ -423,13 +430,22 @@ promote suggest [--all]
 
 ④ **两种收法都已实现**（主动模式 / 被动计数 + `worklog_memory` 的 `inbox` 取件）。
 主动模式 2026-10-17 实装：收件方在**自己的工作区**跑 `inbox subscribe` 授权（写
-`<记忆根>/inbox-subscriptions.json`，里面有一个固定收件会话 id 与已推送条数）；**沙箱会话里
-CLI 写不了记忆根**（workspace-write 挡在 `~/dsh-lore-memory` 外，实测 `Permission denied`），
-所以同一件事也给了工具入口 `worklog_memory` 的 `subscribe`（`active: false` 撤销）——
-边界是**调用方 Agent 的 cwd**，发件方替别人开不了。发件方 `send` 带 `to` 时走
-`sessionController.create` → `resolveAgent` → `agent.followup(createUserMessage(...))` →
-`sessions.flush`（**与 `dsh-schedule` 同一条投递路**；不用给界面用的 `prompt`，那条要过
-附件与上传绑定），推的是**不含正文**的提醒；每成功一条 +1，到 40 条换一个新会话（规矩 6）。
+`<记忆根>/inbox-subscriptions.json`，里面有一个固定收件会话 id、已推送条数与可选的 `preset`）；
+**沙箱会话里 CLI 写不了记忆根**（workspace-write 挡在 `~/dsh-lore-memory` 外，实测
+`Permission denied`），所以同一件事也给了工具入口 `worklog_memory` 的 `subscribe`
+（`active: false` 撤销；`preset` 指定收件会话的 agent preset）——边界是**调用方 Agent 的
+cwd**，发件方替别人开不了。发件方 `send` 带 `to` 时：先 `resolveAgent`（恢复已有收件会话），
+只有 `session/not-found` 才 `create`（带 `workspaceId`；订阅里钉了 `preset` 就一并带
+`agentPreset`）→ `agent.followup(createUserMessage(...))` → `sessions.flush`
+（**与 `dsh-schedule` 同一条投递路**；不用给界面用的 `prompt`，那条要过附件与上传绑定），
+推的是**不含正文**的提醒；每成功一条 +1，到 40 条换一个新会话（规矩 6）。
+
+**2026-10-19 修：create-first 改成 resolve-first，并加 `preset`**。宿主的
+`create({sessionId})` 只在会话**还是空白**时复用它，已经开过轮次时会另 mint 一个 id；
+旧写法先 create 又忽略返回值，于是首次投递之后每条提醒都可能多建一个空白会话、而提醒仍
+发给旧会话。现在已有会话走 `resolveAgent`（"Resolve or resume"），不存在才 create。`preset`
+只在新建收件会话时传给宿主（`agentPreset`）；已经开始的会话换不了 preset（宿主
+`agent-preset/locked`），用 `subscribe --rotate` 换新的空白会话即可。发送方不能指定收件方的 preset。
 
 **`create` 必须给 `workspaceId`，不能只给 `cwd`**（2026-10-17 真机补）：两者都把会话建在正确
 目录里，但只有 `workspaceId` 那条会走 `workspace.attachSession(sessionId)`，把会话挂进
@@ -454,8 +470,8 @@ CLI 写不了记忆根**（workspace-write 挡在 `~/dsh-lore-memory` 外，实�
 **同工作区的对话可以点名（2026-10-17 加）**：`send` 多一个可选 `session` —— 只允许**自己
 工作区里**的会话（`to` 必须等于自己的 cwd；用 `sessionController.inspect` 校验归属，按
 `archivedSessionIds` 排除已归档）。跨工作区仍然只到工作区粒度 —— 对方的会话清单是侦察面。
-送达走同一条 `create({workspaceId, sessionId})` + `followup`，所以"往某个对话发提示"与
-"往工作区收件会话发"没有第二套机制。
+送达走同一条 `resolveAgent`（存在就恢复；不存在才 `create({workspaceId, sessionId})`）+ `followup`，
+所以"往某个对话发提示"与"往工作区收件会话发"没有第二套机制。
 
 **同工作区转送不走公共区域（2026-10-17 定）**：`to` 就是自己的 cwd 时，信**直接**写进
 `<工作区>/work_log/.lore-inbox/`（容器里的点目录，门禁与索引都不扫它；没有 `work_log/` 时

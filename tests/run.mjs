@@ -20,10 +20,22 @@ function fakeCtx() {
   const providers = []
   const logs = []
   const registeredTools = []
+  const listeners = new Map()
   return {
     providers,
     logs,
     registeredTools,
+    listeners,
+    // `apply()` watches `loader/volatile-update` to refresh the skill catalog cache and the
+    // diagnostics switch. Record listeners so a test can emit the same event the Loader emits.
+    on: (event, listener) => {
+      const list = listeners.get(event) ?? []
+      list.push(listener)
+      listeners.set(event, list)
+    },
+    emit: (event, ...args) => {
+      for (const listener of listeners.get(event) ?? []) listener(...args)
+    },
     skills: { registerProvider: (create) => { providers.push(create); return () => {} } },
     // The tools registry, recorded rather than stubbed away.
     //
@@ -337,6 +349,86 @@ ok(ctxSkillOff.registeredTools.length === 1,
   skillEnabled.set(true)
   const back = await liveMain.list({ cwd: 'X', scope: {} })
   ok(back.candidates.length === 1, 'live: flipping it back works too', JSON.stringify(back))
+}
+
+/* ---- REGRESSION: 注册表的目录缓存必须有失效路径（2026-10-19） ----
+   `registerProvider(create)` 把注册作用域的 `invalidate()` 作为参数交给 create；丢掉它，
+   provider 读得再新，模型侧（`dsh-tool-skill` 每步 `skills.snapshot()`）还是旧目录 ——
+   注册表按 cwd/scope/revision 缓存且**没有 TTL**。 */
+{
+  const cell = (initial) => {
+    let value = initial
+    return { get: () => value, set: (next) => { value = next } }
+  }
+  let invalidationCalls = 0
+  const control = {
+    signal: new AbortController().signal,
+    invalidate: () => { invalidationCalls += 1 },
+  }
+  const ctxCache = fakeCtx()
+  mod.apply(ctxCache, { skillDir: 'skills/project-work-log' })
+  const [derived] = ctxCache.providers.map((create) => create(control))
+  ok(typeof derived.retryProbe === 'function',
+     'a provider exposes retryProbe() so a corrected path can recover')
+
+  ctxCache.emit('loader/volatile-update', [['skillEnabled']])
+  ok(invalidationCalls === ctxCache.providers.length,
+     'a skill-related volatile update invalidates every provider registration',
+     `${invalidationCalls} vs ${ctxCache.providers.length} providers`)
+
+  const afterSkill = invalidationCalls
+  ctxCache.emit('loader/volatile-update', [['memoryInjectIndex']])
+  ok(invalidationCalls === afterSkill,
+     'an unrelated (memory) update leaves the skill catalog cache alone',
+     String(invalidationCalls))
+}
+
+/* ---- REGRESSION: 装载探针失败不该把 provider 永久钉死（2026-10-19） ---- */
+{
+  const cell = (initial) => {
+    let value = initial
+    return { get: () => value, set: (next) => { value = next } }
+  }
+  const skillDir = cell('does/not/exist')
+  const ctxRetry = fakeCtx()
+  mod.apply(ctxRetry, { skillDir })
+  const [provider] = ctxRetry.providers.map((create) => create(control))
+  const blocked = await provider.list({ cwd: 'X', scope: {} })
+  ok(blocked.candidates.length === 0 && blocked.complete === false,
+     'a mount-time probe failure serves nothing and reports incomplete', JSON.stringify(blocked))
+
+  skillDir.set('skills/project-work-log')   // ← Loader 的 volatile-only 提交 = 改引用里的值
+  ctxRetry.emit('loader/volatile-update', [['skillDir']])
+  const recovered = await provider.list({ cwd: 'X', scope: {} })
+  ok(recovered.candidates.length === 1,
+     'fixing skillDir recovers on the next list() — the probe is re-armed, no restart',
+     JSON.stringify(recovered.candidates.map((c) => c.name)))
+}
+
+/* ---- REGRESSION: 诊断开关也是现读的（2026-10-19） ---- */
+{
+  const cell = (initial) => {
+    let value = initial
+    return { get: () => value, set: (next) => { value = next } }
+  }
+  const verbose = cell(false)
+  const ctxDiag = fakeCtx()
+  mod.apply(ctxDiag, { verbose, skillDir: 'skills/project-work-log' })
+  const [provider] = ctxDiag.providers.map((create) => create(control))
+  const quietMark = ctxDiag.logs.length
+  await provider.list({ cwd: 'X', scope: {} })
+  ok(!ctxDiag.logs.slice(quietMark).some((entry) => String(entry[1]).startsWith('worklog[trace] ')),
+     'verbose=false emits no trace after the mount')
+
+  verbose.set(true)                         // ← Loader 的 volatile-only 提交 = 改引用里的值
+  ctxDiag.emit('loader/volatile-update', [['verbose']])
+  const loudMark = ctxDiag.logs.length
+  await provider.list({ cwd: 'X', scope: {} })
+  ok(ctxDiag.logs.slice(loudMark).some((entry) => String(entry[1]).startsWith('worklog[trace] ')),
+     'flipping verbose takes effect on the next trace() — no restart')
+
+  verbose.set(false)                        // 别把 module 级诊断状态留给后面的用例
+  ctxDiag.emit('loader/volatile-update', [['verbose']])
 }
 
 /* ---- diagnostics: one switch decides WHETHER, the environment decides WHERE ---- */

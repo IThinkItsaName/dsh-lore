@@ -138,6 +138,18 @@ mod.apply(ctxBogus, { bogusKey: 1 })
 ok(unknownKeyWarnings(ctxBogus).some((text) => text.includes('bogusKey')),
    'B3 但真的不认识的键照样要报（判据没被放宽）', JSON.stringify(unknownKeyWarnings(ctxBogus)))
 
+// B4：宿主交给 `apply()` 的是 Config 解析后的**完整**配置（默认值都在），不是稀疏的
+// 手写 patch。M2 的误报只在完整配置下才出现，所以这里必须按宿主的形状验一次。
+const resolved = mod.Config['~standard'].validate({})
+const ctxDefaults = ctxWith()
+mod.apply(ctxDefaults, resolved.value ?? {})
+ok(unknownKeyWarnings(ctxDefaults).length === 0,
+   'B4 Config 解析出的完整配置没有"不认识的键"（含 skillEnabled）',
+   JSON.stringify({ warnings: unknownKeyWarnings(ctxDefaults), resolved: resolved.value }))
+ok(Object.hasOwn(resolved.value ?? {}, 'skillEnabled'),
+   'B4b Config 解析出的键里确实有 skillEnabled（键清单必须覆盖它）',
+   JSON.stringify(resolved))
+
 /* ------------------------------------------------------- C. 卡片 → 文件（跨进程那一步） */
 
 /* 桌面 profile 的形状：宿主有 `configEditor`，真源是 profile patch，插件**不读**那个文件。

@@ -101,13 +101,20 @@ function letters() {
 function makeCtx({
   cwd = WS_A, sessions = [], titles = {}, archived = [], noInitiator = false, noController = false,
   registered = [{ id: 'ws-a', path: WS_A }, { id: 'ws-b', path: WS_B }],
-  sessionCwds = {}, missingSessions = [], noRegistry = false,
+  sessionCwds = {}, missingSessions = [], noRegistry = false, noPresets = false,
 } = {}) {
   const calls = { create: [], followup: [], flush: 0, resolveAgent: [], tools: [], withoutInitiator: 0 }
+  // 真宿主的 `resolveAgent` 是 "Resolve or resume"：会话存在就恢复并返回 Agent，不存在才回
+  // `session/not-found`。旧 fake 永远成功，于是 create-first 的缺陷（启动过的会话被当成
+  // 空白会话新建）在测试里看不见；现在按真宿主建模，`create` 之后把会话登记进来。
+  const knownSessions = new Set(Object.keys(sessionCwds).map(String))
   const services = {
     sessionQuery: {
       readTitle: async (id) => (Object.prototype.hasOwnProperty.call(titles, id) ? { title: titles[id] } : undefined),
     },
+    ...(noPresets ? {} : {
+      agentPresets: { list: async () => [{ id: 'standard' }, { id: 'review' }] },
+    }),
     // 归档集合在宿主里由 registry 持有（`archivedSessionIds`），界面按它隐藏会话；
     // 工具必须自己再过滤一次（`sessionController.list()` 返回的是完整语料）。
     // `list()` 是工作区名册：主动送达要靠它把会话挂进 `workspace.sessionIds`（否则"未分组"）。
@@ -134,16 +141,24 @@ function makeCtx({
       list: async () => ({ items: sessions }),
       create: async (request) => {
         calls.create.push(request)
-        return { sessionId: request.sessionId }
+        knownSessions.add(String(request.sessionId))
+        return {
+          sessionId: request.sessionId,
+          ...request.agentPreset === undefined ? {} : { agentPreset: request.agentPreset },
+        }
       },
       // 只读地给出一个会话的 header（`send` 的 `session` 用它校验归属）。
       inspect: async (sessionId) => {
         if (missingSessions.includes(sessionId)) throw new Error(`session "${sessionId}" not found`)
         return { meta: { id: sessionId, cwd: sessionCwds[sessionId] ?? cwd } }
       },
-      // 与真宿主同形：`liveAgent` 返回 `{ agent }`，投递走 `agent.followup`（不是 `prompt`）。
+      // 与真宿主同形：存在 → `{ agent }`（投递走 `agent.followup`，不是 `prompt`）；
+      // 不存在 → `{ error: { code: 'session/not-found' } }`，由投递方决定要不要 create。
       resolveAgent: async (sessionId) => {
         calls.resolveAgent.push(sessionId)
+        if (!knownSessions.has(String(sessionId))) {
+          return { error: { code: 'session/not-found', message: `session "${sessionId}" not found` } }
+        }
         return {
           agent: {
             session: { id: sessionId },
@@ -323,6 +338,35 @@ if (!hasPython) {
     ok(String(subs[mod.workspaceKey(WS_A)]?.session ?? '').startsWith('session-'),
       'with a fixed inbox session id (resume, not create-per-message)',
       JSON.stringify(subs[mod.workspaceKey(WS_A)]))
+    const presetOn = await toolSub.execute({ operation: 'subscribe', workspace: WS_A, preset: 'review' })
+    ok(presetOn.ok === true && /agent preset: review/.test(presetOn.text),
+      'subscribe can pin the inbox session to an agent preset', presetOn.text)
+    ok(mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_A)]?.preset === 'review',
+      'the preset is stored in the authorization table')
+    const badPreset = await toolSub.execute({ operation: 'subscribe', workspace: WS_A, preset: 'no-such-preset' })
+    ok(badPreset.ok === false && /没有这个 agent preset/.test(badPreset.text)
+      && mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_A)]?.preset === 'review',
+      'an unknown preset is refused and the table is untouched', badPreset.text)
+    {
+      const { tool: noRoster } = mount({ cwd: WS_A, noPresets: true })
+      const noRosterSub = await noRoster.execute({ operation: 'subscribe', workspace: WS_A, preset: 'review' })
+      ok(noRosterSub.ok === false && /没有 agent preset 名册/.test(noRosterSub.text),
+        'a host without a preset roster refuses to store one instead of guessing', noRosterSub.text)
+    }
+    const cleared = await toolSub.execute({ operation: 'subscribe', workspace: WS_A, preset: '' })
+    ok(cleared.ok === true && mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_A)]?.preset === undefined,
+      'an empty preset clears it', cleared.text)
+    const beforeRotate = mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_A)]?.session
+    const rotated = await toolSub.execute({ operation: 'subscribe', workspace: WS_A, preset: 'review', rotate: true })
+    const afterRotate = mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_A)]
+    ok(rotated.ok === true && /\(rotated\)/.test(rotated.text) && afterRotate?.session !== beforeRotate,
+      'rotate mints a fresh inbox session so a new preset can apply', rotated.text)
+    ok(afterRotate?.deliveries === 0 && afterRotate?.preset === 'review',
+      'rotate resets the delivery count and keeps the preset', JSON.stringify(afterRotate))
+    const offRotate = await toolSub.execute({ operation: 'subscribe', workspace: WS_A, active: false, rotate: true })
+    ok(offRotate.ok === false && /rotate/.test(offRotate.text)
+      && mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_A)]?.active === true,
+      'active:false + rotate is refused, not silently ignored', offRotate.text)
     const spoof = await toolSub.execute({ operation: 'subscribe', workspace: WS_B })
     ok(spoof.ok === true && mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_B)] === undefined,
       'the `workspace` argument cannot subscribe someone else (cwd wins)', spoof.text)
@@ -334,6 +378,24 @@ if (!hasPython) {
     const refusedSub = await noInit.execute({ operation: 'subscribe', workspace: WS_A })
     ok(refusedSub.ok === false && /拿不到/.test(refusedSub.text),
       'without an initiator subscribe refuses rather than guessing', refusedSub.text)
+
+    // CLI 与工具写同一张表：`--preset` 落到同一个字段（CLI 不校验名册，见 journal.py）。
+    const journal = join(PKG, 'skills', 'project-work-log', 'scripts', 'journal.py')
+    const cliSub = runPythonCaptured(['-B', journal, 'inbox', 'subscribe', WS_A, '--memory', ROOT, '--preset', 'review'])
+    ok(cliSub.status === 0 && mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_A)]?.preset === 'review',
+      'the CLI `--preset` writes the same field', `${cliSub.stdout}${cliSub.stderr}`)
+    const cliStatus = runPythonCaptured(['-B', journal, 'inbox', 'status', WS_A, '--memory', ROOT])
+    ok(/agent preset/.test(cliStatus.stdout) && /review/.test(cliStatus.stdout),
+      'and `inbox status` reports it', cliStatus.stdout)
+    const cliBefore = mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_A)]?.session
+    const cliRotate = runPythonCaptured(['-B', journal, 'inbox', 'subscribe', WS_A, '--memory', ROOT, '--rotate'])
+    const cliAfter = mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_A)]
+    ok(cliRotate.status === 0 && cliAfter?.session !== cliBefore && cliAfter?.deliveries === 0,
+      'the CLI `--rotate` mints a fresh session too', `${cliRotate.stdout}${cliRotate.stderr}`)
+    const cliOffRotate = runPythonCaptured(['-B', journal, 'inbox', 'subscribe', WS_A, '--memory', ROOT, '--off', '--rotate'])
+    ok(cliOffRotate.status === 2 && /rotate/.test(cliOffRotate.stderr),
+      'the CLI refuses `--off --rotate` instead of ignoring rotate',
+      `${cliOffRotate.stdout}${cliOffRotate.stderr}`)
   }
 
   /* ------------------------------------------- 4. active delivery: authorization first ── */
@@ -392,8 +454,11 @@ if (!hasPython) {
     && calls3.create[0].cwd === undefined && calls3.create[0].sessionId === sessionId,
     'delivery creates/adopts the fixed session **by workspace id** (so the UI can group it)',
     JSON.stringify(calls3.create))
-  ok(calls3.resolveAgent.length === 1 && calls3.resolveAgent[0] === sessionId,
-    'delivery resolves the live Agent of that session (the schedule path, not `prompt`)',
+  ok(calls3.create[0]?.agentPreset === undefined,
+    'without a subscription preset the create request carries none (deployment default)',
+    JSON.stringify(calls3.create[0]))
+  ok(calls3.resolveAgent.length === 2 && calls3.resolveAgent.every((id) => id === sessionId),
+    'delivery resolves the inbox session, and only creates it when it does not exist',
     JSON.stringify(calls3.resolveAgent))
   ok(calls3.followup.length === 1,
     'delivery appends exactly one message to that session', JSON.stringify(calls3.followup))
@@ -415,6 +480,31 @@ if (!hasPython) {
   const afterOne = mod.readSubscriptions(ROOT)[mod.workspaceKey(WS_B)]
   ok(afterOne.deliveries === 1, 'a successful push increments the delivery count', JSON.stringify(afterOne))
   ok(afterOne.session === sessionId, 'and keeps the same session below the cap', JSON.stringify(afterOne))
+
+  // 第二次投递时那个会话已经开过轮次：必须 **resume**，不能因为 create-first 再 mint 一个
+  // 空白会话（2026-10-19 修掉的缺陷；旧 fake 的 resolveAgent 永远成功，看不出来）。
+  const second = await tool3.execute({ operation: 'send', workspace: WS_A, text: '第二条提醒。', to: WS_B })
+  ok(second.ok === true && calls3.create.length === 1 && calls3.followup.length === 2,
+    'a started inbox session is resumed, not recreated',
+    JSON.stringify({ creates: calls3.create.length, followups: calls3.followup.length }))
+
+  // 订阅里钉了 preset 时，只有**新建**收件会话的那一次把它传给宿主（已开始的会话换不了）。
+  {
+    mod.writeSubscriptions(ROOT, {
+      [mod.workspaceKey(WS_B)]: {
+        path: WS_B, active: true, session: 'session-preset-b', deliveries: 0,
+        preset: 'review', at: '2026-10-17T10:05:00+08:00',
+      },
+    })
+    const { tool: toolPreset, calls: callsPreset } = mount({})
+    const presetPushed = await toolPreset.execute({
+      operation: 'send', workspace: WS_A, text: '带着 preset 的提醒。', to: WS_B,
+    })
+    ok(presetPushed.ok === true && callsPreset.create.length === 1
+      && callsPreset.create[0].agentPreset === 'review',
+      'the subscription preset is forwarded to create() for a new inbox session',
+      JSON.stringify(callsPreset.create))
+  }
 
   // Rule 6: the receiving session eventually needs its own convergence rule. At the cap the
   // binding rotates to a fresh session; the old one is left for its user to archive.
@@ -460,9 +550,10 @@ if (!hasPython) {
     })
     ok(targeted.ok === true && /conversation session-target-1/.test(targeted.text),
       'a same-workspace conversation can be targeted', targeted.text)
-    ok(callsT.create.length === 1 && callsT.create[0].workspaceId === 'ws-a'
-      && callsT.create[0].sessionId === 'session-target-1' && callsT.create[0].cwd === undefined,
-      'and it creates/adopts exactly that session', JSON.stringify(callsT.create))
+    ok(callsT.create.length === 0,
+      'an existing conversation is resumed, not created again (create-first used to mint a '
+        + 'stray blank session once the target had started)',
+      JSON.stringify(callsT.create))
     ok(callsT.resolveAgent[0] === 'session-target-1',
       'waking the named conversation, not the workspace inbox session',
       JSON.stringify(callsT.resolveAgent))

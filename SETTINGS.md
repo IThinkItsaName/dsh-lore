@@ -166,16 +166,16 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 | `skillEnabled` | boolean | `true` | 「技能」 | 是否登记 `project-work-log` 技能。**关掉它不影响记忆那一半**（索引注入与 `worklog_memory` 照旧）。 | 即时 |
 | `modelInvocable` | boolean | `true` | 「高级」 | 是否允许模型自动调用这个技能。 | 即时 |
 | `userInvocable` | boolean | `true` | 「高级」 | 是否允许用户手动调用。 | 即时 |
-| `verbose` | boolean | `false` | 「高级」 | **诊断开关**：装载与技能查询时打诊断行。落点由 `DSH_WORKLOG_TRACE`（或 `<包>/lib/.trace`）决定，没设就进宿主日志 —— 一个开关决定开不开，环境变量决定落哪儿。 | **重启** |
-| `memoryEnabled` | boolean | `true` | 「记忆」 | 全局记忆总开关。**关掉后工具照样注册**（调用它会明确回答"已关闭"，见 `lib/index.js` 的 `memoryAnswer()`），不再注册的是**两段提示词注入**（索引段与收件箱提示）。 | **重启** |
+| `verbose` | boolean | `false` | 「高级」 | **诊断开关**：装载与技能查询时打诊断行。落点由 `DSH_WORKLOG_TRACE`（或 `<包>/lib/.trace`）决定，没设就进宿主日志 —— 一个开关决定开不开，环境变量决定落哪儿。**每次 `trace()` 现读**。 | 即时 |
+| `memoryEnabled` | boolean | `true` | 「记忆」 | 全局记忆总开关。**关掉后工具照样注册**（调用它会明确回答"已关闭"，见 `lib/index.js` 的 `memoryAnswer()`）；两段提示词注入**常驻注册、按装配现判**，关掉就是空串。 | 即时 |
 | `memoryInjectIndex` | boolean | `true` | 「记忆」 | 是否把索引段注入提示词。**每次装配现读**（2026-09-30 之前它在挂载期读，界面却写着"即时生效"）。 | 即时 |
 | `memoryPersonalSearchable` | boolean | `false` | 「记忆」 | 个人目录是否可被检索（用时现读）。 | 即时 |
 | `memoryDir` | string | 空 | 「记忆」（最后一栏） | 全局记忆根。空 = `<用户主目录>/dsh-lore-memory`；**相对路径按用户主目录解析**（上面两条路径按包根算，不一样）。非空时压过 `$DSH_WORKLOG_MEMORY`。装载时**与每次配置变更时**都记进设置文件，`journal.py` 才读得到同一个根（见 `lib/index.js` 的 `mirrorMemoryDir`）。 | 即时 |
 | `sessionsCrossWorkspace` | boolean | `true` | 「高级」 | 是否允许 `sessions` 的 `scope:"all"`（跨工作区**只读**列标题）。关掉后该 scope 被明确拒绝，默认 scope 不受影响；**发送仍只到工作区粒度**。用时现读。 | 即时 |
 
-> **只有"要不要注册"这件事需要重启，而 2026-10-14 起只剩两条**：`memoryEnabled`
-> （两段注入注册不注册是装载期事实）与 `verbose`（诊断在装载时装配）。其余 **9 条都是用到时现读** ——
-> 拨完下一次工具调用 / 下一次装配就是新行为，**不需要重启**。
+> **2026-10-19 起没有"装载期读"的设置了**：11 条全部在用到时读（`memoryEnabled` 与
+> `verbose` 也接上了）。拨完下一次工具调用 / 下一次装配 / 下一次 `trace()` 就是新行为，
+> **不需要重启**。
 
 ## 项目侧默认值：不提供控件
 
@@ -260,7 +260,7 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 | **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable` 三个开关，加最后一栏路径框 `memoryDir`（「记忆存放位置」）；再收一个「当前状态」折叠区（只读，见下） |
 | **高级** | `verbose`、`modelInvocable`、`userInvocable`、`sessionsCrossWorkspace` —— 四个开关 |
 
-「路径」与「当前状态」用 `DisclosureRow`（默认收起）：前者是装载参数（不常改），
+「路径」与「当前状态」用 `DisclosureRow`（默认收起）：前者不常改，所以收起来，
 后者不属于这一页的语义但很有用（"我到底登记没登记"）。收起时内容**不在渲染树里**。
 
 中文文案是完整的；英文词典也已就位（键集与中文一致，
@@ -299,28 +299,30 @@ GET /plugins/dsh-lore/status.json   → { source, path, memory, error }
 | `Config` 被宿主认成 `schema`（字段带 `x-cordis.volatile: true`） | **已验证**（活体 `Config.listConfigs{name:"dsh-lore"}`） |
 | 值能被官方通道写进 profile patch 并读回 | **已验证**（`apply()` 的选项、卡片显示的值同源） |
 | 只改 `.volatile()` 字段时宿主**不重挂载** | **已验证**：Loader 把新值提交进运行中的引用并发一次 `loader/volatile-update`（`cordis/README.md` §Volatile configuration；官方 cookbook 的口径是"在操作开始时读 `.get()`"） |
-| 我们的选项**改完即时生效** | **9 条是，2 条不是**（见下表） |
+| 我们的选项**改完即时生效** | **11 条全部是**（2026-10-19） |
+| 注册表的目录缓存会被刷新 | **已验证**：provider 在注册时拿到 `control.invalidate()`，配置变化时由 `apply()` 的 volatile 监听调用；此前 control 被丢弃，模型侧会一直看到旧目录 |
 
-**两条读法要分清**（2026-10-14 收敛后的口径）：
+**一条读法**（2026-10-19 收敛）：
 
 | 类 | 键 | 改完 |
 |---|---|---|
-| 装载期事实（"注册不注册"） | `memoryEnabled`、`verbose` | **需重启 DSH** |
-| 用时现读 | 其余 **9 条**：技能那 5 项 + `memoryInjectIndex`、`memoryPersonalSearchable`、`memoryDir`、`sessionsCrossWorkspace` | 即时生效 |
+| 用时现读 | **全部 11 条** | 即时生效 |
 
-技能那 5 项的落地方式：provider **常驻注册**，开关 / 目录在每次 `list()`/`get()` 里现读
-（`lib/index.js` 的 `live()` 与 `livePaths()`），关掉的技能报**空目录**；调用许可在投影候选时现读。
-代价写在代码注释里：关掉一个技能**不再让它的 provider 消失** —— 注册与否是装载期事实，
-摘掉再挂上会撞注册表对重名 provider 的拒绝。
+落地方式：
 
-`memoryEnabled` 仍是装载期：`mountMemoryInjection()` 在挂载时决定**要不要注册**那两段注入。
-同一段里的 `memoryInjectIndex` 不同 —— 它在 `text()` 里按装配现读。于是在运行中把总开关关掉：
+- **技能 5 项**：provider 常驻注册，`live()` / `livePaths()` 每次 `list()`/`get()` 现读；
+  `loader/volatile-update` 时先 `retryProbe()`（装载探针失败过的路径重新试）再
+  `invalidate()`（清注册表的目录缓存），于是下一次 `snapshot()` 重新收集。
+  代价仍写在代码注释里：关掉一个技能**不再让它的 provider 消失** —— 注册与否是装载期事实，
+  摘掉再挂上会撞注册表对重名 provider 的拒绝；它改为报**空目录**。
+- **记忆 4 项**：工具、注入段与状态端点读的是**原始 config 里的 `.volatile()` 引用**
+  （`liveMemorySettings(liveConfig)`），不是 `mergeSettings()` 的快照。两段注入**常驻注册**，
+  `memoryEnabled` 与 `memoryInjectIndex` 在 `text()` 里按装配判；空串即"没有这一段"，
+  宿主渲染时会丢掉空段。`memoryDir` 仍由 `mirrorMemoryDir()` 写进设置文件给 `journal.py` 用。
+- **诊断 1 项**：`diagnostics.verbose` 在 volatile 事件里跟着引用刷新，下一次 `trace()` 就是新开关。
 
-- **记忆工具立刻不再应答**（`memoryAnswer()` 按调用现读，回一句"已关闭"），
-- 提示词里那两段**要等重启才消失**（打开同理）。
-
-卡片文案已经按这个口径写（`lib/client.js` 的「这是两个还需要重启的开关之一」）。
 **本节从前那句"不声称任何一项即时生效"已作废** —— 它描述的是 2026-10-14 之前的状态。
+**还可能需要重启的只剩"换插件代码"**（没有 HMR 的宿主）；设置本身不再需要。
 
 ## 界面样式走宿主的设计令牌
 

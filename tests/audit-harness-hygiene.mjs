@@ -75,7 +75,7 @@ for (const variable of PINNED) {
     `${variable} 的钉是无条件的（条件式等于没钉 —— 2026-10-14/15 两次都是这么漏的）`)
 }
 ok(!/join\(PKG, 'tests', 'tmp'/.test(shim),
-  '隔离设置文件不在包内（包内多出来的夹具就是 `_package.py --check` 的漂移）')
+  '隔离设置文件不在包内（包内多出来的夹具是仓库卫生问题，且会随 npm 包发出去）')
 ok(/ISOLATED_SETTINGS_FILE = join\(tmpdir\(\)/.test(shim),
   '隔离设置文件在系统临时目录下')
 /* 收尾：隔离根不能跨运行残留（残留会让下一次的结果取决于上一次留下什么）。 */
@@ -88,14 +88,11 @@ ok(/npm run test:plugin/.test(ci), 'CI 跑 `npm run test:plugin`')
 ok(/npm run audit/.test(ci), 'CI 跑 `npm run audit`')
 ok(/_selftest\.py/.test(ci), 'CI 跑技能自测')
 
-/* ---- 5. CI 里那句话不许再说反（第二轮审查 N4）----
-   `dist/skill-only/` 有 3 个文件是**跟踪的**，而 `npm run test:skill-only` 是 `--check`：
-   产物缺失/过期时它**报错**，不会"建出来"。注释与步骤名都写反过一次。 */
-ok(!/dist\/skill-only\/[^\n]*不在 git 里/.test(ci),
-  'CI 不再说 `dist/skill-only/` 不在 git 里（它有 3 个跟踪文件）')
-ok(!/name:\s*Build the skill-only copy/.test(ci),
-  'CI 那一步不再叫 "Build …"（它跑的是 `--check`，报错而不是构建）')
-ok(/name:\s*Check the skill-only copy/.test(ci), 'CI 那一步叫 "Check the skill-only copy"')
+/* ---- 5. CI 不再跑已迁出的 skill-only 步骤 ----
+   2026-10-19 起 `skill-only/` + `dist/` + 路径门禁跟着独立技能仓库走了；本仓库的 CI
+   只该跑 vendored 副本的同步检查（`tests/audit-skill-sync.mjs`，在 test:plugin 链上）。 */
+ok(!/test:skill-only/.test(ci), 'CI 不再跑已迁出的 `test:skill-only`')
+ok(!/dist\/skill-only/.test(ci), 'CI 不再提 `dist/skill-only/`（产物在独立技能仓库里）')
 /* 步骤里写的 harness 支数必须等于这条链真正跑的支数（"15 支"曾经在 16 支时留着）。 */
 const claimed = /(\d+)\s*支 harness/.exec(ci)
 ok(claimed !== null && Number(claimed[1]) === wiredGates.length,
@@ -109,53 +106,11 @@ ok(releasingClaim !== null && Number(releasingClaim[1]) === wiredGates.length,
   '`RELEASING.md` 发版清单里的 harness 支数与链上真跑的一致',
   releasingClaim ? `清单说 ${releasingClaim[1]} 个，链上 ${wiredGates.length} 支` : '清单里没写支数')
 
-/* 判读行里那句"N 条变异"同样是发版时才看的数字：表长了而清单没跟，就是 F17 那类
-   "文档里抄了一个会过期的字面值"。数的是表里以 `("` 开头的行。 */
-const driver = read(join(PKG, 'tests', 'reverse-verify.py'))
-const table = /MUTATIONS[^=]*=\s*\[([\s\S]*?)\n\]/.exec(driver)
-const rows = table ? (table[1].match(/^\s*\("/gm) || []).length : 0
-const mutationClaim = /(\d+)\s*条变异：/.exec(releasing)
-ok(rows > 0 && mutationClaim !== null && Number(mutationClaim[1]) === rows,
-  '`RELEASING.md` 判读行里的变异条数与 `tests/reverse-verify.py` 的变异表一致',
-  `清单说 ${mutationClaim ? mutationClaim[1] : '（没写）'} 条，表里有 ${rows} 条`)
-
-/* ---- 7. 变异驱动自己也有"看着在跑、其实没跑"（第三轮复查踩到的）----
-   2026-10-15：三条新变异的期望断言内联在 `_selftest.py` 的 `main()` 里，而驱动只跑
-   `PHASES` 登记过的函数 —— 跑完一整轮才报"期望的标签没变红；红了 0 条"，真实原因却是
-   那条断言从头到尾没被执行过（跑完九十条才发现，一轮白跑）。修法两半：断言搬进相
-   （`numbering_phase`），驱动加**起飞前检查**（先跑一遍未变异的自测，期望字样不在标签
-   里就当场退出）。下面几条守的就是这两半别被改回去。
-
-   起飞前检查自己也有过一次假警报：`gates` 那一相的标签是拼出来的
-   （`f"gates: the central list names \`{name}\`"` —— 未变异时拼的是别的规则名），拿
-   "未变异时的标签里有没有这个字样"硬比，会把一条一直好好的变异判成不可达。所以那关按
-   `reachability()` 分情形判：标签里有 → 通过；字样写在相源码里 → 通过；只出现在相之外
-   （`main()` 里）→ 当场报"不可达"；相里的模板也拼不出来 → 报"期望字样写错了"。 */
-const phaseBlock = /PHASES[^=]*=\s*\{([\s\S]*?)\n\}/.exec(driver)
-const registered = new Set([...(phaseBlock ? phaseBlock[1].matchAll(/"(\w+)":/g) : [])].map((m) => m[1]))
-const usedPhases = new Set((table ? (table[1].match(/^\s*\("(\w+)"/gm) || []) : [])
-  .map((line) => /"(\w+)"/.exec(line)[1]))
-const unregistered = [...usedPhases].filter((phase) => !registered.has(phase))
-ok(registered.size > 0 && usedPhases.size > 0 && unregistered.length === 0,
-  '变异表里用到的每一相都在 `PHASES` 里登记过（没登记的那一相，驱动当场 KeyError）',
-  `登记 ${registered.size} 相；表里用到 ${usedPhases.size} 相`
-  + (unregistered.length ? `；没登记的：${unregistered.join(', ')}` : ''))
-ok(/^def unmutated_labels\(/m.test(driver) && /unmutated_labels\(st_path, /.test(driver),
-  '驱动有起飞前检查：先跑一遍未变异的自测，把断言标签收进来')
-ok(/^def reachability\(/m.test(driver) && /if any\(expect in label for label in labels\)/.test(driver),
-  '起飞前检查与判定用同一种匹配（`expect in label`）——两处不一样就等于没查')
-ok(/^def phase_templates\(/m.test(driver) && /phase_templates\(selftest_src, ranges\)/.test(driver),
-  '起飞前检查认"动态标签"（相里拼出来的 `f"…{name}…"`），不把好好的变异判成不可达')
-ok(/^def top_level_ranges\(/m.test(driver) && /字样只出现在相之外/.test(driver),
-  '起飞前检查能指出"字样落在哪个函数里"（内联在 `main()` 里的那种，当场点名）')
-ok(/--no-preflight/.test(driver),
-  '起飞前检查能显式跳过（`--no-preflight`），而不是悄悄失效')
-
-/* 两条"标题"正则各管各的（2026-10-15 性能复核补的守卫）：`HEADING_RE` 管**首行篇号**
-   （`renumber_body` 在用），`_SECTION_HEADING_RE` 管**小节标题**（`heading_level()` 用）。
-   性能补丁的第一版把新常量也命名成 `HEADING_RE` —— 后定义的那个**静默覆盖**前一个，
-   症状是 `check` 直接 `ERROR: … invalid literal for int() with base 10: '#'`、退出 2
-   （靠 A/B 比对 exit code 才发现）。名字不许再撞，两条也不许变成同一条正则。 */
+/* ---- 7. 两条"标题"正则各管各的（2026-10-15 性能复核补的守卫）----
+   `HEADING_RE` 管**首行篇号**（`renumber_body` 在用），`_SECTION_HEADING_RE` 管**小节标题**
+   （`heading_level()` 用）。性能补丁的第一版把新常量也命名成 `HEADING_RE` —— 后定义的那个
+   **静默覆盖**前一个，症状是 `check` 直接 `ERROR: … invalid literal for int() with base 10:
+   '#'`、退出 2（靠 A/B 比对 exit code 才发现）。名字不许再撞，两条也不许变成同一条正则。 */
 const journalPy = read(join(PKG, 'skills', 'project-work-log', 'scripts', 'journal.py'))
 const numHeading = /^HEADING_RE = (.+)$/m.exec(journalPy)
 const sectionHeading = /^_SECTION_HEADING_RE = (.+)$/m.exec(journalPy)
@@ -167,4 +122,4 @@ ok(numHeading !== null && sectionHeading !== null
   '两个标题正则各定义一次、且不是同一条（重名会静默覆盖 `HEADING_RE`，`check` 当场退出 2）',
   `HEADING_RE 定义 ${numHeadingDefs} 次、_SECTION_HEADING_RE 定义 ${sectionHeadingDefs} 次`)
 
-report(`harness hygiene OK — ${wiredGates.length} gates wired, all importing the shim, the CI + RELEASING prose matches reality (${rows} mutations), and the driver keeps its preflight (${registered.size} phases registered)`)
+report(`harness hygiene OK — ${wiredGates.length} gates wired, all importing the shim, and the CI + RELEASING prose matches reality`)

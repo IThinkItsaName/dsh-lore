@@ -26,7 +26,7 @@
 |---|---|---|
 | [why.md](why.md) | **为什么要做这个**：初衷原话（两次）、我补的说明、七条不变量、来历与已知缺口 | **必须保证什么**——目标层的约束，与下面四份（实现层）分工不同 |
 | [worklog-spec.md](worklog-spec.md) | 记录体系本身：分册、编号、精细度档位、`check`/`lint` 的判定 | 记录格式与门禁语义 |
-| [settings-spec.md](settings-spec.md) | 配置卡片：三页签、每个字段的归属（装载期 vs 用时现读）、写回通路与两个落点 | 哪些改动需要重启 |
+| [settings-spec.md](settings-spec.md) | 配置卡片：三页签、每个字段的读法（现读，2026-10-19 起无装载期选项）、写回通路与两个落点 | 设置改完即时生效，不靠重启 |
 | [memory-spec.md](memory-spec.md) | 全局记忆：目录布局、来源分档、索引、`dream`、`inbox`、升格 | 准入靠来源分档，不靠重要性 |
 | [goals-spec.md](goals-spec.md) | `目标.md`：长期目标 → 阶段的两层表 | 目标只增不改 |
 

@@ -51,16 +51,14 @@ jobs:
       # 要看条数就读这一步的输出最后一行。
       #
       # `-B`（不写 `.pyc`）不是洁癖：脚本就住在 `skills/` 里，Python 会把 `__pycache__`
-      # 生成在**包内**，而 `_package.py --check` 把副本里的 `__pycache__` 当漂移（它会随包发出去）。
-      # 于是"跑过自测"本身会把下一道门禁弄红 —— 实测踩过。`npm test` 同样带 `-B`。
+      # 生成在**包内**；`tools/sync-skill.mjs` 会忽略它，但包里的 `__pycache__` 仍会被
+      # npm 打进发布物（实测过一次 398 KB 的陈旧 `.pyc`）。`npm test` 同样带 `-B`。
       - name: Skill self-test
         run: python -B skills/project-work-log/scripts/_selftest.py
 
-      # `dist/skill-only/` 是 `tools/build-skill-only.mjs` 的产物，但**有 3 个文件是跟踪的**
-      # （SKILL.md 与两份 references）；`tests/audit-paths.mjs` 会核对它与源逐字节一致，
-      # 所以这一步是**检查**而不是"建出来"——产物缺失或过期时它会报错并退出 1。
-      - name: Check the skill-only copy
-        run: npm run test:skill-only
+      # 技能层已拆到独立仓库（`publish/project-work-log/`）：`skill-only/` + `dist/` 与
+      # 路径/变异门禁都跟着搬走了。本仓库只保留 vendored 的 `skills/project-work-log/`，
+      # 由 `test:plugin` 链上的 `tests/audit-skill-sync.mjs` 守漂移（独立仓库缺席时 SKIP）。
 
       # 17 支 harness。它们各自的收尾都用 tests/_report.mjs 的 `report()`，
       # 有 FAIL 就 exit 1；有 SKIP 会在末行注明 `(N skipped)`，别把"没验"读成"验过"。

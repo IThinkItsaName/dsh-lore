@@ -643,8 +643,12 @@ python scripts/journal.py inbox sweep --older-than 30            # 只报告
 python scripts/journal.py inbox sweep --older-than 30 --apply    # 才真删
 python scripts/journal.py inbox count                            # → 一个整数
 python scripts/journal.py inbox subscribe                        # 授权主动送达（默认关）
-python scripts/journal.py inbox status                           # 看授权与已推送条数
+python scripts/journal.py inbox subscribe --preset review        # 可选：固定收件会话的 agent preset
+python scripts/journal.py inbox subscribe --rotate               # 改 preset / 想重开时换新收件会话
+python scripts/journal.py inbox status                           # 看授权、收件会话、preset、已推送条数
 ```
+
+> `--rotate` 只在打开主动送达时有效；和 `--off` 一起给会被拒绝（退出码 2）。
 
 - **不进索引、不进注入、不进 git**；阅后即删，或 `take --into-record` 转移成一篇记录。
 - **落盘时带头部**（`put` 自动写，`list` / `take` 渲染）：

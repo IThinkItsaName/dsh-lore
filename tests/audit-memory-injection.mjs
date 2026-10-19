@@ -15,9 +15,10 @@
 //   2. content → the index, with the instruction that the body needs a tool call.
 //   3. over budget → dropped, not truncated. A truncated index presents a subset as if it were
 //      the whole, which is worse than injecting nothing.
-//   4. registration: both contributions are registered when enabled, neither when disabled,
-//      the index only when its own switch is on, and the inbox even at zero (its text is
-//      resolved per assembly, so the count must be read then — not at mount).
+//   4. registration: both contributions are registered **unconditionally** — a volatile change
+//      cannot unregister a section, so the switches are resolved per assembly instead. Empty
+//      text is the channel's way of saying nothing, and the host drops empty sections; the
+//      inbox is registered even at zero because its count is read then — not at mount.
 //
 //   node tests/audit-memory-injection.mjs
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -75,22 +76,20 @@ resetMemory()
 ok(mod.memoryIndexSection() === '', 'an absent memory root injects nothing')
 ok(mod.countInboxItems() === 0, 'an absent inbox counts 0, not a throw')
 
-// The experience rules are static text with their own applicability condition; assert both halves
-// so a future edit cannot drop the condition while keeping the three steps.
+// The experience pointer is static text with its own applicability condition; assert both halves
+// so a future edit cannot drop the condition while keeping the pointer.
 {
   const rules = mod.experienceLayerSection()
-  ok(rules.includes('work_log/lessons/'), 'the rules name the condition directory')
-  ok(rules.includes('work_log/_inbox.md'), 'the rules name the pitfall inbox')
-  ok(rules.includes('共同特征') && rules.includes('一眼看不出原因'),
-    'the rules generalize the trigger beyond the examples', rules)
-  ok(rules.includes('grep -rn') && rules.includes('Select-String'),
-    'the search is recursive and names a Windows equivalent', rules)
-  ok(rules.includes('工作区存在 `work_log/lessons/` 时适用'),
-    'the header carries the applicability condition', rules)
-  ok(rules.includes('当前状态') && rules.includes('待办'),
-    'the closing check also looks at the active ledger surface', rules)
-  ok(rules.includes('照某条经验做仍无效') && rules.includes('生效条件'),
-    'a lesson that did not work is recorded and re-scoped instead of silently dropped', rules)
+  ok(rules.includes('work_log/'), 'the pointer names the work-log container')
+  ok(rules.includes('过往记录') && rules.includes('经验'), 'the pointer says records and experience are there')
+  ok(rules.includes('若存在 `work_log/`'), 'the header carries the applicability condition', rules)
+  ok(rules.includes('复用既有做法') && rules.includes('排查旧问题') && rules.includes('不确定是否相关'),
+    'the pointer names concrete triggers, not a vague "needs past experience"', rules)
+  ok(rules.includes('brief') && rules.includes('search'), 'the cheap probes are named', rules)
+  ok(rules.includes('不存在') && rules.includes('长期经验') && rules.includes('任务周期'),
+    'the pointer covers creating the container for a long-running task after asking about its span', rules)
+  ok(rules.includes('project-work-log'), 'the pointer names the skill for the full workflow', rules)
+  ok(rules.includes('work_log/README.md'), 'the pointer names the ledger entry', rules)
 }
 
 // A generated index that carries only its own H1 is, in substance, empty. Injecting its header
@@ -169,7 +168,7 @@ writeIndex(SAMPLE)
 
 // Defaults: memoryEnabled true, memoryInjectIndex true → the experience section + both memory
 // contributions are registered. The experience section is new (2026-10-18) and deliberately
-// **not** gated by the memory switches: it is workspace rules, not global memory.
+// **not** gated by the memory switches: it is a workspace pointer, not global memory.
 {
   const calls = mountWith({})
   ok(calls.section.length === 2,
@@ -181,11 +180,10 @@ writeIndex(SAMPLE)
     'both sections carry stable names', calls.section.map((s) => s.name).join(','))
   ok(typeof experience?.text === 'string',
     'the experience section is a static string, so it stays in the cacheable prefix')
-  ok(experience?.text.includes('work_log/lessons/') && experience?.text.includes('_inbox.md')
-     && experience?.text.includes('完成'),
-     'the experience rules mention the condition, the inbox and the closing check')
+  ok(experience?.text.includes('work_log/') && experience?.text.includes('project-work-log'),
+     'the experience pointer names the container and the skill')
   ok(!experience?.text.includes('AGENTS.md'),
-     'the injected rules no longer depend on a workspace AGENTS.md')
+     'the injected pointer no longer depends on a workspace AGENTS.md')
   ok(Number.isFinite(index?.order), 'the index section carries a finite order')
   ok(Number.isFinite(calls.context[0]?.order), 'the context carries a finite order')
   // The whole point of the two-interface split: the index is STABLE text, the inbox is resolved
@@ -223,14 +221,50 @@ writeIndex(SAMPLE)
     'flipping the switch takes effect on the next assembly — without a restart')
 }
 
-// `memoryEnabled: false` → the two memory contributions are gone, but the **experience rules stay**:
-// turning global memory off must not silently disable the workspace's pitfall workflow.
+// `memoryEnabled: false` → both memory contributions are **still registered** (registration is a
+// mount-time fact and a volatile change cannot undo it), but they resolve to nothing. The
+// experience pointer stays: turning global memory off must not silently disable the workspace's
+// pitfall workflow.
 {
   const calls = mountWith({ memoryEnabled: false })
-  ok(calls.section.length === 1 && calls.section[0]?.name === 'dsh-lore:experience',
-    'memoryEnabled=false keeps the experience section and drops the index',
+  const index = calls.section.find((s) => s.name === 'dsh-lore:memory-index')
+  ok(calls.section.some((s) => s.name === 'dsh-lore:experience') && index !== undefined,
+    'memoryEnabled=false keeps both sections registered',
     calls.section.map((s) => s.name).join(','))
-  ok(calls.context.length === 0, 'memoryEnabled=false registers no inbox context')
+  ok(index?.text() === '', 'but the index resolves to nothing while memory is off')
+  ok(calls.context.length === 1 && calls.context[0]?.text() === '',
+    'and the inbox notice resolves to nothing too', JSON.stringify(calls.context[0]?.text()))
+}
+
+// …and the switches are read **per assembly from the live references**: flip the ref the mount
+// received (the Loader's volatile-only commit), call the very same registered functions again —
+// no re-mount, no restart. This is the 0.9.2 defect: the mount passed the merged snapshot here.
+{
+  const cell = (initial) => {
+    let value = initial
+    return { get: () => value, set: (next) => { value = next } }
+  }
+  const enabled = cell(true)
+  const injected = cell(true)
+  resetMemory()
+  writeIndex(SAMPLE)
+  writeInbox(1)                             // a non-empty inbox, so the notice has text
+  process.env.DSH_WORKLOG_SETTINGS = settingsWith({})
+  const { ctx, calls } = fakeCtx()
+  mod.apply(ctx, { memoryEnabled: enabled, memoryInjectIndex: injected })
+  const index = calls.section.find((s) => s.name === 'dsh-lore:memory-index')
+  const inbox = calls.context.find((c) => c.name === 'dsh-lore:inbox')
+  ok(index?.text().length > 0, 'live: the index is injected while both switches are on')
+  ok(inbox?.text().length > 0, 'live: the inbox notice is present while memory is on')
+
+  enabled.set(false)                        // ← Loader's volatile-only commit
+  ok(index?.text() === '' && inbox?.text() === '',
+    'live: the master switch takes effect on the next assembly — no restart')
+
+  enabled.set(true)
+  injected.set(false)
+  ok(index?.text() === '' && inbox?.text().length > 0,
+    'live: the index switch is independent of the master switch')
 }
 
 /* ------------------------------------------- 5. the inbox count and its words ── */
@@ -351,5 +385,5 @@ writeIndex(SAMPLE)
 resetMemory()
 rmSync(SANDBOX, { recursive: true, force: true })
 
-report('memory injection OK — nothing means nothing, the experience rules are unconditional, '
+report('memory injection OK — nothing means nothing, the experience pointer is unconditional, '
   + 'and both switches are real') 

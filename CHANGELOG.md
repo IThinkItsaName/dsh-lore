@@ -8,6 +8,90 @@
 
 ## [未发布]
 
+## [0.9.4] - 2026-10-20
+
+### 修复：设置保存后不用重启——四处"装载期/快照"读法全部改成现读
+
+桌面 profile 上，卡片保存的值并不都真的进入了行为：
+
+- **记忆注入开关**（`memoryInjectIndex` 等）读的是 `mergeSettings()` 的装载快照，不是
+  `.volatile()` 引用，于是保存后提示词仍按旧值走（关掉仍注入、打开仍不注入），直到重启。
+  现在 `mountMemoryTools()` / `mountMemoryInjection()` 与无参 `memoryDirectory()` 都拿
+  `apply()` 收到的原始 `config`，每次调用/装配现读。
+- **`memoryEnabled`** 原先决定"两段注入注不注册"；注册是装载期事实，所以它只能重启生效。
+  现在两段注入**常驻注册**，开关在 `text()` 里按装配判，空串即不注入（宿主渲染时丢空段）。
+- **`verbose`** 原先在装载时定 `diagnostics.verbose`；现在由 `loader/volatile-update`
+  跟着引用刷新，下一次 `trace()` 就是新开关。
+- **技能目录**：`registerProvider` 在注册时交出的 `control.invalidate()` 此前被丢掉，
+  而注册表的目录缓存没有 TTL、模型每步 `snapshot()` 读的就是它 —— 技能开关/路径/调用许可
+  改了，模型侧仍看旧目录。现在接住 control，技能相关键变化时 `invalidate()`；装载探针
+  失败过的路径也会 `retryProbe()`，改对路径当次恢复。
+
+结果：11 个设置全部即时生效，卡片三页统一写"即时生效"；只有换插件代码（没有 HMR 的宿主）
+才需要重启。回归见 `tests/run.mjs`（引用桩 + `loader/volatile-update`）与
+`tests/audit-memory-injection.mjs`（按装配现读），文案与规格断言同步更新。
+
+### 新增：主动送达的收件会话可选 agent preset（并修投递路的重复建会话）
+
+`subscribe` 多一个 `preset`（工具参数与 CLI `inbox subscribe --preset`）：收件方给自己工作区
+的收件会话钉一个 agent preset，`send` 唤醒一个**新建**收件会话时把它作为 `agentPreset` 传给
+宿主；已经开始的会话换不了预设（宿主 `agent-preset/locked`），用 `rotate`（工具 `rotate: true` /
+CLI `--rotate`）换一个新的空白收件会话，下一条提醒就会用新预设新建。发送方不能指定收件方的
+preset —— 它属于收件方授权。未知预设：工具在落盘前拒绝，
+CLI 不校验名册（名册在运行中的宿主里），写错时投递失败、信留在信箱。
+
+同时修掉投递路的一个隐患：原先先 `create({sessionId})` 再 `resolveAgent`，而宿主的 `create`
+只在会话**还是空白**时复用它，已经开过轮次时会另 mint 一个 id；旧代码忽略返回值，于是首次
+投递之后每条提醒都可能多建一个空白会话，而提醒仍发给旧会话。现在先 `resolveAgent`
+（Resolve or resume），只有 `session/not-found` 才 `create`，并使用返回的 `sessionId`。
+回归见 `tests/audit-inbox-delivery.mjs`（preset 透传 / 未知预设拒绝 / 已开始会话不再重复建）。
+
+### 修复：审查发现的同步原子写 / skillEnabled 键清单 / rotate 边界
+
+代码审查模式对 0.9.4 做了一轮只读审查（无 critical/high），以下按报告修掉：
+
+- **M1（本版引入）**：`tools/sync-skill.mjs` 的 vendored 写入改为**同目录临时文件 + rename**
+  （原先直接 `writeFileSync`，同步中断会留半截文件，正是 2026-10-16 `_package.py` 把
+  `SKILL.md` 截成 0 字节的形态）；失败时清理临时文件。
+- **M2（预存）**：`KNOWN_CONFIG_KEYS` 补上 `skillEnabled`。此前宿主把 Config 默认值填进
+  `apply()` 时每次装载都打 `ignoring unsupported config keys: skillEnabled`，且迁移的
+  `alreadyOwned` 看不到它，卡片写过的 `skillEnabled:false` 会被静默丢掉。补了“Config 解析后的
+  完整配置无未知键”与“profile 已拥有的 skillEnabled 不被迁移覆盖”两条断言，并修正两段漂掉的
+  注释。
+- **L5**：`subscribe --off --rotate`（工具 `{active:false, rotate:true}`）从“静默忽略 rotate”
+  改为**明确拒绝**：CLI 退出码 2、工具 `ok:false`，授权不改变。
+- **L6/L10/L11**：`references/commands.md` 补 `--preset` / `--rotate` 示例与 `status` 的 preset；
+  `_selftest.py` 两处指向旧 `publish/worklog/tests/reverse-verify.py` 的注释改到技能仓库；
+  技能自测补 CLI `--preset` / `--rotate` / `--off+--rotate` 覆盖（自测 867 → **871**）。
+
+### 变更：技能层拆到独立仓库，本包改为 vendored 消费
+
+`project-work-log` 技能层（`skills/project-work-log/`）、`skill-only/` + `dist/` 无脚本变体、
+构建工具、路径一致性（`tests/audit-paths.mjs`）与变异验证（`tests/reverse-verify.py`）都搬到
+独立仓库 **`project-work-log`**（本地仓，**尚未发布**）。本包：
+
+- 只保留 `skills/project-work-log/` 的 **vendored 副本**（插件运行时必需），由新增的
+  `tools/sync-skill.mjs` 从独立仓库单向同步；`tests/audit-skill-sync.mjs` 在 `test:plugin`
+  链上守漂移（独立仓库不在本机时 SKIP）。
+- 删除 `package.json` 的 `pi` 字段与 `pi-package` 关键词、README/PUBLISHING 的 pi 安装段、
+  `test:skill-only` 脚本与 `skill-only` 的打包清单；pi 安装/画廊入口归独立仓库。
+- `_package.py`（同步仍住在 `.pi/skills/` 的 `client-require-whitelist`）移到
+  `.pi/tools/_package.py`；工作区 `.pi/skills/project-work-log` 改成指向独立仓库的 junction。
+- `audit-harness-hygiene` 去掉已迁走的 skill-only / 变异驱动 / 语料基线检查；CI 去掉
+  skill-only 步骤。
+
+回归：新仓库 `_selftest.py` 867/867、`audit-paths`、`build-skill-only --check` 全过；本包
+17 支门禁 + `audit` 全绿。详见 `work_log/0164`。
+
+### 变更：经验层注入从“三条规则”精简为“资源提示”
+
+固定段现在只说工作区 `work_log/` 里有过往记录与提炼经验，并列出现实可见的触发条件：需要复用既有做法、
+排查旧问题、延续之前的工作，或不确定是否相关时，才看 `work_log/README.md` 或跑 `brief` / `search`
+（命中再深入）；若 `work_log/` 不存在但任务可能需要长期经验，可按 `project-work-log` 技能先问一句任务周期，
+再决定是否创建（短任务不必建）。具体流程留给 `project-work-log` 技能与 `work_log/README.md`。
+固定段从约 490 字 / 340 tokens 降到 265 字 / ~185 tokens，仍不随 `memoryEnabled` 关闭。
+`tests/audit-memory-injection.mjs` 的断言同步更新。
+
 ## [0.9.3] - 2026-10-18
 
 ### 新增：经验层规则由插件常驻注入（不再依赖 `AGENTS.md`）
@@ -2252,7 +2336,8 @@ DSH 里新工作区不必再建 `AGENTS.md`；skill-only / 非 DSH 场景仍用�
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.3...HEAD
+[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.0...v0.9.1

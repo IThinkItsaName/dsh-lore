@@ -397,23 +397,37 @@ python scripts/journal.py inbox put --outbox "<工作区>/work_log/.lore-inbox" 
 
 ```bash
 cd <我的工作区>
-python scripts/journal.py inbox subscribe     # 授权；--off 撤销，`unsubscribe` 同义
-python scripts/journal.py inbox status        # 看是否开启、收件会话 id、已推送几条
+python scripts/journal.py inbox subscribe                  # 授权；--off 撤销，`unsubscribe` 同义
+python scripts/journal.py inbox subscribe --preset review  # 可选：固定收件会话的 agent preset
+python scripts/journal.py inbox subscribe --rotate         # 换一个新的收件会话 id（改 preset 后用）
+python scripts/journal.py inbox status                     # 看是否开启、收件会话 id、preset、已推送几条
 ```
 
+> `--rotate` / 工具 `rotate: true` 只在**打开**主动送达时有效；和 `--off` / `active: false`
+> 一起给会被拒绝（不会静默忽略 rotate）。
+
 沙箱会话里 CLI 写不了记忆根（`workspace-write` 挡在 `~/dsh-lore-memory` 外），所以同一件事也
-可以在会话里用 `worklog_memory` 的 `subscribe` 操作（`active: false` 撤销）——它由插件写盘，
-边界是**本会话工作区**，替别人开不了。
+可以在会话里用 `worklog_memory` 的 `subscribe` 操作（`active: false` 撤销，`preset` 指定
+收件会话的预设）——它由插件写盘，边界是**本会话工作区**，替别人开不了。
 
 授权写在 `<记忆根>/inbox-subscriptions.json`（**不是记忆条目**：不进索引、不参与 lint），
-键是规范化后的工作区路径，值里有一个**固定收件会话 id**（有就 resume，没有才 create）
-和已推送条数。发件方用 `worklog_memory` 的 `send` 带 `to` 时，会：
-`sessionController.create({cwd, sessionId})` → `sessionController.prompt(...)`，推一条
+键是规范化后的工作区路径，值里有**固定收件会话 id**（先 `resolveAgent` 恢复，不存在才
+`create`）、已推送条数，以及可选的 `preset`。发件方用 `worklog_memory` 的 `send` 带 `to` 时，会：
+`resolveAgent(sessionId)`（已有收件会话就恢复）→ 只有 `not-found` 才
+`create({cwd/workspaceId, sessionId, agentPreset})` → `agent.followup(...)`，推一条
 **不含正文**的提醒（正文永远要收件方自己去取）。
 
+**preset 为什么在订阅侧**：它决定"被唤醒的会话跑哪个预设"（比如便宜模型/只读预设），既是
+收件方的成本决定，也是权限决定，所以由收件方在授权时选；**发送方不能指定**。它只在收件会话
+**创建或轮换**时生效 —— 已经开过轮次的会话换不了预设（宿主 `agent-preset/locked`），
+改完 preset 用 `inbox subscribe --rotate`（或工具 `subscribe` 的 `rotate: true`）换一个新的
+空白收件会话，下一条提醒就会用新 preset 新建。
+CLI 写入时不校验名册（名册在运行中的宿主里），写错时投递会失败、信留在信箱；
+`worklog_memory` 的 `subscribe` 会先校验再落盘。
+
 **代价写在明处**：它会在你不在场时**花额度**，并在没有上下文时自作主张。撤销就是
-`inbox subscribe --off`。收件会话会增长，所以每 40 条提醒会换一个新会话 id；旧会话留着，
-由你归档。
+`inbox subscribe --off`。收件会话会增长，所以每 40 条提醒会换一个新会话 id；改 preset 或想
+重开时也可以随时 `--rotate` 主动换。旧会话留着，由你归档。
 
 ## 十三、升格为技能（`promote`）
 

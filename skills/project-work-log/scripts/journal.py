@@ -6689,7 +6689,20 @@ def cmd_inbox_subscribe(args: argparse.Namespace) -> int:
     entry = workspaces.get(key)
     entry = dict(entry) if isinstance(entry, dict) else {}
     entry["path"] = path
+    # 收件会话的 agent preset（可选）。CLI 这里**不校验**：preset 名册在运行中的宿主进程里，
+    # 磁盘上没有副本。写错时投递会失败、信留在信箱，`inbox status` 能看到写的是什么。
+    preset = getattr(args, "preset", None)
+    if preset is not None:
+        preset = preset.strip()
+        if preset:
+            entry["preset"] = preset
+        else:
+            entry.pop("preset", None)
     if args.off:
+        if getattr(args, "rotate", False):
+            print("`--rotate` 只在打开主动送达时有效；`--off` 下没有可换的收件会话。授权未改变。",
+                  file=sys.stderr)
+            return 2
         if not entry:
             print(f"本工作区没有主动送达授权：{path}")
             return 0
@@ -6700,8 +6713,10 @@ def cmd_inbox_subscribe(args: argparse.Namespace) -> int:
         print(f"已撤销主动送达：{memory_workspace_name(path)}（被动计数不受影响）")
         return 0
     # 收件会话用固定 id：有就 resume，没有才 create —— 于是"每来一条就新建一个"不可能发生。
-    if not entry.get("session"):
+    # `--rotate` 是例外：改 preset 后旧会话换不了，只能换一个新的空白会话 id。
+    if getattr(args, "rotate", False) or not entry.get("session"):
         entry["session"] = f"session-{uuid.uuid4()}"
+        entry["deliveries"] = 0
     entry["active"] = True
     entry.setdefault("deliveries", 0)
     entry["at"] = _memory_now()
@@ -6709,6 +6724,10 @@ def cmd_inbox_subscribe(args: argparse.Namespace) -> int:
     _save_subscriptions(memory, workspaces)
     print(f"已授权主动送达：{memory_workspace_name(path)}")
     print(f"  收件会话：{entry['session']}（发件方用它把「来信提醒」推进来；正文永不进提示词）")
+    if entry.get("preset"):
+        print(f"  agent preset：{entry['preset']}（收件会话创建/轮换时生效；已开始的会话保持原 preset）")
+    else:
+        print("  agent preset：部署默认（要固定就加 `--preset <id>`）")
     print(f"  授权表：{memory_subscriptions_path(memory)}")
     print("  代价：别人发给这个工作区的信会**立刻**拉起一个会话并花额度；"
           "随时 `inbox subscribe --off` 撤销。")
@@ -6726,6 +6745,8 @@ def cmd_inbox_status(args: argparse.Namespace) -> int:
     state = "开" if entry.get("active") else "关"
     print(f"主动送达：{state}  {path}")
     print(f"  收件会话：{entry.get('session', '—')}")
+    print(f"  agent preset：{entry.get('preset') or '部署默认'}"
+          "（收件会话创建/轮换时生效；已开始的会话保持原 preset）")
     print(f"  已推送：{entry.get('deliveries', 0)} 条"
           f"（满 {INBOX_SESSION_ROTATE_AFTER} 条换一个新会话）")
     print(f"  更新时间：{entry.get('at', '—')}")
@@ -7441,6 +7462,11 @@ mode 同样只提供**新项目的初始档位**：台账 `## 当前状态` 有 
     _add_root(p)
     _add_memory(p)
     p.add_argument("--off", action="store_true", help="撤销授权（等价于 `unsubscribe`）")
+    p.add_argument("--preset", default=None,
+                   help="收件会话使用的 agent preset id（空串清除；只在收件会话创建/轮换时生效；"
+                        "CLI 不校验名册 —— 写错时投递会失败、信留在信箱）")
+    p.add_argument("--rotate", action="store_true",
+                   help="换一个新的收件会话 id（改 preset 后旧会话换不了；旧会话留着自行归档）")
     p.set_defaults(func=cmd_inbox_subscribe)
 
     p = isub.add_parser("unsubscribe", help="撤销主动送达授权")

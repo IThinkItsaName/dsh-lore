@@ -1,6 +1,6 @@
 {
   "name": "dsh-lore",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "Work-memory system for AI agents, in three layers: a portable Agent Skill (process journal + index ledger + lessons, stdlib-only toolbox), a cross-workspace global memory, and a DeepSeek Harness plugin bundle that injects it.",
   "license": "MIT",
   "type": "module",
@@ -16,7 +16,6 @@
   },
   "keywords": [
     "dsh-plugin",
-    "pi-package",
     "agent-skills",
     "work-log",
     "memory",
@@ -40,11 +39,6 @@
     "title": "dsh-lore · worklog",
     "description": "给 AI 的长期工作记忆：技能层把过程留在项目里（记录 + 台账 + 经验，技能名 project-work-log），记忆层跨工作区沉淀，插件层把它注入提示词。"
   },
-  "pi": {
-    "skills": [
-      "./skills"
-    ]
-  },
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
@@ -54,8 +48,9 @@
   },
   "scripts": {
     "test": "python -B skills/project-work-log/scripts/_selftest.py",
-    "test:plugin": "node tests/run.mjs && node tests/registry-contract.mjs && node tests/manifest.mjs && node tests/audit-paths.mjs && node tests/audit-doc-consistency.mjs && node tests/audit-ranks.mjs && node tests/audit-versions.mjs && node tests/audit-locale.mjs && node tests/audit-client.mjs && node tests/audit-client-tokens.mjs && node tests/audit-client-runtime.mjs && node tests/audit-settings.mjs && node tests/audit-memory-injection.mjs && node tests/audit-memory-settings.mjs && node tests/audit-memory-migration.mjs && node tests/audit-inbox-delivery.mjs && node tests/audit-harness-hygiene.mjs",
-    "test:skill-only": "node tools/build-skill-only.mjs --check && node tests/audit-paths.mjs",
+    "test:plugin": "node tests/run.mjs && node tests/registry-contract.mjs && node tests/manifest.mjs && node tests/audit-skill-sync.mjs && node tests/audit-doc-consistency.mjs && node tests/audit-ranks.mjs && node tests/audit-versions.mjs && node tests/audit-locale.mjs && node tests/audit-client.mjs && node tests/audit-client-tokens.mjs && node tests/audit-client-runtime.mjs && node tests/audit-settings.mjs && node tests/audit-memory-injection.mjs && node tests/audit-memory-settings.mjs && node tests/audit-memory-migration.mjs && node tests/audit-inbox-delivery.mjs && node tests/audit-harness-hygiene.mjs",
+    "sync:skill": "node tools/sync-skill.mjs",
+    "sync:skill:check": "node tools/sync-skill.mjs --check",
     "audit": "node tests/preaudit.mjs"
   },
   "files": [
@@ -63,7 +58,6 @@
     "cordis.patch.yml",
     "skills",
     "tools",
-    "skill-only",
     "tests",
     "locale"
   ]

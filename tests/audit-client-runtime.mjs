@@ -881,13 +881,13 @@ const openDisclosure = async (index = 0) => {
   // DICTIONARY, so that is what gets asserted. `textOf` cannot reach copy inside
   // nested components; asserting rendered text there would be a test that can
   // never fail — a mistake this project already made once.
-  ok(clientExports.DICT_ZH['restart.memory'].includes('需要重启')
-    && clientExports.DICT_ZH['restart.memory'].includes('即时生效'),
-    'the 记忆 copy distinguishes the load-time switch from the live ones',
+  ok(clientExports.DICT_ZH['restart.memory'].includes('即时生效')
+    && !clientExports.DICT_ZH['restart.memory'].includes('需要重启'),
+    'the 记忆 copy no longer defers anything to a restart',
     clientExports.DICT_ZH['restart.memory'])
-  ok(clientExports.DICT_EN['restart.memory'].includes('restart')
-    && clientExports.DICT_EN['restart.memory'].includes('immediately'),
-    'the English copy draws the same distinction')
+  ok(clientExports.DICT_EN['restart.memory'].includes('immediately')
+    && !/restart/i.test(clientExports.DICT_EN['restart.memory']),
+    'the English copy says the same')
   ok(clientExports.DICT_ZH['memory.note'].includes('发布.md'),
     'the 记忆 copy says upload permission lives in each workspace\'s 发布.md',
     clientExports.DICT_ZH['memory.note'])
@@ -929,9 +929,9 @@ const openDisclosure = async (index = 0) => {
 
   /* ---- the footers ---- */
   const footers = textOf(advanced)
-  // 高级页现在只剩"诊断日志"是装载参数（模型调用许可已改成现读，2026-10-14）。
-  ok(footers.includes('诊断日志开关是装载参数'),
-    'the panel says which of its options still needs a restart, in the panel-specific wording')
+  // 2026-10-19：诊断日志也改成现读了，三页都不再有装载参数。
+  ok(footers.includes('全部即时生效') && !footers.includes('装载参数'),
+    'the panel says all of its options take effect immediately, in the panel-specific wording')
   ok(footers.includes('设置位置'),
     'the card says WHERE the settings live (the official channel is not a guess)')
   ok(!footers.includes('where.config'),
@@ -1179,14 +1179,16 @@ const openDisclosure = async (index = 0) => {
   ok(zh.length > 0 && en.length > 0, 'both dictionaries are found', `${zh.length}/${en.length}`)
 
   // (a) "does not appear at all" was wrong twice over: the tool IS registered and
-  // answers that it is off (lib/index.js memoryAnswer). Only the prompt sections
-  // are load-time.
+  // answers that it is off (lib/index.js memoryAnswer). Since 2026-10-19 the prompt
+  // sections are resolved per assembly too, so the switch no longer needs a restart.
   ok(!/does not appear at all/.test(en),
     'EN memoryEnabled.hint no longer claims the tool disappears')
   ok(/stays on the list|stays registered/.test(en),
     'EN memoryEnabled.hint says the tool itself stays registered (matching the code)')
-  ok(/need a restart/.test(en) && /还需要重启/.test(zh),
-    'both languages still say the switch needs a restart')
+  ok(/immediately/.test(en) && !/need a restart/.test(en),
+    'EN memoryEnabled.hint says the switch takes effect immediately')
+  ok(/即时生效/.test(zh) && !/还需要重启/.test(zh),
+    'zh memoryEnabled.hint says the same')
 
   // (b) the mechanism the reader cannot guess: saving the path also writes it into
   // the settings file, because journal.py is another process.

@@ -38,9 +38,17 @@ dsh-lore 把这些问题收进一个容器：
 ### DSH 里
 
 ```bash
-# 装插件：注册技能、注入记忆、提供 worklog_memory 与设置卡片
+# 装插件：注册技能、注入记忆、提供 worklog_memory 与设置卡片，并登记进 profile 的 bundles
 dsh plugin --profile <profile> add dsh-lore@v0.9.4
+
+# 卸插件：依赖、bundles 条目、node_modules 一起清掉
+dsh plugin --profile <profile> remove dsh-lore
 ```
+
+> **桌面端用户**在插件页装/卸：Electron 托管的 profile 会拒绝 CLI 操作
+> （`profile "desktop" is managed exclusively by the Electron application`）。
+> 另外**不要**用 `dsh plugin … install <本地目录>`：pnpm 会为本地目录建 junction，卸载时删不掉，
+> 下一次换装报 `ERR_PNPM_EPERM`。详见 [PUBLISHING.md](PUBLISHING.md) §7。
 
 然后在项目里让 agent「建工作日志 / 留个记录」，或手动跑：
 
@@ -80,7 +88,8 @@ DSH 插件还提供：
 
 - **`worklog_memory` 工具**：检索全局记忆、收发信箱、列会话。它只处理**工作区之外**的那一层；
   `work_log/` 台账仍然用 `journal.py` 和普通文件工具，插件不替代它们。
-- **记忆注入**：经验层资源提示常驻；记忆索引进可缓存前缀；未读信箱只在有内容时尾注入。
+- **记忆注入**：经验层资源提示常驻（英文，与系统提示其余部分一致；含“该记就记”的写入提示）；
+  记忆索引进可缓存前缀；未读信箱只在有内容时尾注入。
 - **配置卡片**：技能开关、记忆开关与目录、诊断日志等；每个字段的归属与生效时机见
   [`SETTINGS.md`](SETTINGS.md)。
 

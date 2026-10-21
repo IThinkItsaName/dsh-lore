@@ -8,6 +8,53 @@
 
 ## [未发布]
 
+### 文档：安装/卸载口径按实测重写，删掉会留下 junction 的本地路径装法
+
+`dsh plugin --profile desktop install /绝对/路径/<checkout>` 这条示例本身就是故障源：
+`dsh plugin` 把参数**原样转发给 pnpm**（`dsh plugin --help` 的原话），而 pnpm 对本地目录建的是
+**junction**。卸载时 pnpm 删不掉它 —— 重解析点只能 `RemoveDirectory`，unlink 语义无效 ——
+条目就留在 `node_modules` 里，下一次换装（registry、tarball 都一样）直接
+`ERR_PNPM_EPERM: rename 'dsh-lore_tmp_<pid>_<n>' -> 'dsh-lore'`。本机实测踩过一次，
+最后靠手写一次非递归删除才解开。
+
+现在 §7「别人怎么装」只给两条实测过的命令，两者都落成**真实目录**：
+
+- `dsh plugin --profile <profile> add dsh-lore@v0.9.4` —— 装机时同时登记进
+  `dsh.profile.bundles`（实测：`["@deepseek-ai/dsh-base", "dsh-lore"]`），所以 bundle patch
+  会被组合、插件真的生效；
+- `dsh plugin --profile <profile> remove dsh-lore` —— 依赖、bundles 条目、`node_modules`、
+  lockfile 四处一起清空（实测四条全空）。
+
+本地路径装法**不再保留**，只留一条给要验证构建产物的开发者：`pnpm pack` 后用
+`add ./dsh-lore-0.9.4.tgz`。
+
+同时按入口分人：Electron 托管的 profile（`desktop`）拒绝 CLI，桌面端用户走插件页。
+原文把 `--profile desktop` 写死在"别人可以这样装"里，照抄会直接报
+`profile "desktop" is managed exclusively by the Electron application`。
+
+### 变更：经验层指针补“写入”提示，并改为英文
+
+原先那段只说了“需要旧经验时去看 `work_log/`”，模型很容易把它读成**纯检索入口**：
+会话里不会想到“这次的决策/取证/教训可以记下来”。现在补一句：值得跨会话保留的决策、证据
+或可复用经验，直接按 `project-work-log` 技能记进 `work_log/`，**不必等用户开口**；跨工作区
+那层记忆也是从 `work_log/` 发布出去的（`memory publish`），指针里一并点明。
+
+同时把注入段改成英文：它和工具说明、系统提示其余部分同场，同语言少一层“引文”歧义；
+技能与 `work_log/README.md` 仍是中文，指针只负责指路。回归断言改为英文关键词，并锁住
+“注入段无 CJK”（`tests/audit-memory-injection.mjs`）。
+
+### 整理：设置卡片按“技能 / 记忆 / 诊断”重分三页
+
+原「高级」页塞了三类互不相关的东西：技能调用许可、`worklog_memory` 的跨区会话可见性、
+诊断日志。现在每个控件跟着它管的那件事走：
+
+- `modelInvocable` / `userInvocable` 移进「技能」（它们管的是技能投影，不是诊断）；
+- `sessionsCrossWorkspace` 移进「记忆」（它管的是 `worklog_memory` 的 `sessions`）；
+- 原「高级」改名「诊断」，只留 `verbose` 与项目级设置的兼容性说明；“设置位置”仍常驻页脚。
+
+同时把三页各自一句、措辞不同的“即时生效”合并成页脚一句 —— 11 项全是现读，按页重复
+三遍没有新信息。回归断言按新分组重写（`tests/audit-client-runtime.mjs`）。
+
 ## [0.9.4] - 2026-10-20
 
 ### 修复：设置保存后不用重启——四处"装载期/快照"读法全部改成现读

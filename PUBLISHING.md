@@ -54,10 +54,10 @@ git tag -a v0.9.4 -m "dsh-lore v0.9.4"
 git push origin v0.9.4
 ```
 
-之后别人可以这样装（npm 发布后）：
+之后别人可以这样装（npm 发布后；`<profile>` 换成对方自己的 profile，桌面端的 `desktop` 是例外，见 §7）：
 
 ```bash
-dsh plugin --profile desktop add dsh-lore@0.9.4
+dsh plugin --profile <profile> add dsh-lore@v0.9.4
 ```
 
 > ⚠ **打 tag 之前先改 `package.json` 的 `version`，并确认它等于 tag 去掉 `v`。**
@@ -135,14 +135,23 @@ git status --porcelain
 ## 7. 别人怎么装
 
 ```bash
-# dsh（本包声明了 dsh.bundle，装进某个 profile）
-dsh plugin --profile desktop install /绝对/路径/<你的 checkout>
+# 装：从 npm 取，落成真实目录，并自动登记进 profile 的 dsh.profile.bundles
+dsh plugin --profile <profile> add dsh-lore@v0.9.4
 
-# pi / 其它 Agent Skills 环境：去独立技能仓库 project-work-log（本仓库不再提供 pi 安装面）
+# 卸：依赖、bundles 条目、node_modules、lockfile 一并清掉
+dsh plugin --profile <profile> remove dsh-lore
 ```
 
+桌面端用户在插件页装/卸。**Electron 托管的 profile（例如 `desktop`）拒绝 CLI 操作**：
+`dsh plugin` 会直接报 `profile "desktop" is managed exclusively by the Electron application`。
+
+> **为什么不再给"本地路径装法"。** `dsh plugin` 把参数原样转给 pnpm，而 pnpm 对本地目录建的是
+> **junction**：卸载时 pnpm 删不掉它（unlink 语义删不了重解析点），条目就留在 `node_modules` 里，
+> 下一次换装直接 `ERR_PNPM_EPERM`（实测踩过一次，记在 CHANGELOG 的 `[未发布]`）。要验证本地
+> 构建产物，先 `pnpm pack`，再用 `add ./dsh-lore-0.9.4.tgz` —— 它落成真实目录，卸载干净。
+
 装进 dsh 时还要确认该 profile 里 `skill` / `skill-filesystem` / `tool-skill` 三行是打开的
-（基座 bundle 默认关着，见 README 的 dsh 章节）。
+（基座 bundle 默认关着，见 README 的 dsh 章节；本包的 bundle patch 会自己打开 `skill-filesystem`）。
 
 本包**不再声明** `pi` 字段与 `pi-package` 关键词；pi 的安装/画廊入口属于独立技能仓库。
 

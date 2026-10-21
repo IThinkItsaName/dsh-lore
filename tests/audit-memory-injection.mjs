@@ -78,18 +78,29 @@ ok(mod.countInboxItems() === 0, 'an absent inbox counts 0, not a throw')
 
 // The experience pointer is static text with its own applicability condition; assert both halves
 // so a future edit cannot drop the condition while keeping the pointer.
+//
+// It is English on purpose (2026-10-20): it shares the system prompt with English tool definitions
+// and first-party sections, and the package is published publicly. The skill and the ledger stay
+// Chinese — the pointer only points.
 {
   const rules = mod.experienceLayerSection()
   ok(rules.includes('work_log/'), 'the pointer names the work-log container')
-  ok(rules.includes('过往记录') && rules.includes('经验'), 'the pointer says records and experience are there')
-  ok(rules.includes('若存在 `work_log/`'), 'the header carries the applicability condition', rules)
-  ok(rules.includes('复用既有做法') && rules.includes('排查旧问题') && rules.includes('不确定是否相关'),
+  ok(rules.includes('records') && rules.includes('lessons'), 'the pointer says records and lessons are there')
+  ok(rules.includes('only if `work_log/` exists'), 'the header carries the applicability condition', rules)
+  ok(rules.includes('reuse') && rules.includes('diagnose') && rules.includes('unsure'),
     'the pointer names concrete triggers, not a vague "needs past experience"', rules)
   ok(rules.includes('brief') && rules.includes('search'), 'the cheap probes are named', rules)
-  ok(rules.includes('不存在') && rules.includes('长期经验') && rules.includes('任务周期'),
+  ok(rules.includes('no `work_log/`') && rules.includes('sessions or weeks') && rules.includes('how long'),
     'the pointer covers creating the container for a long-running task after asking about its span', rules)
   ok(rules.includes('project-work-log'), 'the pointer names the skill for the full workflow', rules)
   ok(rules.includes('work_log/README.md'), 'the pointer names the ledger entry', rules)
+  // The write half is the 2026-10-20 addition: without it the model reads the memory but never
+  // realizes it can leave one behind. Assert the behavior, not just the word "record".
+  ok(rules.includes('record it') && rules.includes('no need to wait for the user'),
+    'the pointer says to write records proactively, not only on request', rules)
+  ok(rules.includes('published from `work_log/`'),
+    'the pointer says cross-workspace lessons are published from the workspace ledger', rules)
+  ok(!/[\u4e00-\u9fff]/.test(rules), 'the injected pointer is English (no CJK)', rules)
 }
 
 // A generated index that carries only its own H1 is, in substance, empty. Injecting its header
@@ -111,7 +122,7 @@ const injected = mod.memoryIndexSection()
 ok(injected !== '', 'a populated index IS injected')
 ok(injected.includes('host-style-claiming'), 'the injected text carries the entry line')
 ok(injected.includes('worklog_memory'), 'the injected text says the body needs the tool')
-ok(injected.includes('## 全局记忆'), 'the injected text has its own heading')
+ok(injected.includes('## Global memory'), 'the injected text has its own heading')
 ok(!injected.startsWith('# 全局记忆索引'), 'the generated file H1 is not duplicated into the prompt')
 
 /* ---------------------------------------------------------------- 3. budget ── */

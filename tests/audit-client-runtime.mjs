@@ -318,9 +318,13 @@ let clientExports = null
   ok(Array.isArray(clientExports.FORM_FIELDS) && clientExports.FORM_FIELDS.length === 11,
     'the claim fingerprint is exported and names eleven fields',
     JSON.stringify(clientExports.FORM_FIELDS))
-  ok(clientExports.STATUS_URL === '/plugins/dsh-lore/status.json',
-    'the read-only status endpoint is the only HTTP surface the client has',
-    String(clientExports.STATUS_URL))
+  // 2026-10-21：页面不再有「当前状态」块，客户端也就不再需要只读端点 —— 整个卡片只走
+  // `ctx.configForms`，一个 HTTP 请求都不发。宿主侧的端点仍在（`lib/index.js` 的
+  // `STATUS_ROUTE_PATH`），留着给排障用，但页面已经没有消费者。
+  ok(clientExports.STATUS_URL === undefined,
+    'the client exposes no status endpoint any more', String(clientExports.STATUS_URL))
+  ok(!/\bfetch\s*\(/.test(code),
+    'and issues no HTTP request at all (every read and write goes through ctx.configForms)')
   // The written channel moved to the official one; the old route must be gone
   // from this file's CODE. (The header comment still names the file it belongs
   // to, which is why this looks for the literal route, not the bare filename.)
@@ -659,24 +663,13 @@ const SEED = {
 }
 
 /** A world with our namespace served and the card mounted. */
-function mountCard({ seed = SEED, statusFetch = null, extra = {} } = {}) {
+function mountCard({ seed = SEED, extra = {} } = {}) {
   const world = createWorld({ [SERVED_NS]: seed })
   clientExports.apply(world.ctx)
   world.mirror.publish({ namespaces: [namespaceRow(SERVED_NS, CONFIG_VOLATILE_FIELDS)] })
   const registration = world.registered[world.registered.length - 1]
-  globalThis.fetch = statusFetch ?? (async (url) => {
-    if (url !== clientExports.STATUS_URL) throw new Error(`unexpected fetch: ${url}`)
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({
-        source: 'config',
-        path: '/home/.dsh/profiles/desktop/cordis.patch.yml',
-        memory: { workspaces: 8, inbox: 0, indexChars: 426 },
-        error: null,
-      }),
-    }
-  })
+  /* No fetch stub any more: since 2026-10-21 the card issues no HTTP request at all
+     (the 当前状态 block is gone and its endpoint lost its only consumer). */
   const props = cardProps(world, registration, extra)
   api.mount(registration.component, props)
   api.flushEffects()
@@ -771,172 +764,75 @@ const openDisclosure = async (index = 0) => {
     'the summary copy is the localized one-liner', String(summary))
 }
 
-/* ---- 4b. the full page: structure, values, tabs ---- */
+/* ---- 4b. the full page: two sections, eight controls, no tabs ---- */
 {
-  const { form } = mountCard()
+  mountCard()
   api.flushEffects()
   await settle()
   const loaded = runtime.tree
 
-  const tabs = getTabs(loaded)
-  ok(tabs !== null, 'the card renders the host SegmentedTabs')
-  ok(tabs.props.value === 'skills', 'the selected tab defaults to 技能', String(tabs.props.value))
-  ok(typeof tabs.props.label === 'string' && tabs.props.label !== 'tabs.label',
-    'the tab list carries a localized accessible name', String(tabs.props.label))
-  const items = tabs.props.items
-  ok(Array.isArray(items) && items.length === 3, 'there are exactly three tabs',
-    JSON.stringify(items?.map((item) => item.value)))
-  ok(items.map((item) => item.value).join(',') === 'skills,memory,advanced',
-    'the tab values are skills, memory and advanced', items.map((item) => item.value).join(','))
-  ok(items.map((item) => item.label).join(',') === '技能,记忆,高级',
-    'the tab labels are 技能 / 记忆 / 高级', items.map((item) => item.label).join(','))
-  ok(items.every((item) => typeof item.id === 'string' && item.id !== ''
-    && typeof item.panelId === 'string' && item.panelId !== '' && item.id !== item.panelId),
-    'each tab declares its own id and panelId',
-    JSON.stringify(items.map((item) => [item.id, item.panelId])))
-  ok(new Set(items.map((item) => item.id)).size === 3
-    && new Set(items.map((item) => item.panelId)).size === 3,
-    'the tab ids and the panel ids are each unique (the primitive validates this)')
+  ok(getTabs(loaded) === null, 'the card renders no tabs any more (one page, two sections)',
+    String(getTabs(loaded)))
+  ok(tabPanels(loaded).length === 0, 'and no tabpanel wrapper survives',
+    String(tabPanels(loaded).length))
+  ok(getDisclosures(loaded).length === 0,
+    'and no collapsed disclosure: nothing meaningful is hidden behind a click',
+    getDisclosures(loaded).map((node) => node.props.title).join(','))
 
-  const panels = tabPanels(loaded)
-  ok(panels.length === 1, 'exactly one tabpanel is rendered', String(panels.length))
-  ok(panels[0].props.id === 'dsh-lore-panel-skills',
-    'the rendered panel is the one the selected tab controls', String(panels[0].props.id))
-  ok(panels[0].props['aria-labelledby'] === 'dsh-lore-tab-skills',
-    'the panel points back at its tab with aria-labelledby',
-    String(panels[0].props['aria-labelledby']))
+  const headings = [...walk(loaded)].filter((node) => node.type === 'h3').map((node) => textOf(node))
+  ok(headings.join(',') === '技能,记忆',
+    'the page has exactly two section headings, 技能 then 记忆', headings.join(','))
 
-  /* ---- the 技能 panel: one switch, one path ---- */
-  const skillsSwitches = getSwitches(loaded)
-  ok(skillsSwitches.length === 1, 'the 技能 panel holds one switch', String(skillsSwitches.length))
-  ok(skillsSwitches[0]?.props.label === '启用工作记录技能',
-    'the switch is skillEnabled, with localized copy (not the raw key)',
-    String(skillsSwitches[0]?.props.label))
-  ok(skillsSwitches[0]?.props.checked === true,
-    'it reflects the LIVE value the host projected',
-    String(skillsSwitches[0]?.props.checked))
-  ok(skillsSwitches[0]?.props.disabled === false,
-    'a writable form leaves the switch enabled')
-  ok(typeof skillsSwitches[0]?.props.onChange === 'function',
-    'the switch is controlled')
-  ok(getSegments(loaded).length === 0,
-    'the 技能 panel carries no language control any more',
-    getSegments(loaded).map((node) => node.props.id).join(','))
+  const switches = getSwitches(loaded)
+  ok(switches.length === 7, 'seven switches on the page', String(switches.length))
+  ok(switches.map((node) => node.props.label).join(',')
+    === '启用工作记录技能,允许模型自动调用,允许手动调用,启用全局记忆,默认注入记忆索引,个人目录可被检索,允许跨工作区查看会话',
+    'the switches are the seven that matter, in order',
+    switches.map((node) => node.props.label).join(','))
+  ok(switches.map((node) => node.props.checked).join(',') === 'true,true,true,true,true,false,true',
+    'they reflect the LIVE values the host projected',
+    switches.map((node) => node.props.checked).join(','))
+  ok(switches.every((node) => node.props.disabled === false),
+    'a writable form leaves the switches enabled')
+  ok(switches.every((node) => typeof node.props.onChange === 'function'),
+    'the switches are controlled')
 
-  const pathsDisclosure = getDisclosures(loaded)[0]
-  ok(pathsDisclosure !== null && pathsDisclosure !== undefined,
-    'the 技能 panel renders the 路径 DisclosureRow')
-  ok(pathsDisclosure.props.title === '路径', 'the disclosure is titled 路径', String(pathsDisclosure.props.title))
-  ok(pathsDisclosure.props.open === false, 'the 路径 area starts collapsed')
-  ok(getInputs(loaded).length === 0,
-    'a collapsed 路径 area renders no input at all (its rows are children, not siblings)',
-    String(getInputs(loaded).length))
-
-  await openDisclosure(0)
-  const opened = runtime.tree
-  const inputs = getInputs(opened)
-  ok(inputs.length === 1, 'opening 路径 shows exactly one text input', String(inputs.length))
-  ok(inputs[0].props.id === 'dsh-lore-skillDir',
-    'the input is the work-log skill path field', String(inputs[0].props.id))
-  ok(inputs[0].props['aria-label'] === '工作记录技能目录',
-    'the input carries a localized accessible name',
-    String(inputs[0].props['aria-label']))
+  const inputs = getInputs(loaded)
+  ok(inputs.length === 1, 'exactly one text input remains (the memory location)',
+    String(inputs.length))
+  ok(inputs[0].props.id === 'dsh-lore-memoryDir',
+    'it is the memory root field', String(inputs[0].props.id))
+  ok(inputs[0].props['aria-label'] === '记忆存放位置',
+    'the input carries a localized accessible name', String(inputs[0].props['aria-label']))
   ok(inputs[0].props.value === '',
     'an un-overridden field shows EMPTY (blank means "use the layer below")',
     JSON.stringify(inputs[0].props.value))
-  ok(inputs[0].props.placeholder === 'skills/project-work-log',
-    'and shows the value it would fall back to as its placeholder',
+  ok(inputs[0].props.placeholder === '留空 = <主目录>/dsh-lore-memory',
+    'and states the default it would fall back to',
     String(inputs[0].props.placeholder))
-  ok(markedRows(opened).length === 0,
+  ok(markedRows(loaded).length === 0,
     'the path field shows no override badge while it is not overridden',
-    String(markedRows(opened).length))
+    String(markedRows(loaded).length))
 
-  /* ---- no control for the project-side keys, in any tab ---- */
+  /* ---- the debug surface that was removed on purpose (2026-10-21) ---- */
+  const body = textOf(loaded)
+  ok(!body.includes('当前状态'),
+    'the status block (workspace / inbox / index numbers) is gone', body.slice(0, 200))
+  ok(!body.includes('设置位置'),
+    'the settings-location footer is gone', body.slice(-200))
+  ok(!body.includes('兼容性说明'),
+    'the project-level compatibility essay is gone', body.slice(-200))
+  ok(!switches.some((node) => node.props.label === '打开诊断日志'),
+    'the verbose diagnostic switch is gone from the page',
+    switches.map((node) => node.props.label).join(','))
+  ok(!getInputs(loaded).some((node) => node.props.id === 'dsh-lore-skillDir'),
+    'the skill-directory path field is gone',
+    getInputs(loaded).map((node) => node.props.id).join(','))
+  ok(!body.includes('诊断'), 'no diagnostics label survives anywhere', body.slice(0, 200))
   ok(projectKeyControls(loaded).length === 0,
-    'no control in the 技能 panel is named for container / lessons / mode',
-    projectKeyControls(loaded).join(' | '))
-  ok(getSegments(loaded).every((node) => node.props.id !== 'dsh-lore-mode'),
-    'the removed mode control did not come back')
-
-  /* ---- the 记忆 panel ---- */
-  await selectTab('memory')
-  const memory = runtime.tree
-  const memoryPanels = tabPanels(memory)
-  ok(memoryPanels.length === 1 && memoryPanels[0].props.id === 'dsh-lore-panel-memory',
-    'selecting 记忆 renders its panel and only its panel',
-    memoryPanels.map((node) => node.props.id).join(','))
-  ok(memoryPanels[0].props['aria-labelledby'] === 'dsh-lore-tab-memory',
-    'the 记忆 panel points back at its own tab')
-  const memorySwitches = getSwitches(memory)
-  ok(memorySwitches.length === 3, 'the 记忆 panel holds three switches', String(memorySwitches.length))
-  ok(memorySwitches.map((node) => node.props.label).join(',') === '启用全局记忆,默认注入记忆索引,个人目录可被检索',
-    'the three switches are memoryEnabled / memoryInjectIndex / memoryPersonalSearchable, in order',
-    memorySwitches.map((node) => node.props.label).join(','))
-  ok(memorySwitches.map((node) => node.props.checked).join(',') === 'true,true,false',
-    'they reflect the projected values', memorySwitches.map((node) => node.props.checked).join(','))
-  ok(projectKeyControls(memory).length === 0,
-    'the 记忆 panel offers no control for container / lessons / mode',
-    projectKeyControls(memory).join(' | '))
-  // The restart distinction and the upload-permission pointer are CARRIED BY THE
-  // DICTIONARY, so that is what gets asserted. `textOf` cannot reach copy inside
-  // nested components; asserting rendered text there would be a test that can
-  // never fail — a mistake this project already made once.
-  ok(clientExports.DICT_ZH['restart.memory'].includes('即时生效')
-    && !clientExports.DICT_ZH['restart.memory'].includes('需要重启'),
-    'the 记忆 copy no longer defers anything to a restart',
-    clientExports.DICT_ZH['restart.memory'])
-  ok(clientExports.DICT_EN['restart.memory'].includes('immediately')
-    && !/restart/i.test(clientExports.DICT_EN['restart.memory']),
-    'the English copy says the same')
-  ok(clientExports.DICT_ZH['memory.note'].includes('发布.md'),
-    'the 记忆 copy says upload permission lives in each workspace\'s 发布.md',
-    clientExports.DICT_ZH['memory.note'])
-
-  /* ---- the read-only status block ---- */
-  const stateDisclosure = getDisclosures(memory)[0]
-  ok(stateDisclosure !== null && stateDisclosure !== undefined,
-    'the 记忆 panel has the 当前状态 disclosure',
-    getDisclosures(memory).map((node) => node.props.title).join(','))
-  ok(stateDisclosure.props.open === false, 'the status block starts collapsed')
-  ok(!textOf(memory).includes('已登记工作区'),
-    'a collapsed status block does not render its numbers')
-  await openDisclosure(0)
-  const stateText = textOf(runtime.tree)
-  ok(stateText.includes('已登记工作区 8 · 待收 0 · 索引字数 426'),
-    'the status block reports what the host answered',
-    stateText.slice(0, 200))
-  ok(stateText.includes('发布.md'), 'and says where upload permission lives')
-
-  /* ---- the 高级 panel ---- */
-  await selectTab('advanced')
-  const advanced = runtime.tree
-  const advancedPanels = tabPanels(advanced)
-  ok(advancedPanels.length === 1 && advancedPanels[0].props.id === 'dsh-lore-panel-advanced',
-    'selecting 高级 renders its panel and only its panel')
-  const advancedSwitches = getSwitches(advanced)
-  ok(advancedSwitches.length === 4, 'the 高级 panel holds four switches', String(advancedSwitches.length))
-  ok(advancedSwitches.map((node) => node.props.label).join(',')
-    === '打开诊断日志,允许模型自动调用,允许手动调用,允许跨工作区查看会话',
-    'the switches are verbose / modelInvocable / userInvocable / sessionsCrossWorkspace, in order',
-    advancedSwitches.map((node) => node.props.label).join(','))
-  ok(advancedSwitches.map((node) => node.props.checked).join(',') === 'false,true,true,true',
-    'they reflect the projected values',
-    advancedSwitches.map((node) => node.props.checked).join(','))
-  ok(getInputs(advanced).length === 0, 'the 高级 panel holds no text input')
-  ok(getSegments(advanced).length === 0, 'the 高级 panel holds no segmented control')
-  ok(projectKeyControls(advanced).length === 0,
-    'the 高级 panel offers no control for container / lessons / mode')
-
-  /* ---- the footers ---- */
-  const footers = textOf(advanced)
-  // 2026-10-19：诊断日志也改成现读了，三页都不再有装载参数。
-  ok(footers.includes('全部即时生效') && !footers.includes('装载参数'),
-    'the panel says all of its options take effect immediately, in the panel-specific wording')
-  ok(footers.includes('设置位置'),
-    'the card says WHERE the settings live (the official channel is not a guess)')
-  ok(!footers.includes('where.config'),
-    'and resolves that copy through the dictionary rather than printing the key',
-    footers.slice(-200))
+    'no control is named for container / lessons / mode', projectKeyControls(loaded).join(' | '))
+  ok(body.includes('即时生效'),
+    'the single footer line still promises immediate effect', body.slice(-200))
 }
 
 /* ---- 4c. switches write through the form, one operation each ---- */
@@ -957,20 +853,19 @@ const openDisclosure = async (index = 0) => {
   ok(textOf(runtime.tree).includes('已保存'), 'the card reports the save as done')
 }
 
-/* ---- 4d. the path fields commit on blur, not per keystroke ---- */
+/* ---- 4d. the path field commits on blur, not per keystroke ---- */
 {
   const mounted = mountCard()
   await settle()
-  await openDisclosure(0)
 
   const input = getInputs(runtime.tree)[0]
-  input.props.onChange({ target: { value: '/opt/bundles/worklog' } })
+  input.props.onChange({ target: { value: '/opt/lore-memory' } })
   await settle()
   ok(mounted.form.mutations.length === 0,
     'typing does NOT write: no patch rewrite per keystroke',
     `${mounted.form.mutations.length} mutation(s)`)
   const midTyping = getInputs(runtime.tree)[0]
-  ok(midTyping.props.value === '/opt/bundles/worklog',
+  ok(midTyping.props.value === '/opt/lore-memory',
     'the draft is what the user sees while typing (a controlled input reading the mirror would reset it)',
     String(midTyping.props.value))
 
@@ -979,12 +874,12 @@ const openDisclosure = async (index = 0) => {
   ok(mounted.form.mutations.length === 1,
     'blurring writes exactly once', String(mounted.form.mutations.length))
   ok(JSON.stringify(mounted.form.mutations[0])
-    === JSON.stringify([{ op: 'set', path: ['skillDir'], value: '/opt/bundles/worklog' }]),
+    === JSON.stringify([{ op: 'set', path: ['memoryDir'], value: '/opt/lore-memory' }]),
     'the write carries the settled text', JSON.stringify(mounted.form.mutations[0]))
-  ok(mounted.form.state.user.skillDir === '/opt/bundles/worklog',
+  ok(mounted.form.state.user.memoryDir === '/opt/lore-memory',
     'and the host now has the override')
   const afterCommit = getInputs(runtime.tree)[0]
-  ok(afterCommit.props.value === '/opt/bundles/worklog',
+  ok(afterCommit.props.value === '/opt/lore-memory',
     'the field still shows the committed text')
   ok(markedRows(runtime.tree).length === 1,
     'the override badge appears now that the value is overridden')
@@ -1004,20 +899,20 @@ const openDisclosure = async (index = 0) => {
   getInputs(runtime.tree)[0].props.onBlur()
   await settle()
   ok(mounted.form.mutations.length === 2, 'clearing writes once', String(mounted.form.mutations.length))
-  ok(JSON.stringify(mounted.form.mutations[1]) === JSON.stringify([{ op: 'unset', path: ['skillDir'] }]),
+  ok(JSON.stringify(mounted.form.mutations[1]) === JSON.stringify([{ op: 'unset', path: ['memoryDir'] }]),
     'clearing sends an UNSET (back to the layer below), not a stored empty string',
     JSON.stringify(mounted.form.mutations[1]))
-  ok(mounted.form.state.user.skillDir === undefined,
+  ok(mounted.form.state.user.memoryDir === undefined,
     'the host no longer carries the override')
   ok(getInputs(runtime.tree)[0].props.value === '',
     'the field shows empty again')
-  ok(getInputs(runtime.tree)[0].props.placeholder === 'skills/project-work-log',
-    'and falls back to showing the inherited value as its placeholder')
+  ok(getInputs(runtime.tree)[0].props.placeholder === '留空 = <主目录>/dsh-lore-memory',
+    'and shows the default it falls back to')
   ok(markedRows(runtime.tree).length === 0, 'the override badge is gone')
 
   /* the explicit reset button */
   const field2 = getInputs(runtime.tree)[0]
-  field2.props.onChange({ target: { value: '/tmp/guides' } })
+  field2.props.onChange({ target: { value: '/tmp/lore' } })
   getInputs(runtime.tree)[0].props.onBlur()
   await settle()
   const resetButton = find(runtime.tree, (node) => node.type === 'button' && textOf(node).includes('恢复默认'))
@@ -1025,7 +920,7 @@ const openDisclosure = async (index = 0) => {
   resetButton.props.onClick()
   await settle()
   ok(JSON.stringify(mounted.form.mutations[mounted.form.mutations.length - 1])
-    === JSON.stringify([{ op: 'unset', path: ['skillDir'] }]),
+    === JSON.stringify([{ op: 'unset', path: ['memoryDir'] }]),
     'the reset control unsets that field',
     JSON.stringify(mounted.form.mutations[mounted.form.mutations.length - 1]))
 }
@@ -1034,7 +929,6 @@ const openDisclosure = async (index = 0) => {
 {
   const mounted = mountCard()
   await settle()
-  await openDisclosure(0)
   getInputs(runtime.tree)[0].props.onChange({ target: { value: '/nope' } })
   mounted.form.behaviour.reject = true
   getInputs(runtime.tree)[0].props.onBlur()
@@ -1080,31 +974,17 @@ const openDisclosure = async (index = 0) => {
   ok(!textOf(runtime.tree).includes('已保存'), 'and it is not reported as saved')
 }
 
-/* ---- 4g. a status read failure degrades, it does not break the form ---- */
-{
-  mountCard({
-    statusFetch: async () => ({ ok: false, status: 503, json: async () => ({}) }),
-  })
-  await settle()
-  await selectTab('memory')
-  await openDisclosure(0)
-  const texts = textOf(runtime.tree)
-  ok(texts.includes('状态读取失败'), 'a failed status read says so', texts.slice(0, 200))
-  ok(texts.includes('503'), 'and names the HTTP status')
-  ok(getSwitches(runtime.tree).length === 3,
-    'while the configuration form still works (the status endpoint is optional)')
-  ok(!texts.includes('已登记工作区'), 'and no invented numbers are shown')
-}
-
-/* ---- 4h. an unprojected form disables the controls instead of lying ---- */
+/* ---- 4g. an unprojected form disables the controls instead of lying ---- */
 {
   mountCard({ seed: { ...SEED, status: 'loading' } })
   await settle()
   ok(textOf(runtime.tree).includes('配置暂时不可用'),
     'a form the host has not projected says so', textOf(runtime.tree).slice(0, 200))
   ok(getSwitches(runtime.tree).every((node) => node.props.disabled === true),
-    'and every control is disabled rather than writable-but-dead')
-  ok(getInputs(runtime.tree).length === 0, 'with the path fields still collapsed')
+    'and every switch is disabled rather than writable-but-dead')
+  ok(getInputs(runtime.tree).length === 1 && getInputs(runtime.tree)[0].props.disabled === true,
+    'and the memory path field is rendered but disabled, not hidden',
+    String(getInputs(runtime.tree)[0]?.props.disabled))
 }
 
 /* ============ 5. the claim fingerprint answers to lib/index.js ============= */

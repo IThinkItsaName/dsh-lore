@@ -209,12 +209,14 @@ async function call(method, body) {
   dispose()
   ok(disposed === 1, 'the disposer is idempotent (a double cleanup cannot double-release)')
 
-  // The path the client fetches and the path the host registers are two string
-  // literals in two files; the audit that compares them is over there, but it can
-  // only fail if they disagree, so pin both from this side too.
+  // 2026-10-21：页面上那块「当前状态」删掉了（工作区数 / 待收 / 索引字数），客户端
+  // 不再读这个端点 —— 它现在**没有消费者**。端点本身保留：排障时仍可 curl，而且删掉它
+  // 要动 `lib/index.js` 里与它绑在一起的统计逻辑。所以这条断言记录的是"故意留的孤儿"：
+  // 客户端**不该**再出现这个路径，除非有人连读取一起加回来。
   const clientSource = readFileSync(`${PKG}/lib/client.js`, 'utf8')
-  ok(clientSource.includes(`'${routes[0].path}'`),
-    'and the client half fetches exactly that path')
+  ok(!clientSource.includes(routes[0].path),
+    'the client no longer names the status path (its only consumer was removed on 2026-10-21)',
+    clientSource.includes(routes[0].path) ? 'lib/client.js still references it' : '')
 
   const withoutServer = mod.mountStatusRoute({ get: () => null }, () => {})
   ok(typeof withoutServer === 'function',

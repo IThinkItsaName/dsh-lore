@@ -50,14 +50,14 @@ git push -u origin main
 安装示例可以固定到 tag/commit，用户就不会被上游改动影响：
 
 ```bash
-git tag -a v0.9.4 -m "dsh-lore v0.9.4"
-git push origin v0.9.4
+git tag -a v0.9.5 -m "dsh-lore v0.9.5"
+git push origin v0.9.5
 ```
 
 之后别人可以这样装（npm 发布后；`<profile>` 换成对方自己的 profile，桌面端的 `desktop` 是例外，见 §7）：
 
 ```bash
-dsh plugin --profile <profile> add dsh-lore@v0.9.4
+dsh plugin --profile <profile> add dsh-lore@v0.9.5
 ```
 
 > ⚠ **打 tag 之前先改 `package.json` 的 `version`，并确认它等于 tag 去掉 `v`。**
@@ -89,7 +89,7 @@ npm run sync:skill:check
 
 # 4) 提交并推送
 git add -A && git commit -m "chore: sync skill from its repo" && git push
-git tag -a v0.9.4 -m "v0.9.4" && git push origin v0.9.4   # 有行为变化时
+git tag -a v0.9.5 -m "v0.9.5" && git push origin v0.9.5   # 有行为变化时
 ```
 
 > 不要在 `publish/worklog/skills/` 里直接改脚本——下次同步会被覆盖。改源，再同步。
@@ -136,7 +136,7 @@ git status --porcelain
 
 ```bash
 # 装：从 npm 取，落成真实目录，并自动登记进 profile 的 dsh.profile.bundles
-dsh plugin --profile <profile> add dsh-lore@v0.9.4
+dsh plugin --profile <profile> add dsh-lore@v0.9.5
 
 # 卸：依赖、bundles 条目、node_modules、lockfile 一并清掉
 dsh plugin --profile <profile> remove dsh-lore

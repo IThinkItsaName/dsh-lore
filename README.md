@@ -39,7 +39,7 @@ dsh-lore 把这些问题收进一个容器：
 
 ```bash
 # 装插件：注册技能、注入记忆、提供 worklog_memory 与设置卡片，并登记进 profile 的 bundles
-dsh plugin --profile <profile> add dsh-lore@v0.9.4
+dsh plugin --profile <profile> add dsh-lore@v0.9.5
 
 # 卸插件：依赖、bundles 条目、node_modules 一起清掉
 dsh plugin --profile <profile> remove dsh-lore
@@ -145,7 +145,7 @@ npm run sync:skill:check # 只查 vendored 副本是否与独立技能仓库一�
 
 ## 版本与状态
 
-本仓库（<https://github.com/IThinkItsaName/dsh-lore>）当前版本是 **0.9.4**（`package.json`）；
+本仓库（<https://github.com/IThinkItsaName/dsh-lore>）当前版本是 **0.9.5**（`package.json`）；
 安装示例钉的是当前版本。发版与推送步骤见 [`RELEASING.md`](RELEASING.md)。
 
 > 本仓库的约定、文档与脚本由 **DeepSeek Flash 系列模型**整理生成（未经人工逐条校验），

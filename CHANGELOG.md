@@ -8,6 +8,33 @@
 
 ## [未发布]
 
+## [0.9.5] - 2026-10-21
+
+### 变更：设置卡片砍成一页两段、八个控件（去掉调试与开发项）
+
+上一版分三个页签装八个开关，页脚还有「设置位置 + 路径」和一段项目级兼容性说明。三个页签
+装八个开关，页签本身只是搬运成本；「诊断」整页只有一个开发开关；「当前状态」（工作区数 /
+待收 / 索引字数）是调试数字；「设置位置」是排查信息。这些都不是"设置"。
+
+现在是一页两段：
+
+| 段 | 控件 |
+|---|---|
+| **技能** | `skillEnabled`、`modelInvocable`、`userInvocable` |
+| **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable`、`sessionsCrossWorkspace`，加唯一的路径框 `memoryDir` |
+
+`Config` 十一个字段**一个都没删**：`skillDir` / `skillFile` / `verbose` 仍可用 profile patch
+配，只是页面不再给控件 —— 删字段会改变认领指纹（`FORM_FIELDS`），已部署的卡片会当场消失。
+说明文字同步压到一句，底部只留「所有设置即时生效」。
+
+客户端随之**不再发任何 HTTP 请求**：删掉「当前状态」块后，只读端点失去唯一消费者，
+`STATUS_URL` 从客户端移除（宿主侧端点保留，排障仍可请求；`tests/audit-settings.mjs` 把它
+记为"故意留的孤儿"）。宿主半边的 `lib/index.js` 这次没动。
+
+门禁同步：`audit-client-runtime` 的页签 / 面板 / 折叠区 / 状态块断言按新结构重写，
+`audit-client` 与 `audit-settings` 相应调整；`SETTINGS.md` 的「三个页签」与「只读状态端点」
+两节改写。
+
 ### 文档：安装/卸载口径按实测重写，删掉会留下 junction 的本地路径装法
 
 `dsh plugin --profile desktop install /绝对/路径/<checkout>` 这条示例本身就是故障源：
@@ -2383,7 +2410,8 @@ DSH 里新工作区不必再建 `AGENTS.md`；skill-only / 非 DSH 场景仍用�
 - 本技能整理自作者使用 **DeepSeek Flash 系列模型**处理内容时的常用操作，并**完全由该系列模型整理生成**；
   使用时请自行甄别，**不保证效果与适用性**
 
-[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.4...HEAD
+[未发布]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/IThinkItsaName/dsh-lore/compare/v0.9.1...v0.9.2

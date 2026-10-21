@@ -8,7 +8,7 @@
 > 2. **界面换成官方配置卡片**（`work_log/05-settings-rework/0040` 的 A2+A3）：客户端半边注册进
 >    **`plugins.bundle.config`**（本 bundle 自己那一页）而不再是设置页的 `settings.section`；
 >    读写走 `ctx.configForms`，自建 HTTP 路由**只剩一个只读状态端点**。
->    分页也从两个变成**三个**（技能 / 记忆 / 高级）—— 记忆那几个键（当时三个）此前在规格里根本
+>    分页也从两个变成**三个**（技能 / 记忆 / 高级；2026-10-20 重分为 技能 / 记忆 / 诊断）—— 记忆那几个键（当时三个）此前在规格里根本
 >    没被登记。
 >
 > 前置结论来自对 DSH 插件机制的实测，不是推测；无法确认的地方都标了「**未确认**」。
@@ -119,7 +119,7 @@
 > **不是 `plugins.item`** —— 那是插件页的**官方**组，catalog 明写 "a bundle's configuration
 > belongs in `plugins.bundle.config` or `plugins.row.config` instead"（`work_log/05-settings-rework/0043`）。
 
-### 三个分页：技能 / 记忆 / 高级
+### 三个分页：技能 / 记忆 / 诊断
 
 界面用宿主的 `SegmentedTabs` 分三页，默认停在「技能」。它**只渲染标签栏，面板由
 调用方持有** —— 面板自己带 `role="tabpanel"`、自己的 `id`，以及指回对应标签页的
@@ -127,9 +127,9 @@
 
 | 分页 | 装什么 |
 |---|---|
-| **技能** | `skillEnabled`（开关），以及收在「路径」折叠区里的 `skillDir` |
-| **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable` 三个开关，加**最后一栏路径框 `memoryDir`**（「记忆存放位置」），外加一个只读的「当前状态」折叠区 |
-| **高级** | `verbose`、`modelInvocable`、`userInvocable`、`sessionsCrossWorkspace` |
+| **技能** | `skillEnabled`、`modelInvocable`、`userInvocable` 三个开关，以及收在「路径」折叠区里的 `skillDir` |
+| **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable`、`sessionsCrossWorkspace` 四个开关，加**最后一栏路径框 `memoryDir`**（「记忆存放位置」），外加一个只读的「当前状态」折叠区 |
+| **诊断** | `verbose`（诊断日志）与项目级设置的兼容性说明 |
 
 ### 能改什么
 
@@ -141,10 +141,10 @@
 | `memoryInjectIndex` | 开关 | 开 | 记忆 | **插件**（**每次装配现读**） | **即时** |
 | `memoryPersonalSearchable` | 开关 | 关 | 记忆 | **插件**（用时现读） | **即时** |
 | `memoryDir` | 文本框 | 空 = `~/dsh-lore-memory` | 记忆（末栏） | **插件**（用时现读）；**`journal.py`** 读的是插件写进设置文件的那一份（装载时与每次配置变更时都写） | **即时** |
-| `verbose` | 开关 | 关 | 高级 | **插件**（每次 `trace()` 现读；装载时初始化） | **即时** |
-| `modelInvocable` | 开关 | 开 | 高级 | **插件**（投影候选时现读） | 即时 |
-| `userInvocable` | 开关 | 开 | 高级 | **插件**（投影候选时现读） | 即时 |
-| `sessionsCrossWorkspace` | 开关 | 开 | 高级 | **插件**（`sessions` 调用时现读）：关掉后 `scope:"all"` 被拒绝，默认 scope 不受影响 | 即时 |
+| `verbose` | 开关 | 关 | 诊断 | **插件**（每次 `trace()` 现读；装载时初始化） | **即时** |
+| `modelInvocable` | 开关 | 开 | 技能 | **插件**（投影候选时现读） | 即时 |
+| `userInvocable` | 开关 | 开 | 技能 | **插件**（投影候选时现读） | 即时 |
+| `sessionsCrossWorkspace` | 开关 | 开 | 记忆 | **插件**（`sessions` 调用时现读）：关掉后 `scope:"all"` 被拒绝，默认 scope 不受影响 | 即时 |
 | `skillFile` | — | `SKILL.md` | **界面不提供控件** | **插件**（现读）—— 只由行配置给 | 即时 |
 | ~~`container`~~ | — | `work_log` | **界面不提供** | **`journal.py`** —— 插件不读 |
 | ~~`lessons`~~ | — | `lessons` | **界面不提供** | **`journal.py`** —— 插件不读 |
@@ -187,12 +187,12 @@ profile patch，也没有任何界面展示或提交它们；`projectDefaults()`
    记忆工具、两段注入与诊断开关走同一条规则：读原始 config 的引用，不读装载快照。
    依据是 `cordis/README.md` §Volatile configuration（只变 `.volatile()` 字段时 Loader
    **不重挂载**，把新值提交进运行中的引用并发 `loader/volatile-update`）与官方 cookbook
-   「在操作开始时读取 `.get()`」。卡片三页统一写"即时生效"，不再有"按页标注"。
+   「在操作开始时读取 `.get()`」。卡片三页共用一个“即时生效”页脚，不再有按页标注或重启例外。
 2. **诊断只有一个开关，落点由环境变量定**：`verbose`（界面）决定开不开，
    `DSH_WORKLOG_TRACE` / `<包>/lib/.trace` 决定落到哪个文件；没设落点就进宿主日志。
    从前这是两套互不相干的东西（界面那个只打一行、环境变量那个打很多行到文件），
    于是"打开诊断"有两个答案，取决于你走哪扇门。
-3. **项目级设置（`container` / `lessons` / `mode`）不在这两页里**，界面只在页脚留一句
+3. **项目级设置（`container` / `lessons` / `mode`）不在这三页里**，界面只在「诊断」页留一句
    兼容性说明，把它们指向 `journal.py config`。用户不会以为勾一下插件设置就改了
    某个项目的行为，因为那些键根本不出现。
 4. **改名类（`container`/`lessons`）是破坏性的**：已有项目改名后 `journal.py`

@@ -161,17 +161,17 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 
 | 键 | 类型 | 默认 | 卡片上 | 说明 | 改完生效 |
 |---|---|---|---|---|---|
-| `skillDir` | string | `skills/project-work-log` | 「技能 › 路径」 | 工作记录技能目录。相对路径从**包根**算起，绝对路径原样使用。 | 即时 |
+| `skillDir` | string | `skills/project-work-log` | **无控件**（2026-10-21 起） | 工作记录技能目录。相对路径从**包根**算起，绝对路径原样使用。 | 即时 |
 | `skillFile` | string | `SKILL.md` | **无控件** | 技能目录里的指令文件名。仅行配置。 | 即时 |
-| `skillEnabled` | boolean | `true` | 「技能」 | 是否登记 `project-work-log` 技能。**关掉它不影响记忆那一半**（索引注入与 `worklog_memory` 照旧）。 | 即时 |
-| `modelInvocable` | boolean | `true` | 「高级」 | 是否允许模型自动调用这个技能。 | 即时 |
-| `userInvocable` | boolean | `true` | 「高级」 | 是否允许用户手动调用。 | 即时 |
-| `verbose` | boolean | `false` | 「高级」 | **诊断开关**：装载与技能查询时打诊断行。落点由 `DSH_WORKLOG_TRACE`（或 `<包>/lib/.trace`）决定，没设就进宿主日志 —— 一个开关决定开不开，环境变量决定落哪儿。**每次 `trace()` 现读**。 | 即时 |
-| `memoryEnabled` | boolean | `true` | 「记忆」 | 全局记忆总开关。**关掉后工具照样注册**（调用它会明确回答"已关闭"，见 `lib/index.js` 的 `memoryAnswer()`）；两段提示词注入**常驻注册、按装配现判**，关掉就是空串。 | 即时 |
-| `memoryInjectIndex` | boolean | `true` | 「记忆」 | 是否把索引段注入提示词。**每次装配现读**（2026-09-30 之前它在挂载期读，界面却写着"即时生效"）。 | 即时 |
-| `memoryPersonalSearchable` | boolean | `false` | 「记忆」 | 个人目录是否可被检索（用时现读）。 | 即时 |
-| `memoryDir` | string | 空 | 「记忆」（最后一栏） | 全局记忆根。空 = `<用户主目录>/dsh-lore-memory`；**相对路径按用户主目录解析**（上面两条路径按包根算，不一样）。非空时压过 `$DSH_WORKLOG_MEMORY`。装载时**与每次配置变更时**都记进设置文件，`journal.py` 才读得到同一个根（见 `lib/index.js` 的 `mirrorMemoryDir`）。 | 即时 |
-| `sessionsCrossWorkspace` | boolean | `true` | 「高级」 | 是否允许 `sessions` 的 `scope:"all"`（跨工作区**只读**列标题）。关掉后该 scope 被明确拒绝，默认 scope 不受影响；**发送仍只到工作区粒度**。用时现读。 | 即时 |
+| `skillEnabled` | boolean | `true` | 「技能」段 | 是否登记 `project-work-log` 技能。**关掉它不影响记忆那一半**（索引注入与 `worklog_memory` 照旧）。 | 即时 |
+| `modelInvocable` | boolean | `true` | 「技能」段 | 是否允许模型自动调用这个技能。 | 即时 |
+| `userInvocable` | boolean | `true` | 「技能」段 | 是否允许用户手动调用。 | 即时 |
+| `verbose` | boolean | `false` | **无控件**（2026-10-21 起） | **诊断开关**：装载与技能查询时打诊断行。落点由 `DSH_WORKLOG_TRACE`（或 `<包>/lib/.trace`）决定，没设就进宿主日志 —— 一个开关决定开不开，环境变量决定落哪儿。**每次 `trace()` 现读**。 | 即时 |
+| `memoryEnabled` | boolean | `true` | 「记忆」段 | 全局记忆总开关。**关掉后工具照样注册**（调用它会明确回答"已关闭"，见 `lib/index.js` 的 `memoryAnswer()`）；两段提示词注入**常驻注册、按装配现判**，关掉就是空串。 | 即时 |
+| `memoryInjectIndex` | boolean | `true` | 「记忆」段 | 是否把索引段注入提示词。**每次装配现读**（2026-09-30 之前它在挂载期读，界面却写着"即时生效"）。 | 即时 |
+| `memoryPersonalSearchable` | boolean | `false` | 「记忆」段 | 个人目录是否可被检索（用时现读）。 | 即时 |
+| `memoryDir` | string | 空 | 「记忆」段（唯一的路径框） | 全局记忆根。空 = `<用户主目录>/dsh-lore-memory`；**相对路径按用户主目录解析**（上面两条路径按包根算，不一样）。非空时压过 `$DSH_WORKLOG_MEMORY`。装载时**与每次配置变更时**都记进设置文件，`journal.py` 才读得到同一个根（见 `lib/index.js` 的 `mirrorMemoryDir`）。 | 即时 |
+| `sessionsCrossWorkspace` | boolean | `true` | 「记忆」段 | 是否允许 `sessions` 的 `scope:"all"`（跨工作区**只读**列标题）。关掉后该 scope 被明确拒绝，默认 scope 不受影响；**发送仍只到工作区粒度**。用时现读。 | 即时 |
 
 > **2026-10-19 起没有"装载期读"的设置了**：11 条全部在用到时读（`memoryEnabled` 与
 > `verbose` 也接上了）。拨完下一次工具调用 / 下一次装配 / 下一次 `trace()` 就是新行为，
@@ -191,9 +191,9 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
   标一句「插件不读」—— 那仍然是把项目级的东西摆在插件设置页上。
 - **已经在跑的项目不会被追溯改变**：`journal.py` 始终只读项目文件，不去问插件。
 
-卡片底部留了一句兼容性说明，把这些键指到 `journal.py config`，但页面上**没有任何控件**
-与它们对应（`tests/audit-client-runtime.mjs` 按结构断言这一点：断言的是"没有名为容器 /
-经验目录 / 精细度的控件"，不是"页面文本里没有这些字"—— 兼容性说明里本来就有）。
+页面上**没有任何控件**与它们对应，也**没有**那句兼容性说明 —— 它在 2026-10-21 的界面精简里
+删掉了（那是文档内容，不属于设置页）。`tests/audit-client-runtime.mjs` 按结构断言这一点：
+断言的是"没有名为容器 / 经验目录 / 精细度的控件"。
 
 ## 配置界面：**本 bundle 自己那一页**上的一张卡片
 
@@ -247,43 +247,43 @@ removeOwnedStyles(row.id)                  // 删掉 data-plugin === row.id 的 
 3. **路径框是敲完才写**：输入过程只更新草稿，失焦或回车才提交。逐字符写会让宿主把
    patch 文件原子重写几十遍（以及编辑器的备份文件）。
 
-### 三个页签
+### 一页两段：技能 / 记忆
 
-界面用宿主的 `SegmentedTabs`（`@deepseek-ai/dsh-client-ui-primitives`）分三页，
-默认停在「技能」。它**只渲染标签栏，面板由页面自己给** —— 所以面板那边自己带
-`role="tabpanel"`、自己的 `id`，以及指回对应标签页的 `aria-labelledby`；
-一次只渲染被选中的那一个。
+**2026-10-21 起不再分页签。** 上一版用宿主的 `SegmentedTabs` 分三页装八个开关，页签本身
+是纯搬运成本；现在是一页两段，段标题是 `<h3>`，没有任何折叠区（没有东西需要点开才看得见）。
 
-| 页签 | 装什么 |
+| 段 | 装什么 |
 |---|---|
-| **技能** | `skillEnabled`（开关），以及收在「路径」折叠区里的 `skillDir` |
-| **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable` 三个开关，加最后一栏路径框 `memoryDir`（「记忆存放位置」）；再收一个「当前状态」折叠区（只读，见下） |
-| **高级** | `verbose`、`modelInvocable`、`userInvocable`、`sessionsCrossWorkspace` —— 四个开关 |
+| **技能** | `skillEnabled`、`modelInvocable`、`userInvocable` 三个开关 |
+| **记忆** | `memoryEnabled`、`memoryInjectIndex`、`memoryPersonalSearchable`、`sessionsCrossWorkspace` 四个开关，最后一栏是唯一的路径框 `memoryDir`（「记忆存放位置」） |
 
-「路径」与「当前状态」用 `DisclosureRow`（默认收起）：前者不常改，所以收起来，
-后者不属于这一页的语义但很有用（"我到底登记没登记"）。收起时内容**不在渲染树里**。
+被移出界面的三样东西，以及为什么：
 
-中文文案是完整的；英文词典也已就位（键集与中文一致，
-`tests/audit-client.mjs` 会核对）。
+- **`skillDir` / `skillFile` / `verbose`**：开发与排障用的配置。`Config` 仍保留这三个字段
+  （删字段会改变认领指纹，卡片会当场消失），只是页面不再给控件 —— 要改用 profile patch。
+- **「当前状态」（工作区数 / 待收 / 索引字数）**：调试数字，不是设置。
+- **「设置位置」页脚与项目级兼容性说明**：排查信息与文档内容，不属于设置页。
 
-### 只读状态端点
+底部只留一句「所有设置即时生效」。每个控件一句话说明；英文词典的键集与中文一致
+（`tests/audit-client.mjs` 会核对）。
 
-卡片上唯一还会发 HTTP 的地方，是「记忆」页的只读状态块：
+界面**不再发任何 HTTP 请求**：卡片只走 `ctx.configForms`。
+
+### 只读状态端点（页面已不再使用）
 
 ```
 GET /plugins/dsh-lore/status.json   → { source, path, memory, error }
 ```
 
-- `source` / `path`：设置**落在哪**（profile patch，还是插件自己的文件）。卡片把它显示出来 ——
-  官方通道下用户否则只能猜该改哪个文件。
-- `memory`：记忆系统的规模（已登记工作区 / 待收 / 索引字数）。读不到就是 `null`，
-  卡片显示"未读取"而**不是 0**："0 个工作区"和"没读"是两个不同的断言。
-- `error`：只在文件那条路上有意义（文件坏了会在这里报出来）。
-- **没有写动词**：`GET`/`HEAD` 以外一律 405（`allow: GET, HEAD`）。配置不再走 HTTP ——
-  留着 POST 就是给同一个事实源开第二个写入口，那正是本项目按缺陷处理的那类东西。
+**2026-10-21 起没有页面消费者。** 客户端删掉了「当前状态」块，也就不再 `fetch` —— 卡片现在
+只走 `ctx.configForms`。端点本身留在宿主半边（`lib/index.js` 的 `STATUS_ROUTE_PATH`）：
+排障时仍可直接请求，看 `memory`（已登记工作区 / 待收 / 索引字数）与 `source` / `path`
+（设置落在哪）。删掉它要连统计逻辑一起动，不在那次界面精简的范围内；`tests/audit-settings.mjs`
+把它记为"故意留的孤儿"（客户端不该再出现这个路径）。
 
-这个端点**是可选的**：没有 web server 的宿主照样挂载技能；状态读不到时卡片照常可编辑，
-只在状态块里说"读不到"。
+- **没有写动词**：`GET`/`HEAD` 以外一律 405（`allow: GET, HEAD`）。配置不走 HTTP ——
+  留着 POST 就是给同一个事实源开第二个写入口。
+- 这个端点**是可选的**：没有 web server 的宿主照样挂载技能。
 
 ## 「改完需重启」到底是不是硬限制
 

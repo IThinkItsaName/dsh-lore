@@ -63,6 +63,7 @@
     status    当前状态块：show / set / date / roll
     mode      记录精细度（一篇 = 什么）：show / --set / --why
     config    项目配置文件（<容器>/.config.json）：show / --write / --set
+    auto      自动操作 profile（<容器>/.auto.json）：--run / --list / --set-profile
     todo      待办清单：list / add / done / drop-done
     index     索引：sync 补漏行
     lesson    经验：add 追加带来源的条目
@@ -89,13 +90,18 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as _dt
+import errno
 import fnmatch
 import hashlib
 import json
 import os
 import re
+import shlex
+import subprocess
 import sys
+import tempfile
 import time
 import unicodedata
 import uuid
@@ -104,6 +110,10 @@ from urllib.parse import unquote
 
 try:  # Windows 控制台默认码页可能不是 UTF-8
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:  # pragma: no cover
+    pass
+try:  # stderr 也要一致：管道/重定向时 WARN 不能变成乱码
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except Exception:  # pragma: no cover
     pass
 
@@ -533,6 +543,24 @@ CONFIG_FIELD_HELP = {
     CFG_SNAPSHOT_ENTRIES: "正整数",
 }
 
+# ---- 自动操作 profile（`<容器>/.auto.json`，见 references/commands.md「auto」）----
+# 与 `.config.json` 分开：`.config.json` 是**项目设置**的逐字段视图，这里是**一张命令表**。
+# 合在一起会让 config 的逐字段来源、`config --write` 的精确输出与既有测试都变复杂，
+# 而 auto 需要的只是“一组按顺序跑的命令”，一个独立文件更小、更不容易连坐。
+AUTO_NAME = ".auto.json"
+AUTO_DEFAULT = {
+    "orient": ["brief"],
+    "verify": ["check --strict --lint"],
+    "close": ["index sync", "check --strict --lint"],
+}
+# `auto` 只跑既有顶层命令；`auto` 自己不在内（防递归）。
+AUTO_COMMANDS = frozenset({
+    "new", "check", "lint", "brief", "snapshot", "outline", "show", "search",
+    "stats", "topics", "export", "digest", "retro", "status", "mode", "config",
+    "todo", "archive", "split", "prune", "index", "lesson", "append", "memory",
+    "dream", "inbox", "promote",
+})
+
 
 def _indent_width(line: str) -> int:
     """行首缩进宽度（tab 记 4）。状态块续行的判据是「比字段行更深」，不是「有缩进」——
@@ -695,6 +723,13 @@ def write_raw(path: str, text: str) -> None:
     problem = utf8_problem(path)
     if problem is not None:
         raise WriteRefused(problem)
+    # 测试钩子：并发回归要用它把「读 → 改 → 写」的窗口撑开（生产环境不设置）。
+    test_delay = os.environ.get("JOURNAL_TEST_WRITE_DELAY_MS", "")
+    if test_delay:
+        try:
+            time.sleep(max(0.0, float(test_delay)) / 1000.0)
+        except ValueError:
+            pass
     # 临时文件放同一个目录：换卷的 `os.replace` 不是原子的（会退化成复制+删除）。
     tmp = f"{path}.{os.getpid()}.tmp"
     try:
@@ -1351,6 +1386,44 @@ def memory_manifest_path(workspace: str, container: str | None = None) -> str:
         return os.path.join(container, MEMORY_MANIFEST_NAME)
     found = resolve_dir(workspace, None, ("work_log", "journal", "work-log"))
     return os.path.join(found or os.path.join(workspace, "work_log"), MEMORY_MANIFEST_NAME)
+
+
+def resolve_feedback_path(workspace: str, container: str,
+                          declared: str) -> tuple[str | None, str | None]:
+    """把发布清单里的 `feedback:` 解析成**工作区内**的文件。
+
+    2026-10-22（issue #2）：旧实现允许绝对路径，也不检查 `..` 与软链，
+    于是清单写 `feedback: C:\\Users\\...\\id_rsa`（或 `../../x`、软链）就能把
+    工作区外的文件逐字镜像进跨工作区共享的 `<记忆根>/feedback/`。这里按
+    `lib/index.js` 的 `insideWorkspace()` 同口径收紧：
+
+      - 只接受相对路径（容器相对，保持旧语义）；绝对路径 / 盘符 / UNC 一律拒绝。
+      - `realpath` 之后必须仍在**工作区**内（`..` 与软链都逃不出去）。
+      - 目标本身是软链时拒绝（即使它指向工作区内）。
+      - 最终必须是普通文件。
+
+    返回 `(path, problem)`：成功时 `problem is None`；失败时 `path is None`
+    且 `problem` 是一句给人看的原因。
+    """
+    raw = (declared or "").strip()
+    if raw == "":
+        return None, None
+    if os.path.isabs(raw) or raw.startswith(("\\\\", "//")) or re.match(r"^[A-Za-z]:", raw):
+        return None, "只接受工作区内的相对路径（拒绝绝对路径）"
+    candidate = os.path.normpath(os.path.join(container, raw))
+    try:
+        root = os.path.normcase(os.path.realpath(workspace))
+        target = os.path.normcase(os.path.realpath(candidate))
+        inside = os.path.commonpath([root, target]) == root
+    except (OSError, ValueError):
+        inside = False
+    if not inside:
+        return None, "解析后落在工作区之外（`..` 或软链逃逸）"
+    if os.path.islink(candidate):
+        return None, "目标本身是软链（拒绝）"
+    if not os.path.isfile(candidate):
+        return None, "文件不存在"
+    return candidate, None
 
 
 def legacy_decl_patterns(container: str) -> list[str]:
@@ -3787,6 +3860,190 @@ def cmd_config(args: argparse.Namespace) -> int:
     return 2 if cfg.problems else 0
 
 
+def _auto_profile_ok(name: str) -> bool:
+    """profile 名：非空、不带空白、不叫 auto（防与命令本身混淆）。"""
+    return bool(name) and not any(c.isspace() for c in name) and name != "auto"
+
+
+def _auto_parts(command: str) -> list[str]:
+    """把 profile 里的一行命令拆成 argv，并拒绝不认识的子命令 / 递归。"""
+    try:
+        # Windows 用非 POSIX 规则：POSIX 规则会把 `C:\tmp\out` 的反斜杠当转义吃掉。
+        parts = shlex.split(command, posix=(os.name != "nt"))
+    except ValueError as exc:
+        raise ValueError(f"命令拆不开（引号不配对？）：{command}（{exc}）") from None
+    if os.name == "nt":
+        # `posix=False` 会保留外层引号；成对去掉。
+        parts = [p[1:-1] if len(p) >= 2 and p[0] == p[-1] and p[0] in "\"'" else p
+                 for p in parts]
+    if not parts:
+        raise ValueError("命令是空的")
+    if parts[0] == "auto":
+        raise ValueError("`auto` 不能递归调用自己")
+    if parts[0] not in AUTO_COMMANDS:
+        raise ValueError(f"不认识的子命令：{parts[0]}（只跑 journal.py 的既有顶层命令）")
+    return parts
+
+
+def _load_auto_profiles(path: str) -> tuple[dict[str, list[str]], str, list[str]]:
+    """读 `.auto.json`：内置 profile 打底，文件里的同名键覆盖；坏文件退回默认并记问题。"""
+    profiles = {name: list(cmds) for name, cmds in AUTO_DEFAULT.items()}
+    if not os.path.isfile(path):
+        return profiles, "内置默认", []
+    text = read_raw(path)
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        return profiles, "内置默认（.auto.json 读不出来）", [f"{AUTO_NAME} 不是合法 JSON：{exc}"]
+    if not isinstance(data, dict):
+        return profiles, "内置默认（.auto.json 不是对象）", [f"{AUTO_NAME} 的最外层必须是对象"]
+    problems: list[str] = []
+    for name, cmds in data.items():
+        if not isinstance(name, str) or not _auto_profile_ok(name):
+            problems.append(f"profile 名不合法：{name!r}")
+            continue
+        if not isinstance(cmds, list) or not all(isinstance(c, str) and c.strip() for c in cmds):
+            problems.append(f"profile {name!r} 必须是字符串数组")
+            continue
+        profiles[name] = [c.strip() for c in cmds]
+    return profiles, f"内置默认 + {AUTO_NAME}", problems
+
+
+def _auto_context(args: argparse.Namespace) -> tuple[str, str | None, dict[str, list[str]], str, list[str]]:
+    root = os.path.abspath(args.root)
+    journal, _lessons = resolve_layout(root, args.journal, args.lessons)
+    if not journal:
+        print("ERROR: 找不到记录容器")
+        return root, None, {}, "", []
+    path = os.path.join(journal, AUTO_NAME)
+    profiles, source, problems = _load_auto_profiles(path)
+    return root, path, profiles, source, problems
+
+
+def cmd_auto(args: argparse.Namespace) -> int:
+    """读 `<容器>/.auto.json`，按 profile 串行跑一组既有命令。
+
+    一个命令三种用法，互斥：
+        --run <profile>                 跑一组
+        --list                          看当前 profile 与命令
+        --set-profile <profile> --command CMD [--command CMD…]   写入/覆盖
+    """
+    if sum((args.set_profile is not None, bool(args.list), args.profile is not None)) > 1:
+        print("ERROR: --run / --list / --set-profile 三选一")
+        return 2
+    root, path, profiles, source, problems = _auto_context(args)
+    if path is None:
+        return 1
+
+    if args.set_profile is not None:
+        if problems:
+            print(f"ERROR: 现有 {AUTO_NAME} 有问题，先修好再 --set-profile：")
+            for problem in problems:
+                print(f"! {problem}")
+            return 2
+        if not _auto_profile_ok(args.set_profile):
+            print(f"ERROR: profile 名不合法：{args.set_profile!r}（非空、不带空白、不叫 auto）")
+            return 2
+        commands = list(args.command)
+        if not commands:
+            print("ERROR: --set-profile 至少给一条 --command")
+            return 2
+        for command in commands:
+            try:
+                _auto_parts(command)
+            except ValueError as exc:
+                print(f"ERROR: {exc}")
+                return 2
+        text = read_raw(path) if os.path.isfile(path) else ""
+        existing = json.loads(text) if text else {}
+        existing[args.set_profile] = commands
+        nl = nl_of(text) if text else "\n"
+        body = json.dumps(existing, ensure_ascii=False, indent=2).replace("\n", nl) + nl
+        if args.dry_run:
+            print(f"[dry-run] 将写入 {rel(root, path)}：")
+            print(body.rstrip("\r\n"))
+            return 0
+        write_raw(path, body)
+        print(f"auto 已更新：{rel(root, path)}：{args.set_profile}")
+        return 0
+
+    if args.command:
+        print("ERROR: --command 只配合 --set-profile 使用")
+        return 2
+
+    if args.list:
+        print(f"# AUTO  {rel(root, path)}  （{source}）")
+        for name in sorted(profiles):
+            commands = profiles[name]
+            print(f"{name}: " + (" | ".join(commands) if commands else "（空，不跑）"))
+        for problem in problems:
+            print(f"! {problem}")
+        return 0
+
+    if not args.profile:
+        print("ERROR: 给 --run <profile>、--list 或 --set-profile <profile>")
+        return 2
+    for problem in problems:
+        print(f"WARN: {problem}")
+    if args.profile not in profiles:
+        print(f"ERROR: 没有这个 profile：{args.profile}；现有：" + "、".join(sorted(profiles)))
+        return 2
+    commands = profiles[args.profile]
+    if not commands:
+        print(f"# AUTO  {args.profile}  （空，不跑）")
+        return 0
+    parsed: list[tuple[str, list[str]]] = []
+    for command in commands:
+        try:
+            parsed.append((command, _auto_parts(command)))
+        except ValueError as exc:
+            print(f"ERROR: {exc}")
+            return 2
+    # 容器/经验目录名是 auto 自己的选项，子步骤不会自动继承；这里显式转发。
+    # `--memory` 只转给真正认它的命令族，免得给 `brief` 塞一个不认识的 flag。
+    forward: list[str] = []
+    if args.work_log:
+        forward += ["--work-log", args.work_log]
+    elif args.journal:
+        forward += ["--journal", args.journal]
+    if args.lessons:
+        forward += ["--lessons", args.lessons]
+    if args.dry_run:
+        print(f"[dry-run] auto {args.profile}：{len(parsed)} 步")
+        for i, (command, _parts) in enumerate(parsed, 1):
+            print(f"[dry-run] {i}/{len(parsed)} {command}")
+        return 0
+    failures: list[tuple[str, int]] = []
+    for i, (command, parts) in enumerate(parsed, 1):
+        print(f"=== {i}/{len(parsed)}  {command} ===", flush=True)
+        prefix = list(forward)
+        if args.memory and parts[0] in {"memory", "inbox"}:
+            prefix += ["--memory", args.memory]
+        try:
+            # 不捕获输出：受限沙箱会拒绝 CreatePipe；子进程直接继承 stdout/stderr。
+            proc = subprocess.run(
+                [sys.executable, os.path.abspath(__file__), *parts, *prefix],
+                cwd=root,
+            )
+        except OSError as exc:
+            print(f"!!! 起不了子进程：{exc}")
+            failures.append((command, 1))
+            if not args.keep_going:
+                break
+            continue
+        if proc.returncode != 0:
+            print(f"!!! 第 {i}/{len(parsed)} 步失败：{command}（exit {proc.returncode}）")
+            failures.append((command, proc.returncode))
+            if not args.keep_going:
+                break
+    if failures:
+        print(f"# AUTO  {args.profile}  FAILED（{len(failures)} 步失败）")
+        code = failures[0][1]
+        return code if code > 0 else 1
+    print(f"# AUTO  {args.profile}  ok（{len(parsed)} 步）")
+    return 0
+
+
 def cmd_todo(args: argparse.Namespace) -> int:
     root = os.path.abspath(args.root)
     journal, lessons = resolve_layout(root, args.journal, args.lessons)
@@ -5260,7 +5517,14 @@ def observe_candidate(memory: str, root: str, registry: dict) -> str:
     if ws in cands:
         return ""
     cands[ws] = {"seen": _memory_now()}
-    save_candidates(memory, cands)
+    try:
+        save_candidates(memory, cands)
+    except OSError as exc:
+        # 工作区外的记忆根在 DSH 沙箱里可能可读不可写；候选只是提示簿记，
+        # 不能因此让 `memory status` / `memory search` 整条命令失败。
+        print(f"WARN: 候选簿记写不进去（{memory}）：{exc}；这次不记候选。",
+              file=sys.stderr)
+        return ""
     return ws
 
 
@@ -5350,7 +5614,7 @@ def parse_manifest(text: str) -> dict:
                                              f"（只认 true / false），按 false 处理"))
                     header["upload"] = False
             elif key == "feedback":
-                # 使用评价文件（容器相对路径，也可以给绝对路径）。它**不进正文分册**：
+                # 使用评价文件（按容器相对解析；只允许工作区内相对路径，绝对路径/逃逸/软链拒绝）。它**不进正文分册**：
                 # `collect` 把它原样镜像到 `<记忆根>/feedback/<工作区名>.md`，供后续改进用。
                 header["feedback"] = value or None
             else:
@@ -5721,18 +5985,25 @@ def cmd_memory_collect(args: argparse.Namespace) -> int:
         text = read_raw(memory_manifest_path(ws))
         digest = _memory_sha1(text)
         st = state["workspaces"].get(ws)
-        # 使用评价：清单里 `feedback:` 声明的那份文件（容器相对路径，也接受绝对路径）。
+        # 使用评价：清单里 `feedback:` 声明的那份文件（容器相对路径）。
         # 它**不进正文分册**，只镜像到 `<记忆根>/feedback/<工作区名>.md`。
+        # 2026-10-22（issue #2）：绝对路径 / 逃出工作区的 `..` / 软链一律拒绝 ——
+        # 旧实现会把工作区外的任意文件原样镜像进共享记忆根。
         fb_rel = (manifest.get("feedback") or "").strip()
         fb_body = ""
-        if fb_rel:
-            fb_path = (fb_rel if os.path.isabs(fb_rel)
-                       else os.path.join(os.path.dirname(memory_manifest_path(ws)), fb_rel))
-            if os.path.isfile(fb_path):
-                fb_body = read_raw(fb_path)
-            else:
+        # upload:false 的工作区不解析/不校验 feedback：旧语义下它本来就不会被镜像；
+        # 否则一份默认配置（只读不传）+ 旧的绝对路径写法会让 collect 每次都变红。
+        if fb_rel and manifest["upload"]:
+            fb_path, fb_problem = resolve_feedback_path(
+                ws, os.path.dirname(memory_manifest_path(ws)), fb_rel)
+            if fb_problem == "文件不存在":
+                candidate = os.path.join(os.path.dirname(memory_manifest_path(ws)), fb_rel)
                 problems.append(f"{name}: `feedback: {fb_rel}` 指向的文件不存在"
-                                f"（按容器相对路径找：{rel(ws, fb_path)}）")
+                                f"（按容器相对路径找：{rel(ws, candidate)}）")
+            elif fb_problem is not None:
+                problems.append(f"{name}: `feedback: {fb_rel}` 被拒绝：{fb_problem}")
+            else:
+                fb_body = read_raw(fb_path)
         fb_digest = _memory_sha1(fb_body) if fb_body else ""
         st_fb = st.get("feedback_digest", "") if isinstance(st, dict) else ""
         if isinstance(st, dict) and st.get("digest") == digest and st_fb == fb_digest:
@@ -7214,6 +7485,19 @@ mode 同样只提供**新项目的初始档位**：台账 `## 当前状态` 有 
     _add_legacy(p)
     p.add_argument("--dry-run", action="store_true")
 
+    p = add("auto", cmd_auto, "按 <容器>/.auto.json 串行跑一组固定命令")
+    _add_memory(p)
+    p.add_argument("--run", dest="profile", default=None, metavar="PROFILE",
+                   help="跑一个 profile（如 orient / verify / close）")
+    p.add_argument("--list", action="store_true", help="列出 profile 与命令")
+    p.add_argument("--set-profile", dest="set_profile", default=None, metavar="PROFILE",
+                   help="写入/覆盖一个 profile")
+    p.add_argument("--command", action="append", default=[], metavar="CMD",
+                   help="配合 --set-profile：要加的命令（可重复；含空格时整体加引号，"
+                        "如 --command \"check --strict --lint\"）")
+    p.add_argument("--keep-going", action="store_true", help="某步失败后继续跑后续步骤")
+    p.add_argument("--dry-run", action="store_true")
+
     p = add("todo", cmd_todo, "待办清单")
     p.add_argument("--add", default=None)
     p.add_argument("--done", default=None, help="按子串勾选第一条匹配的未完成项")
@@ -7551,6 +7835,232 @@ def _run(rep: Report, fn, args: argparse.Namespace) -> int:
     return 1 if rep.errors() else 0
 
 
+# ---- 并发读改写锁（issue #2 第 3 条，2026-10-22） ---------------------- #
+#
+# `write_raw()` / `_memory_json_write()` 只保证"不会留下半截文件"；"读全文 →
+# 改 → 写回"整段没有互斥，两个进程会各读旧值、后写者覆盖先写者，且退出码都是 0。
+# 这里在**命令分发层**加一把按根目录命名的建议锁：整条命令（含读、改、写）
+# 串行化，锁文件 `.journal.lock` 放在被锁目录里（同一工作区的不同 DSH 会话才会
+# 互斥；系统临时目录是按会话隔离的），进程退出/异常自动释放。
+# 同一进程内可重入（内部函数调用不经 dispatch，天然不会重入；这里仍记录已持锁
+# 路径，防止将来嵌套调用死锁）。
+
+_LOCK_HELD: set[str] = set()
+_LOCK_TIMEOUT_SECONDS = 30.0
+
+
+class LockTimeout(Exception):
+    """另一个 journal.py 进程持锁超过等待上限（不是数据写入错误）。"""
+
+
+def _temp_lock_file(key: str) -> str:
+    """工作区外的目标（如默认记忆根）在 DSH 沙箱里写不进锁时，只能退回 TEMP。
+
+    TEMP 是**每会话一份**，所以这条退路不保证跨会话互斥；调用方会打 WARN，不能假装
+    它和容器内锁等价。目录名带 `v2`，避开早期 `dsh-journal-locks-win` 的 0700 ACL。
+    """
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
+    directory = os.path.join(tempfile.gettempdir(), "dsh-journal-locks-v2")
+    os.makedirs(directory, exist_ok=True)
+    return os.path.join(directory, digest + ".lock")
+
+
+def _lock_file_for(target: str) -> str:
+    real = os.path.normcase(os.path.realpath(os.path.abspath(target)))
+    # 锁文件放在**被锁目录里面**：同一工作区的不同 DSH 会话（各自一个 TEMP）
+    # 才会真的互斥；放系统临时目录时，每个会话的 TEMP 不同，等于没锁。
+    # 它是隐藏的普通文件，不占新目录；进程退出/崩溃后残留也不影响下次加锁。
+    # 还不存在的目标（如首次使用的记忆根）不要往父目录塞锁：直接走 TEMP 兜底。
+    if not os.path.exists(real):
+        return _temp_lock_file(real)
+    directory = real if os.path.isdir(real) else os.path.dirname(real)
+    return os.path.join(directory, ".journal.lock")
+
+
+def _try_lock(fd: int) -> bool:
+    try:
+        if os.name == "nt":  # pragma: no cover - exercised on Windows by the selftest
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:  # pragma: no cover - POSIX branch
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError as exc:
+        # 只有“被别人拿着”才算正常竞争；文件系统不支持锁 / 路径坏了要立刻报错，
+        # 不能空等 30 秒再误报“另一个进程正在写”。
+        if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK):
+            raise
+        return False
+
+
+def _unlock(fd: int) -> None:
+    try:
+        if os.name == "nt":  # pragma: no cover
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:  # pragma: no cover
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
+@contextlib.contextmanager
+def journal_lock(targets: list[str]):
+    paths = sorted({_lock_file_for(target) for target in targets if target})
+    acquired: list[tuple[str, int]] = []
+    try:
+        for path in paths:
+            if path in _LOCK_HELD:
+                continue
+            flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                fd = os.open(path, flags, 0o600)
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EPERM, errno.EROFS):
+                    raise
+                # 工作区外的目标（默认记忆根等）在 DSH 沙箱里建不了锁；不能因此让
+                # 整条记忆命令 exit 2。退到 TEMP，明确告诉调用方跨会话不互斥。
+                fallback = _temp_lock_file(path)
+                print(f"WARN: 锁文件建不了（{path}）：{exc}；已退到临时锁 "
+                      f"{fallback}，跨会话不互斥。", file=sys.stderr)
+                path = fallback
+                fd = os.open(path, flags, 0o600)
+            try:
+                deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+                while not _try_lock(fd):
+                    if time.monotonic() >= deadline:
+                        raise LockTimeout(
+                            f"另一个 journal.py 进程正在写同一份容器（锁：{path}）；"
+                            f"已等 {_LOCK_TIMEOUT_SECONDS:.0f} 秒")
+                    time.sleep(0.05)
+            except BaseException:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                raise
+            _LOCK_HELD.add(path)
+            acquired.append((path, fd))
+        yield
+    finally:
+        for path, fd in reversed(acquired):
+            _unlock(fd)
+            os.close(fd)
+            _LOCK_HELD.discard(path)
+
+
+def _lock_targets(args: argparse.Namespace) -> list[str]:
+    """哪些命令、锁哪些根。
+
+    只锁**真正会写**的路径（issue #2 第 3 条；只读调用不该被长写者拖住 30 秒）。
+    `append` 的根在位置参数 `paths` 里（parser 的 `root=False`），不能只看
+    `args.root`；`index compact` 是独立函数 `cmd_index_compact`，也写台账。
+    """
+    name = getattr(args.func, "__name__", "")
+    dry = bool(getattr(args, "dry_run", False))
+    root = os.path.abspath(getattr(args, "root", ".") or ".")
+    targets: list[str] = []
+    memory: str | None = None
+
+    def mem() -> str:
+        nonlocal memory
+        if memory is None:
+            memory = memory_root(getattr(args, "memory", None))
+        return memory
+
+    if name == "cmd_append":
+        try:
+            append_root = os.path.abspath(_root_and_num(getattr(args, "paths", []) or [])[0])
+        except Exception:
+            append_root = root
+        if not dry:
+            journal, _ = resolve_layout(append_root, getattr(args, "journal", None), None)
+            targets.append(journal or append_root)
+        return targets
+
+    if name in {"cmd_new", "cmd_archive", "cmd_split"}:
+        if not dry:
+            targets.append(root)
+    elif name == "cmd_status":
+        if not dry and (getattr(args, "set", None) or getattr(args, "date", None)
+                        or getattr(args, "roll", False)):
+            targets.append(root)
+    elif name == "cmd_mode":
+        if not dry and getattr(args, "set", None) is not None:
+            targets.append(root)
+    elif name == "cmd_todo":
+        if not dry and (getattr(args, "add", None) or getattr(args, "done", None)
+                        or getattr(args, "drop_done", False)):
+            targets.append(root)
+    elif name == "cmd_config":
+        if not dry and (getattr(args, "write", False) or getattr(args, "set", None)):
+            targets.append(root)
+    elif name == "cmd_auto":
+        if not dry and getattr(args, "set_profile", None):
+            targets.append(root)
+    elif name == "cmd_prune":
+        if getattr(args, "zip", None) or getattr(args, "apply", False):
+            targets.append(root)
+    elif name in {"cmd_index", "cmd_index_compact"}:
+        if not dry:
+            targets.append(root)
+    elif name == "cmd_lesson":
+        if not dry:
+            targets.append(root)
+    elif name == "cmd_memory_publish":
+        if not dry:
+            targets.append(root)
+            targets.append(mem())
+    elif name == "cmd_memory_collect":
+        if not dry:
+            targets.append(mem())
+    elif name == "cmd_memory_add":
+        if not dry:
+            targets.append(mem())
+    elif name == "cmd_memory_index":
+        if not dry and not getattr(args, "check", False):
+            targets.append(mem())
+    elif name == "cmd_memory_search":
+        # search 记命中；--dry-run 只预览，不该上排他锁。
+        if not getattr(args, "dry_run", False):
+            targets.append(mem())
+    elif name == "cmd_memory_status":
+        # status 记候选，不是纯读。
+        targets.append(mem())
+    elif name == "cmd_inbox_put":
+        targets.append(mem())
+        outbox = getattr(args, "outbox", None)
+        if outbox:
+            targets.append(os.path.abspath(outbox))
+    elif name == "cmd_inbox_take":
+        if not dry and not getattr(args, "keep", False):
+            targets.append(root)
+            targets.append(mem())
+    elif name == "cmd_inbox_sweep":
+        if getattr(args, "apply", False):
+            targets.append(mem())
+    elif name == "cmd_inbox_subscribe":
+        targets.append(mem())
+    elif name == "cmd_dream":
+        if not dry and not getattr(args, "check", False):
+            targets.append(root)
+            targets.append(mem())
+    elif name == "cmd_promote_scaffold":
+        out = getattr(args, "out", None)
+        if not dry and out:
+            targets.append(os.path.dirname(os.path.abspath(out)))
+    # 根目录只是“工作区”的入口；真正会被并发改写的是容器。锁放进容器，
+    # 既跨 DSH 会话互斥，也不往工作区顶层多放一个锁文件。
+    journal, _ = resolve_layout(root, getattr(args, "journal", None), None)
+    if journal:
+        targets = [journal if os.path.abspath(t) == root else t for t in targets]
+    return targets
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     # `--work-log` 是 `--journal` 的正式名；两者同名一个 dest，这里统一。
@@ -7564,7 +8074,12 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "date", None) == "today":
         args.date = today()
     try:
-        result = args.func(args)
+        with journal_lock(_lock_targets(args)):
+            result = args.func(args)
+    except LockTimeout as exc:
+        print(f"ERROR: {exc}")
+        print("       另一个会话正在改同一份工作记录；等它结束再重试。")
+        return 2
     except WriteRefused as exc:
         # write_raw 对非 UTF-8 目标主动抛错，避免把坏字节写成 U+FFFD。
         print(f"ERROR: 拒绝写入：{exc}")
@@ -7582,6 +8097,10 @@ def main(argv: list[str] | None = None) -> int:
         # 写不进去（只读盘、权限不够、父目录没了、磁盘满）。别抛一屏 traceback：
         # 这类失败跟数据无关，用户要做的事只有一件（换个能写的位置 / 放开权限）。
         print(f"ERROR: 写不进去：{exc}")
+        if getattr(args, "func", None) in (cmd_memory_add, cmd_memory_collect,
+                                           cmd_memory_index, cmd_memory_publish):
+            print("       目标可能在 DSH 沙箱外（默认记忆根）；"
+                  "用 --memory 指到工作区内，或改用插件 worklog_memory。")
         return 2
     return result if isinstance(result, int) else 0
 

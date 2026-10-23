@@ -102,6 +102,7 @@ function makeCtx({
   cwd = WS_A, sessions = [], titles = {}, archived = [], noInitiator = false, noController = false,
   registered = [{ id: 'ws-a', path: WS_A }, { id: 'ws-b', path: WS_B }],
   sessionCwds = {}, missingSessions = [], noRegistry = false, noPresets = false,
+  initiatorId = 'session-this',
 } = {}) {
   const calls = { create: [], followup: [], flush: 0, resolveAgent: [], tools: [], withoutInitiator: 0 }
   // 真宿主的 `resolveAgent` 是 "Resolve or resume"：会话存在就恢复并返回 Agent，不存在才回
@@ -127,7 +128,7 @@ function makeCtx({
         calls.withoutInitiator += 1
         return fn()
       },
-      ...(noInitiator ? {} : { currentInitiator: () => ({ session: { id: 'session-this', header: { cwd } } }) }),
+      ...(noInitiator ? {} : { currentInitiator: () => ({ session: { id: initiatorId, header: { cwd } } }) }),
     },
     sessions: {
       flush: async () => {
@@ -759,6 +760,41 @@ if (!hasPython) {
   const left = mod.readPendingLetters(WS_A).filter((item) => item.id === second.id)
   ok(left.length === 0 && existsSync(join(WS_A, 'work_log', 'logs', 'inbox', second.name)),
     'the original is archived and no longer pending')
+
+  // 2026-10-22：收件会话自己回信时，`to` 不带 `session` 不应把提醒发回自己。
+  // 带 `thread` 时按原信的 `from-session` 回给发件对话；不带则明确拒绝。
+  const requester = mount({
+    initiatorId: 'session-requester',
+    sessionCwds: { 'session-requester': WS_A, 'session-inbox-a': WS_A },
+  })
+  const taskSent = await requester.tool.execute({
+    operation: 'send', workspace: WS_A, to: WS_A, session: 'session-inbox-a',
+    text: '请审查这次改动，结束后回信。',
+  })
+  ok(taskSent.ok === true, 'requester sends a task to the inbox session', taskSent.text)
+  const taskLetter = mod.readPendingLetters(WS_A)
+    .map((item) => ({ ...item, body: readFileSync(join(dropDir, item.name), 'utf8') }))
+    .find((item) => item.body.includes('请审查这次改动'))
+  ok(taskLetter !== undefined, 'the task letter is pending')
+  if (taskLetter !== undefined) {
+    const inboxTool = mount({
+      initiatorId: 'session-inbox-a',
+      sessionCwds: { 'session-requester': WS_A, 'session-inbox-a': WS_A },
+    })
+    const reply = await inboxTool.tool.execute({
+      operation: 'send', workspace: WS_A, to: WS_A, thread: taskLetter.id,
+      text: '审查完成：没有 critical。',
+    })
+    ok(reply.ok === true && reply.text.includes('woke conversation session-requester'),
+      'a reply from the inbox session goes to the original sender, not itself', reply.text)
+    ok(mod.readPendingLetters(WS_A).every((item) => item.id !== taskLetter.id),
+      'the original letter is closed by the threaded reply')
+    const selfLoop = await inboxTool.tool.execute({
+      operation: 'send', workspace: WS_A, to: WS_A, text: '没有 thread 的自投。',
+    })
+    ok(selfLoop.ok === false && selfLoop.text.includes('收件会话'),
+      'an unthreaded self-send from the inbox session is refused', selfLoop.text)
+  }
 }
 
 report('inbox delivery OK — one writer, authorized waking, no body in any prompt, and sessions stay '

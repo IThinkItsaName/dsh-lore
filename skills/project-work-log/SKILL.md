@@ -284,9 +284,12 @@ python scripts/journal.py memory lint --strict && python scripts/journal.py memo
 
 完整表述见 [references/conventions.md](references/conventions.md) 的「日志归位要求」。
 
-## 工具（`scripts/journal.py`，纯标准库）
+## 工具（`scripts/journal.py` / `scripts/journal.mjs`，纯标准库）
 
 **核心用法：少读、少写、可校验。** 完整命令说明见 [references/commands.md](references/commands.md)。
+
+> DSH 桌面版：把下文的 `python scripts/journal.py` 换成 `node scripts/journal.mjs`——
+> 启动器会找 DSH 自带 Python 运行时，不必另装 Python。非 DSH 环境继续用 Python 即可。
 
 ```bash
 ROOT  # 可省略，默认当前目录
@@ -307,6 +310,10 @@ python scripts/journal.py mode --set digest --why "阶段收口"                
 python scripts/journal.py config                     # 项目配置文件：每个字段的生效值与来源（命令行/配置文件/内置默认）
 python scripts/journal.py config --write             # 按当前生效值写出 <容器>/.config.json
 python scripts/journal.py config --set mode=digest   # 改一项，保留其余字段与换行风格
+python scripts/journal.py auto --list                # 自动操作 profile：内置 orient / verify / close
+python scripts/journal.py auto --run orient          # 一次跑一组固定命令（开工：brief）
+python scripts/journal.py auto --set-profile close \
+        --command "index sync" --command "check --strict --lint"   # 把收尾动作写成 profile
 python scripts/journal.py todo --add "…" | --done "子串" | --drop-done
 python scripts/journal.py index sync --stage "B. 迭代"            # 补漏掉的索引行
 python scripts/journal.py lesson add --volume 04-verification-and-safety.md --source 152 --text "…"
@@ -353,8 +360,21 @@ python scripts/journal.py promote suggest                                   # �
 
 自测：`python -B scripts/_selftest.py`（`-B` 别省：脚本住在包里，不加会在包内留下 `__pycache__`；临时工程跑通全部命令 + CRLF 保真 + 非编程场景 + 整理能力 + 英文标签 + 数据安全 + 新/旧布局 + 精细度档位 + 两种命名 + 渐进原则 + snapshot + 项目配置文件 + 目标表 + 全局记忆；**断言数以脚本实际输出为准**，全绿即通过）。
 
-> 典型接手动作：`brief` → `snapshot` → `search` → `show` → 需要细节才 `read` 那一个文件。
+> 典型接手动作：`brief` → `snapshot` → `search` → `show` → 需要细节才读那一个文件（用当前可用的文件读取工具）。
 > 典型收尾动作：`new --insert` → 补正文 → `status` → `lesson add` → `check --strict --lint`（两道门禁一起跑；为什么默认不合并见 [references/commands.md](references/commands.md)）。
+
+## 在 DSH 里：让启动器找自带 Python
+
+DSH 桌面版自带 Python 运行时。`node scripts/journal.mjs <命令>` 的参数与
+`python scripts/journal.py <命令>` 完全相同；启动器按下面顺序找解释器：
+
+1. `DSH_WORKLOG_PYTHON`（显式指定）
+2. `DSH_PRIMARY_RUNTIME` / `DSH_BUNDLED_PRIMARY_RUNTIME`
+3. `<DSH_HOME>/dsh-runtimes/*/dependencies/python/`
+4. PATH 上的 `python` / `python3` / `py`
+
+所以 DSH 装好就能跑，不必另装 Python。非 DSH 环境仍可直接用
+`python scripts/journal.py`；两条路都要求 Python 3.9+。
 
 ## 没有 Python 怎么办（降级路径）
 
@@ -369,7 +389,8 @@ python scripts/journal.py promote suggest                                   # �
 5. **整理**：归档就是"移文件 + 改链接"（容器根 → `<stage>/`，可带主题层 `<主题>/<阶段>/`），手工做时**先全仓 grep 链接再改**——脚本的价值主要就在这里（自动重写 + 死链自检）。用了归档层 `archive/` 的项目，归档后还在 `archive/README.md` 的表里补/并一行（**篇号与篇数按磁盘重算**、日期区间取并集，同一个阶段只占一行；新容器就按 [references/templates.md](references/templates.md) §3 的骨架建）。
 
 脚本全部只用 Python 标准库，**不需要 `pip install`**；只要 Python 3.9+ 在 PATH 里就能跑
-（更精确的实测范围见下方「环境边界」）。若连命令都不能执行（纯聊天环境），技能退化为一份
+（DSH 用户可走 `scripts/journal.mjs`，它会找 DSH 自带运行时，不要求 PATH 里有 Python；
+更精确的实测范围见下方「环境边界」）。若连命令都不能执行（纯聊天环境），技能退化为一份
 "怎么写记录"的规范——三层结构、收尾清单、归档判据仍然成立。
 
 ## 环境边界

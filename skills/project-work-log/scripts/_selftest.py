@@ -309,10 +309,30 @@ def run(root: str, *argv: str, tool: str = TOOL) -> subprocess.CompletedProcess:
     # `tool=` 是给同目录的其它脚本（如 dsh-lore-card.py）用的：它们共用同一套夹具与调用约定。
     # 捕字节而不是 text=True（见 `decode_output` 的注释），再把两份输出换成 str 交回调用方，
     # 这样 `r.stdout + r.stderr` 这类拼接永远是 str —— 不给 None 流进断言留缝。
-    r = subprocess.run([sys.executable, tool, *argv],
-                       cwd=root, capture_output=True, text=False)
-    r.stdout = decode_output(r.stdout)
-    r.stderr = decode_output(r.stderr)
+    #
+    # **不用 `capture_output=True`**：受限沙箱会拒绝 `CreatePipe`（Windows 上实测
+    # `PermissionError: [WinError 5]`），而自测本身常常就跑在这种沙箱里。改成两个临时文件，
+    # 语义不变（仍然拿到原始字节），只是不经过管道。
+    out_fd, out_path = tempfile.mkstemp(prefix="journal-selftest-", suffix=".out")
+    err_fd, err_path = tempfile.mkstemp(prefix="journal-selftest-", suffix=".err")
+    os.close(out_fd)
+    os.close(err_fd)
+    try:
+        with open(out_path, "wb") as out, open(err_path, "wb") as err:
+            r = subprocess.run([sys.executable, tool, *argv],
+                               cwd=root, stdout=out, stderr=err)
+        with open(out_path, "rb") as fh:
+            raw_out = fh.read()
+        with open(err_path, "rb") as fh:
+            raw_err = fh.read()
+    finally:
+        for path in (out_path, err_path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    r.stdout = decode_output(raw_out)
+    r.stderr = decode_output(raw_err)
     if r.stdout is None or r.stderr is None:      # 理论上不可达；真到了要立刻炸，别静默
         raise RuntimeError("子进程输出解码失败（%s）：stdout=%r stderr=%r"
                            % (" ".join(argv), r.stdout, r.stderr))
@@ -344,6 +364,13 @@ def make_tmp(prefix: str) -> str:
             continue
         return cand
     raise RuntimeError(f"在 {base} 下连试 64 次都没抢到临时目录名")
+
+
+def container_files(path: str) -> list[str]:
+    """容器里的记录文件：README 与点文件（`.journal.lock` 等）都不算。"""
+    return sorted(f for f in os.listdir(path)
+                  if f != "README.md" and not f.startswith("."))
+
 
 
 def harness_fixture(name: str) -> str:
@@ -862,8 +889,11 @@ def archive_dir_index_phase(parent: str) -> None:
        "archiving leaves the hand-written prose alone", after)
     ok("| `st0/` | 0001–0001 | 2026-10-01 ~ 2026-10-01 | 1 篇 | 人工 |" in after,
        "and leaves the rows it did not write alone", after)
-    ok(after.index("`st0/`") < after.index("`st2/`"), "the new row is appended below the old", after)
-    ok(after.index("`st2/`") < after.index("## 尾注"),
+    ok("`st0/`" in after and "`st2/`" in after
+       and after.index("`st0/`") < after.index("`st2/`"),
+       "the new row is appended below the old", after)
+    ok("`st2/`" in after and "## 尾注" in after
+       and after.index("`st2/`") < after.index("## 尾注"),
        "the new row lands inside the table, not at the end of the file", after)
 
     # C) 同一阶段再归档：原地更新，日期取并集、篇号与篇数按磁盘重算，不新增行
@@ -909,7 +939,8 @@ def archive_dir_index_phase(parent: str) -> None:
     ok("2026-10-06 ~ 2026-10-07" in merged, "the merged row spans both dates", merged)
     ok("| `st0/` | 0001–0001 | 2026-10-01 ~ 2026-10-01 | 1 篇 | 人工 |" in merged,
        "merging one row leaves its neighbours alone", merged)
-    ok(merged.index("`st0/`") < merged.index("`st2/`") < merged.index("## 尾注"),
+    ok("`st0/`" in merged and "`st2/`" in merged and "## 尾注" in merged
+       and merged.index("`st0/`") < merged.index("`st2/`") < merged.index("## 尾注"),
        "and the merged row stays inside the table", merged)
 
     # G) 篇号与篇数**按磁盘重算**，且断档写穷举（2026-10-17 改口径）。
@@ -2480,7 +2511,7 @@ def format_phase(parent: str) -> None:
     write(os.path.join(snap, CONTAINER, "0001-自由结构.md"),
           FMT_FREE_ENTRY.replace("# 0002 · ", "# 0001 · ").replace("日期：2026-09-03", "日期：2026-09-01"))
     before_state = sorted((f, read(os.path.join(snap, CONTAINER, f)))
-                          for f in os.listdir(os.path.join(snap, CONTAINER)))
+                          for f in container_files(os.path.join(snap, CONTAINER)))
     r = run(snap, "snapshot", "--entries", "9")
     ok(r.returncode == 0, "snapshot exits 0", r.stdout + r.stderr)
     ok("SNAPSHOT" in r.stdout, "snapshot prints a header", r.stdout)
@@ -2489,7 +2520,7 @@ def format_phase(parent: str) -> None:
     ok("日期：2026-09-01" in r.stdout and "结论：3 组对照全部通过" in r.stdout,
        "the field-line style entry block is aggregated", r.stdout)
     after_state = sorted((f, read(os.path.join(snap, CONTAINER, f)))
-                         for f in os.listdir(os.path.join(snap, CONTAINER)))
+                         for f in container_files(os.path.join(snap, CONTAINER)))
     ok(before_state == after_state, "snapshot is READ-ONLY: it changed no file in the container")
     r = run(snap, "snapshot", "--entries", "2")
     ok("2026-09-05-没有入口块.md" in r.stdout and "2026-09-02-迷你transformer实验.md" in r.stdout
@@ -2779,6 +2810,114 @@ GOALS_HEAD = """# 目标
 def goals_file(*rows: str) -> str:
     """目标文件的正文；`rows` 逐行给数据行（行号因此可预期：首行数据在第 5 行）。"""
     return GOALS_HEAD + "".join(r + "\n" for r in rows)
+
+
+def auto_phase(parent: str) -> None:
+    """自动操作 profile：内置默认、--run / --list / --set-profile、坏文件与递归拒绝。"""
+    proj = os.path.join(parent, "autoproj")
+    os.makedirs(os.path.join(proj, CONTAINER, "lessons"))
+    write(os.path.join(proj, CONTAINER, "README.md"), INDEX)
+    write(os.path.join(proj, CONTAINER, "0001-seed.md"), SEED)
+    write(os.path.join(proj, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
+    write(os.path.join(proj, CONTAINER, "lessons", "01-topic.md"), VOLUME)
+    auto_path = os.path.join(proj, CONTAINER, ".auto.json")
+
+    r = run(proj, "auto", "--list")
+    ok(r.returncode == 0 and "orient: brief" in r.stdout
+       and "verify: check --strict --lint" in r.stdout,
+       "auto --list shows the built-in profiles", r.stdout)
+
+    r = run(proj, "auto", "--list", "--run", "orient")
+    ok(r.returncode == 2 and "三选一" in r.stdout,
+       "auto rejects mixing --list and --run", r.stdout)
+
+    r = run(proj, "auto", "--run", "orient", "--dry-run")
+    ok(r.returncode == 0 and "[dry-run] 1/1 brief" in r.stdout and "# BRIEF" not in r.stdout,
+       "auto --run --dry-run prints without running", r.stdout)
+
+    r = run(proj, "auto", "--run", "orient")
+    ok(r.returncode == 0 and "# BRIEF" in r.stdout and "# AUTO  orient  ok" in r.stdout,
+       "auto --run orient runs the brief step", r.stdout + r.stderr)
+
+    r = run(proj, "auto", "--run", "verify")
+    ok(r.returncode == 0 and "# AUTO  verify  ok" in r.stdout,
+       "auto --run verify runs check --strict --lint", r.stdout + r.stderr)
+
+    r = run(proj, "auto", "--run", "close")
+    ok(r.returncode == 0 and "# AUTO  close  ok" in r.stdout,
+       "auto --run close runs index sync + check", r.stdout + r.stderr)
+
+    r = run(proj, "auto", "--run", "no-such-profile")
+    ok(r.returncode == 2 and "没有这个 profile" in r.stdout,
+       "auto rejects an unknown profile", r.stdout)
+
+    r = run(proj, "auto", "--set-profile", "orient",
+            "--command", "brief", "--command", "status")
+    ok(r.returncode == 0 and os.path.isfile(auto_path),
+       "auto --set-profile writes <container>/.auto.json", r.stdout + r.stderr)
+    data = safe(lambda: json.loads(read(auto_path)))
+    ok(isinstance(data, dict) and data.get("orient") == ["brief", "status"],
+       "auto --set-profile records the profile", f"{data}")
+    ok(isinstance(data, dict) and set(data) == {"orient"},
+       "auto --set-profile does not persist the built-in defaults", f"{data}")
+
+    r = run(proj, "auto", "--run", "orient")
+    ok("=== 1/2  brief ===" in r.stdout and "=== 2/2  status ===" in r.stdout,
+       "auto runs the custom profile in order", r.stdout)
+
+    write(auto_path, '{"empty": []}')
+    r = run(proj, "auto", "--run", "empty")
+    ok(r.returncode == 0 and "空，不跑" in r.stdout,
+       "auto runs an empty profile as a no-op", r.stdout)
+
+    r = run(proj, "auto", "--set-profile", "bad", "--command", "not-a-command")
+    ok(r.returncode == 2 and "不认识的子命令" in r.stdout,
+       "auto rejects an unknown step command", r.stdout)
+
+    r = run(proj, "auto", "--set-profile", "loop", "--command", "auto --run orient")
+    ok(r.returncode == 2 and "不能递归" in r.stdout,
+       "auto refuses a recursive step", r.stdout)
+
+    r = run(proj, "auto", "--command", "brief")
+    ok(r.returncode == 2 and "--command 只配合 --set-profile" in r.stdout,
+       "auto rejects --command without --set-profile", r.stdout)
+
+    # 容器/经验目录名要转发给子步骤：records/ + notes/ 不是默认名。
+    alt = os.path.join(parent, "autorecords")
+    os.makedirs(os.path.join(alt, "records", "notes"))
+    write(os.path.join(alt, "records", "README.md"), INDEX)
+    write(os.path.join(alt, "records", "0001-seed.md"), SEED)
+    write(os.path.join(alt, "records", "notes", "README.md"), LESSONS_INDEX)
+    write(os.path.join(alt, "records", "notes", "01-topic.md"), VOLUME)
+    r = run(alt, "auto", "--run", "orient", "--work-log", "records", "--lessons", "notes")
+    ok(r.returncode == 0 and "# BRIEF  records" in r.stdout,
+       "auto forwards --work-log / --lessons to its steps", r.stdout + r.stderr)
+    r = run(alt, "auto", "--run", "orient", "--journal", "records", "--lessons", "notes")
+    ok(r.returncode == 0 and "# BRIEF  records" in r.stdout,
+       "auto forwards the legacy --journal spelling too", r.stdout + r.stderr)
+
+    parser = JOURNAL.build_parser()
+    choices = set(parser._subparsers._group_actions[0].choices)
+    ok(choices - {"auto"} == set(JOURNAL.AUTO_COMMANDS),
+       "AUTO_COMMANDS matches the parser's top-level commands",
+       f"missing={set(choices) - {'auto'} - set(JOURNAL.AUTO_COMMANDS)} "
+       f"extra={set(JOURNAL.AUTO_COMMANDS) - (set(choices) - {'auto'})}")
+
+    if os.name == "nt":
+        parts = JOURNAL._auto_parts("export --out C:\\tmp\\out.json")
+        ok(parts[-1] == r"C:\tmp\out.json",
+           "auto keeps Windows backslashes in step arguments", repr(parts))
+        parts = JOURNAL._auto_parts('export --out "C:\\a b\\o.json"')
+        ok(parts[-1] == r"C:\a b\o.json",
+           "auto keeps quoted Windows paths intact", repr(parts))
+
+    write(auto_path, "{not json")
+    r = run(proj, "auto", "--run", "orient")
+    ok(r.returncode == 0 and "WARN:" in r.stdout and "# BRIEF" in r.stdout,
+       "auto falls back to the built-in profiles on a broken file", r.stdout + r.stderr)
+    r = run(proj, "auto", "--set-profile", "orient", "--command", "brief")
+    ok(r.returncode == 2 and "先修好" in r.stdout,
+       "auto --set-profile refuses to clobber a broken file", r.stdout)
 
 
 def goals_phase(parent: str) -> None:
@@ -3374,6 +3513,38 @@ def _memory_phase(parent: str) -> None:
     ok(r.returncode != 0 and "不存在" in r.stdout,
        "memory: 声明了 feedback 但文件不在 → collect 报问题", r.stdout)
     write(mpath, read(mpath).replace("feedback: 不存在.md", "feedback: 评价-worklog.md"))
+
+    # 越界路径必须拒绝（issue #2，2026-10-22）：绝对路径 / 逃出工作区的 `..` / 软链。
+    # 旧实现会把工作区外的文件原样镜像进共享记忆根（`feedback/` 还进 git）。
+    manifest_fb = read(mpath)
+    outside = os.path.join(base, "outside-secret.md")
+    write(outside, "绝不能进记忆根\n")
+    for label, declared in (
+            ("绝对路径", outside),
+            ("逃出工作区的 ..", os.path.join("..", "..", "outside-secret.md")),
+    ):
+        write(mpath, manifest_fb.replace("feedback: 评价-worklog.md",
+                                         f"feedback: {declared}"))
+        r = m(wsA, "memory", "collect", wsA)
+        ok(r.returncode != 0 and "被拒绝" in r.stdout,
+           f"memory: feedback 的{label}被拒绝", r.stdout)
+        ok("绝不能进记忆根" not in read(fb_dst),
+           f"memory: feedback 的{label}没有镜像进记忆根")
+    link = os.path.join(wsA, "work_log", "评价-link.md")
+    try:
+        os.symlink(outside, link)
+    except (OSError, NotImplementedError):
+        note("feedback 软链用例（本机不允许建软链）")
+    else:
+        write(mpath, manifest_fb.replace("feedback: 评价-worklog.md",
+                                         "feedback: 评价-link.md"))
+        r = m(wsA, "memory", "collect", wsA)
+        ok(r.returncode != 0 and "被拒绝" in r.stdout,
+           "memory: feedback 的软链被拒绝", r.stdout)
+        ok("绝不能进记忆根" not in read(fb_dst),
+           "memory: feedback 的软链没有镜像进记忆根")
+        os.remove(link)
+    write(mpath, manifest_fb)
     # upload:false 的工作区：评价也不收（同一个双向白名单）
     write(os.path.join(wsC, "work_log", "评价.md"), "不该外流的评价。\n")
     cpath = os.path.join(wsC, "work_log", "发布.md")
@@ -3383,6 +3554,13 @@ def _memory_phase(parent: str) -> None:
     r = m(wsC, "memory", "collect", wsC)
     ok(not os.path.isfile(os.path.join(mem, "feedback", "wsC.md")),
        "memory: upload:false 的工作区，评价也不收（双向白名单对评价同样生效）", r.stdout)
+    # upload:false 时**不解析** feedback：旧实现允许绝对路径，升级后不该让只读工作区
+    # 每次 collect 都因“被拒绝”变红（M3）。
+    write(cpath, read(cpath).replace("feedback: 评价.md", f"feedback: {outside}"))
+    r = m(wsC, "memory", "collect", wsC)
+    ok(r.returncode == 0 and "被拒绝" not in r.stdout,
+       "memory: upload:false 的工作区不校验 feedback（旧语义保持，M3）", r.stdout)
+    write(cpath, read(cpath).replace(f"feedback: {outside}", "feedback: 评价.md"))
 
     # 登记了、但没有清单的工作区：只读不传（工具**无法自行发现工作区**，
     # 所以名册里没有它 = 它不参与；名册里有它但清单不在 = 它声明"不给"）
@@ -4213,8 +4391,7 @@ def numbering_phase(parent: str) -> None:
             p.kill()
             o, e = p.communicate()
         outs.append((p.returncode, decode_output(o), decode_output(e)))
-    made = sorted(f for f in os.listdir(os.path.join(con, CONTAINER))
-                  if f != "README.md")
+    made = container_files(os.path.join(con, CONTAINER))
     ok(all(rc == 0 for rc, _, _ in outs) and len(made) == 6,
        "6 个进程同时 new：一人一份，没有静默覆盖",
        f"rc={[rc for rc, _, _ in outs]} files={made}")
@@ -4260,8 +4437,7 @@ def numbering_phase(parent: str) -> None:
             p.kill()
             o, e = p.communicate()
         outs2.append((p.returncode, decode_output(o), decode_output(e)))
-    made2 = sorted(f for f in os.listdir(os.path.join(take_con, CONTAINER))
-                   if f != "README.md")
+    made2 = container_files(os.path.join(take_con, CONTAINER))
     ok(all(rc == 0 for rc, _, _ in outs2) and len(made2) == 6,
        "6 个进程同时 take 同一个标题：一人一份，没有静默覆盖",
        f"rc={[rc for rc, _, _ in outs2]} files={made2} "
@@ -4303,7 +4479,7 @@ def numbering_phase(parent: str) -> None:
         jd = os.path.join(d, CONTAINER)
         for p, s in zip(paths, slugs):
             JOURNAL.settle_number_collision(jd, p, s)
-        files = sorted(f for f in os.listdir(jd) if f != "README.md")
+        files = container_files(jd)
         got = sorted(JOURNAL.name_number(f) for f in files)
         ok(len(set(got)) == len(got),
            f"{cnt} 路同号各对账一次：篇号互不相同（一轮只搬一份会留下重号）",
@@ -4375,7 +4551,7 @@ def numbering_phase(parent: str) -> None:
     JOURNAL.settle_number_collision(ed, mine, "mine")        # 只看得见自己：留着 5 收工
     also = JOURNAL.reserve_new_record(ed, 5, "also", late)   # 同号，名字排在 "mine" 前面
     _path, also_num = JOURNAL.settle_number_collision(ed, also, "also")
-    early_files = sorted(f for f in os.listdir(ed) if f != "README.md")
+    early_files = container_files(ed)
     early_nums = sorted(JOURNAL.name_number(f) for f in early_files)
     ok(len(set(early_nums)) == len(early_nums) and also_num != 5,
        "同号对账：先收工的那一份留下，后到的让路（名字排前面也不算赢）",
@@ -5331,6 +5507,129 @@ def lesson_phase(parent: str) -> None:
        "check --strict turns the card WARN into an ERROR", r.stdout)
 
 
+def ops_artifacts_phase(parent: str) -> None:
+    """dsh-ops 的锁 / 面板目录 / 写者残留不是记录（2026-10-22）。
+
+    背景：dsh-ops 0.3.x 会在被写目标旁留 0 字节的
+    `.dsh-ops-update-<sha256(小写文件名)>.lock`（0.4.1 起释放时删除）；
+    启用它的 panel 时还会写 `<容器>/.dsh-ops/panel/*.json`；写者被硬杀时
+    可能留 `.<name>.dsh-ops-<uuid>` 临时件。三种都不该被 `check` /
+    `outline` / `index sync` 当成记录或垃圾——它们在 `work_log/` 里是常态，
+    误判会让门禁长期带红。夹具只放真实形态，不造假 `.md`。
+    """
+    root = os.path.join(parent, "opsfix")
+    os.makedirs(os.path.join(root, CONTAINER, "lessons"))
+    write(os.path.join(root, CONTAINER, "README.md"), INDEX)
+    write(os.path.join(root, CONTAINER, "0001-seed.md"), SEED)
+    write(os.path.join(root, CONTAINER, "lessons", "README.md"), LESSONS_INDEX)
+    write(os.path.join(root, CONTAINER, "lessons", "01-topic.md"), VOLUME)
+
+    write(os.path.join(root, CONTAINER, ".dsh-ops-update-" + "a" * 64 + ".lock"), "")
+    os.makedirs(os.path.join(root, CONTAINER, ".dsh-ops", "panel"))
+    write(os.path.join(root, CONTAINER, ".dsh-ops", "panel", "session-1.json"), "{}\n")
+    write(os.path.join(root, CONTAINER, ".0002-ghost.md.dsh-ops-1234abcd"), "partial\n")
+
+    r = run(root, "check", "--strict", "--quiet")
+    ok(r.returncode == 0,
+       "check ignores dsh-ops lock sidecars, .dsh-ops/ and writer debris",
+       r.stdout + r.stderr)
+    r = run(root, "outline")
+    ok(r.returncode == 0 and "0001" in r.stdout and "Seed entry" in r.stdout
+       and ".dsh-ops" not in r.stdout and "ghost" not in r.stdout,
+       "outline still lists the real record and ignores dsh-ops artifacts", r.stdout)
+    # 先放一条**未入索引**的真实记录，再 index sync：断言它被补进台账，
+    # 而 dsh-ops 的产物没有。只看“不含 dsh-ops”在命令整体坏掉时也会绿。
+    write(os.path.join(root, CONTAINER, "0002-extra.md"),
+          """# 0002 · Extra record
+
+日期：2026-09-13
+变更集：1
+触发：selftest
+
+## 验证
+
+- 方式：`true`
+- 结果：1 passed
+""")
+    r = run(root, "index", "sync")
+    ledger = read(os.path.join(root, CONTAINER, "README.md"))
+    ok(r.returncode == 0 and "0002-extra.md" in ledger
+       and ".dsh-ops" not in ledger and "ghost" not in ledger,
+       "index sync adds the real record and leaves dsh-ops artifacts out", r.stdout + r.stderr)
+
+
+def lock_phase(parent: str) -> None:
+    """并发读改写：6 路 `todo --add` 在有锁时一条都不丢（issue #2 第 3 条）。
+
+    `JOURNAL_TEST_WRITE_DELAY_MS` 把「读 → 改 → 写」的窗口撑到 150 ms：去掉
+    dispatch 层的锁后，六个进程会读到同一份旧台账，最后只剩一个待办 —— 测试
+    因此不是靠运气撞竞态，而是必然复现。
+    """
+    root = os.path.join(parent, "lockfix")
+    os.makedirs(os.path.join(root, CONTAINER))
+    write(os.path.join(root, CONTAINER, "README.md"), INDEX)
+    memdir = os.path.join(parent, "lock-mem")
+    os.makedirs(memdir)
+
+    def a(func, **kw):
+        obj = type("A", (), {})()
+        obj.func = func
+        obj.root = root
+        obj.memory = memdir
+        obj.dry_run = False
+        for key, value in kw.items():
+            setattr(obj, key, value)
+        return obj
+
+    def targets(func, **kw):
+        return JOURNAL._lock_targets(a(func, **kw))
+
+    container = os.path.abspath(os.path.join(root, CONTAINER))
+
+    ok(container in targets(JOURNAL.cmd_index_compact),
+       "index compact 纳入锁目标（H1）")
+    ok(container in targets(JOURNAL.cmd_append, paths=[root, "1"]),
+       "append 按位置参数里的根上锁（H2）")
+    ok(targets(JOURNAL.cmd_status) == [], "只读 status 不上排他锁（L3）")
+    ok(container in targets(JOURNAL.cmd_status, set=["测试=x"]),
+       "status --set 上写锁")
+    ok(targets(JOURNAL.cmd_todo) == [], "只读 todo 不上排他锁（L3）")
+    ok(container in targets(JOURNAL.cmd_todo, add="x"), "todo --add 上写锁")
+    ok(os.path.abspath(memdir) in targets(JOURNAL.cmd_memory_search),
+       "memory search 的命中簿记纳入记忆锁（M1）")
+    ok(targets(JOURNAL.cmd_memory_search, dry_run=True) == [],
+       "memory search --dry-run 只预览，不上排他锁")
+    ok(os.path.abspath(memdir) in targets(JOURNAL.cmd_memory_status),
+       "memory status 的候选写纳入记忆锁（M2）")
+    ok(container in targets(JOURNAL.cmd_config, write=False, set=["mode=digest"]),
+       "config --set 被当作写命令纳入锁目标")
+    put_targets = targets(JOURNAL.cmd_inbox_put, outbox=None)
+    ok(os.path.abspath(memdir) in put_targets and os.path.abspath(root) not in put_targets,
+       "inbox put 只锁记忆根，不锁 cwd（L2）")
+    missing = os.path.join(parent, "missing-lock-target")
+    ok("dsh-journal-locks-v2" in JOURNAL._lock_file_for(missing),
+       "不存在的锁目标退到 TEMP，不往父目录塞 .journal.lock", missing)
+    env = dict(os.environ)
+    env["JOURNAL_TEST_WRITE_DELAY_MS"] = "150"
+    procs = [subprocess.Popen(
+        [sys.executable, TOOL, "todo", "--root", root, "--add", f"lock {i}"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=HERE, env=env)
+        for i in range(6)]
+    outs = []
+    for p in procs:
+        try:
+            o, e = p.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            o, e = p.communicate()
+        outs.append((p.returncode, decode_output(o), decode_output(e)))
+    text = read(os.path.join(root, CONTAINER, "README.md"))
+    missing = [i for i in range(6) if f"lock {i}" not in text]
+    ok(all(rc == 0 for rc, _, _ in outs) and not missing,
+       "6 个并发 todo --add：锁把读改写串起来，一条都不丢",
+       f"rc={[rc for rc, _, _ in outs]} missing={missing}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="journal.py 自测")
     ap.add_argument("--root", default=None,
@@ -5557,6 +5856,9 @@ def main() -> int:
         # 项目配置文件（<容器>/.config.json）---------------------------------
         config_phase(tmp)
 
+        # 自动操作 profile（<容器>/.auto.json）-------------------------------
+        auto_phase(tmp)
+
         # 卡式经验条目（三字段 / 缩进 / dry-run / CRLF / check 配对）------------
         lesson_phase(tmp)
 
@@ -5591,6 +5893,12 @@ def main() -> int:
         changed = [i for i, (a, b) in enumerate(zip(snapshot.split(b"\r\n"), after.split(b"\r\n"))) if a != b]
         ok(len(changed) == 1 and b"999 PASS" in after.split(b"\r\n")[changed[0]],
            "only the target line changed", f"changed lines={changed}")
+
+        # dsh-ops 的锁 / 面板目录 / 写者残留不是记录（2026-10-22）
+        ops_artifacts_phase(tmp)
+
+        # 并发读改写（issue #2 第 3 条）：有锁时一条都不丢
+        lock_phase(tmp)
     finally:
         if args.keep:
             print(f"夹具保留在：{tmp}")

@@ -62,6 +62,9 @@ python <skill>/scripts/journal.py check --strict --lint # 结构 + 内容，两�
 
 > `<skill>` 是安装后的技能目录（例如 `~/.dsh/skills/project-work-log`）。
 > 不知道装到哪时，先看 `~/.dsh/skills/` 或工作区的 `.dsh/skills/`。
+>
+> DSH 桌面版自带 Python 运行时：把 `python …` 换成 `node <skill>/scripts/journal.mjs …`，
+> 启动器会自动找运行时，不必另装 Python。
 
 ### 只拿技能层（pi / 任意 Agent Skills）
 

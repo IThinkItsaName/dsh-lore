@@ -20,7 +20,7 @@
 
 | 根在哪 | 命令（解析树里的路径） |
 |---|---|
-| **叶子** | `new`、`check`、`lint`、`brief`、`snapshot`、`outline`、`show`、`search`、`stats`、`topics`、`export`、`digest`、`retro`、`status`、`mode`、`config`、`todo`、`archive`、`split`、`prune`、`append`、`dream`、`memory publish`、`memory collect`、`memory add`、`memory lint`、`memory status`、`inbox take`、`inbox subscribe`、`inbox unsubscribe`、`inbox status` |
+| **叶子** | `new`、`auto`、`check`、`lint`、`brief`、`snapshot`、`outline`、`show`、`search`、`stats`、`topics`、`export`、`digest`、`retro`、`status`、`mode`、`config`、`todo`、`archive`、`split`、`prune`、`append`、`dream`、`memory publish`、`memory collect`、`memory add`、`memory lint`、`memory status`、`inbox take`、`inbox subscribe`、`inbox unsubscribe`、`inbox status` |
 | **父级** | `index sync`、`index compact`、`lesson add` |
 | **没有根** | `inbox put`、`inbox list`、`inbox sweep`、`inbox count`、`memory search`、`memory index`、`promote suggest`、`promote scaffold` |
 
@@ -76,6 +76,14 @@ python -B scripts/_selftest.py            # 自测：临时工程跑通全部命
 **写入命令的通用规矩**：目标文件必须是 **UTF-8**。不是 UTF-8（GBK 老仓库等）时会**拒绝写入**并返回退出码 2，
 文件保持字节不变——这是故意的，避免把解码失败的字节写成 `U+FFFD` 毁掉中文。
 
+**并发**：会改台账/记忆根的命令在分发层按根目录（以及记忆根）持一把建议锁，把“读 → 改 → 写”
+整段串行化；锁文件 `.journal.lock` 放在被锁目录里（有容器时就是容器，没容器时才是工作区根），
+同一工作区的不同 DSH 会话因此互斥（系统临时目录是按会话隔离的，不能用来做这件事），进程
+退出/异常即释放。工作区外的记忆根若因沙箱拒绝而建不了锁，会退到 TEMP 的
+`dsh-journal-locks-v2/` 并打一条 `WARN`——此时跨会话不互斥；记忆数据本身写不进仍按权限错误
+退出，不静默丢写。只读调用（如不带参数的 `status` / `todo` / `mode`）不持排他锁，不会被长写者
+拖住；等锁超过 30 秒会明确报错退出，不会静默丢更新（2026-10-22，issue #2 第 3 条）。
+
 ## 一、少读：把上下文留给真正要看的内容
 
 | 命令 | 作用 | 典型用法 |
@@ -87,7 +95,7 @@ python -B scripts/_selftest.py            # 自测：临时工程跑通全部命
 | `outline` | 全部记录一行表（身份/日期/迭代/行数/标题），可 `grep` 可排序 | `outline` |
 
 > 用法建议：接手任务先 `brief`；想知道"最近几篇各自做到哪"用 `snapshot`；知道大概在哪篇用 `search`；
-> 定位到单篇用 `show`；确实需要细节再 `read` 那一个文件。
+> 定位到单篇用 `show`；确实需要细节再读那一个文件（用当前可用的文件读取工具）。
 
 ### snapshot：最近 N 篇的入口元信息汇总（只读）
 
@@ -249,6 +257,33 @@ snapshotEntries = 12               ← .config.json
 - 配置**读不动**（不是合法 JSON、值非法、字段名认不出）时：其它命令一律按内置默认继续跑，
   `config` 逐条打印并以退出码 2 收场，`check` 也提一句（INFO，不进退出码）。
 - 没有容器时：只读视图照常打印（等于全部内置默认），`--write` / `--set` 报「找不到记录容器」退出 1。
+
+### auto：按 profile 串行跑一组固定命令
+
+开工/收尾的固定动作可以写成 `<容器>/.auto.json`，一次调用按顺序跑完；模型只负责**定规则**，
+不必每次重新想命令。命令本身仍是 `journal.py` 的既有子命令，`auto` 只是编排。
+
+```bash
+python scripts/journal.py auto --list
+python scripts/journal.py auto --run orient
+python scripts/journal.py auto --run close --keep-going
+python scripts/journal.py auto --set-profile orient --command brief --command status
+```
+
+内置 profile（文件不存在时就用它们；`--list` 可看当前生效值）：
+
+| profile | 默认命令 |
+|---|---|
+| `orient` | `brief` |
+| `verify` | `check --strict --lint` |
+| `close` | `index sync`、`check --strict --lint` |
+
+- `.auto.json` 形如 `{ "profile": ["命令", ...] }`；命令按 `shlex` 规则拆，只认 `journal.py`
+  的既有顶层命令，`auto` 自己不能作为一步（防递归）。
+- 文件不存在 = 内置默认；文件读不动 = 用内置默认并打 `WARN`，`--set-profile` 会拒绝覆盖坏文件。
+- `--set-profile` 保留其余 profile；命令含空格时整体加引号。
+- 每一步是**独立子进程**，某步失败默认停下；`--keep-going` 继续跑并汇总失败数。
+- `--dry-run` 对 `--run` 与 `--set-profile` 都有效。
 
 ## 三、整理与清理（记录量增长后）
 
@@ -498,6 +533,9 @@ MEMORY  C:\Users\me\.dsh\memory
 - **`feedback: <路径>`（可选）**：把那份**工作区使用评价**原样镜像到
   `<记忆根>/feedback/<工作区名>.md`（正文逐字不动，只加出处头）。它**不是记忆条目**：
   不进正文分册、不进索引、不被 `search` 命中、不参与 `lint`；正文没变就不重写。
+  **只允许工作区内的相对路径**（按容器相对解析）：绝对路径、解析后落在工作区之外的
+  `..`、以及软链一律拒绝（2026-10-22，issue #2；旧实现会把工作区外的文件原样镜像进
+  共享记忆根）。
   与教训同受 `upload: true` 这道白名单管；声明了但文件不在 → 报问题。
 - `collect` 不重建索引，但会提醒你重建。
 
@@ -792,6 +830,7 @@ python scripts/journal.py digest --out HANDOFF.md
 
 | 文件 | 用途 |
 |---|---|
+| `journal.mjs` | 给 `journal.py` 找 Python 的启动器：`DSH_WORKLOG_PYTHON` → DSH 运行时 → PATH；参数与 `journal.py` 完全相同（DSH 用户不必另装 Python） |
 | `_selftest.py` | 自测全部命令（临时目录，含 CRLF 保真、"只改目标行"、非编程场景、非 UTF-8 拒写、新布局与旧布局回退、精细度档位与"验证不随档位放宽"、**两种命名约定、渐进原则、实质验证、snapshot 只读、项目配置文件与其三层优先级、目标表的三条规则、全局记忆（分档 / 清单往返 / 收集幂等 / 索引 / 门禁 / 收敛 / 信箱 / 升格）**等断言）。`--root DIR` 指定夹具父目录（写入受限的沙箱里用），`--keep` 保留夹具排查 |
 | `_package.py` | 把 skill 源目录同步进可发布仓库（开发工作区专用，不随包发布）；`--check` 兼作漂移与插件文件完整性门禁 |
 | `_measure.py` | 对现成 `work_log/`（或旧 `work-log/`）+ `lessons/` 做一次性测量，`references/analysis.md` 的数字由它复现；同时报出台账的 `精细度`（缺字段则报默认档） |
@@ -813,6 +852,7 @@ python scripts/journal.py digest --out HANDOFF.md
 | `LEGACY.md` | **人**（工具只读） | 旧记录声明（见「渐进原则」）；工具**从不写**它 |
 | `目标.md` | **人 / agent**（工具只读） | 长期目标 → 阶段的两层表（见 §四「目标表」）；**需要时才建**，缺它是正常的 |
 | `.config.json` | `config --write` / `config --set` | 项目配置文件（见 §二「config」）；**缺它等于全部内置默认** |
+| `.auto.json` | `auto --set-profile` | 自动操作 profile（见 §二「auto」）；缺它等于内置 `orient` / `verify` / `close` |
 | `发布.md` | `memory publish` / **人**（全局层只读） | 工作区**唯一**获准被全局记忆层读的文件（双向白名单）；见 [memory.md](memory.md) §五 |
 | `摘要.md` | `dream --accept` | 记录收敛视图（每条断言都指向记录）；`dream --check` 复查回指 |
 | `摘要.draft.md` | `dream` | 待填的骨架（给模型写总结用）；**不是记录**，不编号、不进索引 |

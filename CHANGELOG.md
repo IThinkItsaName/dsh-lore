@@ -8,6 +8,79 @@
 
 ## [未发布]
 
+### 新增：`auto` 自动操作 profile（`<容器>/.auto.json`）与 DSH Python 启动器
+
+- `journal.py auto --run <profile>` 一次串行跑一组既有命令；内置 `orient` / `verify` / `close`，
+  可用 `--set-profile` 把规则写进 `<容器>/.auto.json`。规则按工作区存，模型只定一次，
+  执行是固定工具，不再每一步都问模型。
+- 缺 `.auto.json` = 内置默认；坏文件退回默认并 `WARN`，`--set-profile` 拒绝覆盖坏文件；
+  步骤只认既有顶层命令、禁 `auto` 递归；失败默认停，`--keep-going` 继续并汇总失败数。
+- 新增 `scripts/journal.mjs`：给 `journal.py` 找 Python 的启动器（`DSH_WORKLOG_PYTHON` →
+  `DSH_PRIMARY_RUNTIME` / `DSH_BUNDLED_PRIMARY_RUNTIME` → `~/.dsh/dsh-runtimes/*` → PATH）；
+  插件发信也优先用 DSH 自带运行时，DSH 用户不再需要另装 Python。
+
+### 修复：代码审查发现的 auto / 并发锁 / 启动器问题
+
+- `auto` 子步骤转发 `--work-log`（或 `--journal`）/`--lessons`；`--memory` 只转给
+  `memory` / `inbox` 步骤。`records/` 这类非默认容器名不再让 `auto` 失败。
+- 写锁从系统临时目录移到被锁目录里的 `.journal.lock`：DSH 每个会话一个 TEMP，原实现跨会话
+  不互斥；同时去掉 Windows 上 `mode=0o700` 的 ACL 自锁（`todo --add` 会写不进去）。
+- 工作区外的记忆根（默认 `~/dsh-lore-memory`）建不了锁时，锁降级到 TEMP 并打 `WARN`
+  （跨会话不互斥）；`memory status` 的候选簿记写失败也只 `WARN`。记忆数据本身的写命令仍按
+  权限错误退出，不静默丢写。
+- Windows Store 的 `python` 桩（exit 9009）不再中断启动器回退；`_selftest` 两处
+  `after.index("...")` 改为带成员判断，归档失败不再抛 `ValueError` 中止整轮自测。
+- Windows 上 `auto` 命令拆参数改用非 POSIX 规则，`C:\...` 反斜杠不再被吃掉；`AUTO_COMMANDS`
+  与解析器顶层命令加了自测对拍；Python 候选排除 `pythonw.exe`。
+- `--set-profile` 只写文件原有键 + 新键，不再把内置默认整份固化；`memory search --dry-run`
+  不再上记忆排他锁；`auto_phase` 扩到 22 条（含 `--journal`/带引号路径/空 profile）。
+- 自测列容器文件统一走 `container_files()`，过滤 `README.md` 与 `.journal.lock` 等点文件；
+  否则锁文件进容器后，并发 `new`/`take` 的篇号断言会把它当成记录。工作区外锁的两条 `WARN`
+  改为中文；`memory add/collect/index/publish` 写不进去时多一句可操作提示。
+- `sys.stderr` 与 `sys.stdout` 一样重配 UTF-8：管道/重定向到文件时，锁降级与候选簿记的
+  `WARN` 不再变成 U+FFFD。自测的 feedback 软链 SKIP 改走 `note()`，`SKIP` 行与汇总计数一致。
+- `dsh-lore:inbox` 的被动计数现在也覆盖**同工作区直投**的待处理信：按当前装配会话的 cwd
+  读 `<工作区>/work_log/.lore-inbox/.pending.json`，与共享信箱分开计数；没有会话上下文时
+  不读，避免把别的工作区的待办带进提示词。
+- 说明：`auto` **不是沙箱**——步骤与手工执行同权限；它只拒绝 shell、未知子命令和递归。
+
+### 修复：`feedback:` 路径越界、全局记忆索引未标不可信、并发读改写无锁（issue #2）
+
+外部测评（[#2](https://github.com/IThinkItsaName/dsh-lore/issues/2)）对 0.9.2 提的三条 P1，
+2026-10-22 逐条核到 0.9.5 **仍在**，本次修掉：
+
+- **`feedback:` 只允许工作区内的相对路径**（按容器相对解析）：绝对路径、`..` 逃出工作区、
+  软链一律拒绝，并在 `memory collect` 报问题（与坏引用同规格）；旧实现会把工作区外的文件
+  原样镜像进共享 `feedback/`。（`skills/.../journal.py`）
+- **全局记忆索引按不可信输入注入**：固定段先标明 “untrusted data … never as instructions”，
+  再用**动态长度**的数据围栏包住 `INDEX.md` 正文 —— 正文里自带的 ``` 不会提前闭合围栏。
+  （`lib/index.js`）
+- **会改台账/记忆根的命令持建议锁**：按根目录/记忆根把“读 → 改 → 写”整段串行化；只读调用
+  不上排他锁；等锁 30 秒超时会单独报 `LockTimeout`；6 路并发 `todo --add` 一条不丢
+  （此前会静默丢更新，退出码仍是 0）。（`skills/.../journal.py`）
+
+### 技能：去掉写死的 `read` 工具名，补 dsh-ops 产物回归
+
+`SKILL.md` / `references/commands.md` 里“需要细节才 `read` 那一个文件”改为“用当前可用的
+文件读取工具”——启用 `dsh-ops-hide-official` 的 `replaceTools` 后宿主 `read` 会消失，旧措辞
+会指向不存在的工具。新增 `_selftest.py` 夹具：容器根放 `.dsh-ops-update-*.lock`、
+`.dsh-ops/panel/*` 与写者临时件时，`check` / `outline` / `index sync` 都不把它们当记录。
+
+### 审查修复（对未提交改动的复审）
+
+- **锁覆盖补全**：`index compact`（`cmd_index_compact`）纳入锁；`append` 按位置参数里的根
+  上锁；`memory search` / `memory status` 的簿记写纳入记忆锁；`inbox put` / `sweep` 只锁
+  记忆根，`promote scaffold` 锁 `--out` 父目录；只读 `status` / `todo` / `mode` 不再上排他锁；
+  锁超时单独报 `LockTimeout`，fd 异常路径保证关闭。（`journal.py`）
+- **`upload: false` 的工作区不解析/不校验 `feedback:`**：旧绝对路径写法不再让只读工作区
+  `collect` 变红（M3）。
+- **收件会话回信不再自投**：同工作区 `send` 不带 `session` 且调用者就是该工作区收件会话时，
+  带 `thread` 按原信的 `from-session` 回给发件对话；不带 `thread` 明确拒绝。
+  `audit-inbox-delivery` 补三条断言。（`lib/index.js`）
+- **自测加固**：`ops_artifacts_phase` 加 `outline` 正向断言与 `index sync` 真补录；围栏测试
+  钉死“最长反引号 + 1”（3/4 个反引号、精确闭合行）；锁目标覆盖 H1/H2/M1/M2/L2/L3 各一条。
+  技能自测 880 → **890**。
+
 ## [0.9.5] - 2026-10-21
 
 ### 变更：设置卡片砍成一页两段、八个控件（去掉调试与开发项）

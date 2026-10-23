@@ -18,6 +18,8 @@
     ├── _inbox.md             ← 踩坑当场记一行（可选；**不是记录**，收尾时整理进 lessons/）
     ├── 目标.md               ← 长期目标 → 阶段的两层表（可选，见「目标」；需要时才建）
     ├── .config.json          ← 项目配置文件（可选，见「项目配置文件」；缺它 = 全部内置默认）
+    ├── .auto.json            ← 自动操作 profile（可选，见 commands.md「auto」；缺它 = 内置 orient/verify/close）
+    ├── .journal.lock         ← 写命令的隐藏锁文件（自动生成；不要提交，没有进程持锁时可删）
     ├── <YYYY>/…              ← 按年分卷后的记录（`split --by-year`）
     ├── <stage>/…             ← 归档记录：阶段目录直接建在容器下（短项目就够）
     ├── archive/…             ← 归档层（可选，多主题长项目用它把归档收在一处）
@@ -35,6 +37,9 @@
 
 - 容器名默认 `work_log/`，可用 `--work-log NAME`（旧写法 `--journal NAME`，等价）改名；
   经验子目录默认 `lessons/`，可用 `--lessons NAME` 改名。
+- `<容器>/.journal.lock` 是写命令的隐藏锁文件，**不是记录**；不要提交。`work_log/.gitignore`
+  加一行 `.journal.lock`。`git clean -fdx` 若删掉正被持有的锁，两个进程会各锁一个 inode
+  （低概率）；别在写命令运行时清它。
 - **记录一律住容器根**（分卷后是 `<YYYY>/…`）
   ——正好是旧布局 `journal/0001-x.md` / `journal/2026/0001-x.md` 的下一层，记录发现逻辑不变。
 - **归档 = 搬进容器下的归档目录**：默认直接建阶段目录（`work_log/<stage>/`），也可以先建一个
